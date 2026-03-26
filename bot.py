@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "todo_roles":             [],
     "todo_stats_message_id":  None,
     "todo_page_message_ids":  [],
+    "todo_style":             1,
 }
 
 # ── In-memory cache ────────────────────────────────────────────────────────────
@@ -221,55 +222,202 @@ STATUS_LABELS = {
     "blocked":       "Blocked",
     "done":          "Done",
 }
-PRIORITY_LABELS = {"low": "Low", "medium": "Medium", "high": "High"}
+PRIORITY_LABELS  = {"low": "Low", "medium": "Medium", "high": "High"}
+PRIORITY_ICONS   = {"low": "▽", "medium": "◈", "high": "▲"}
+STATUS_ICONS     = {
+    "todo":          "○",
+    "in_progress":   "◑",
+    "review_needed": "◇",
+    "blocked":       "✕",
+    "done":          "✓",
+}
 
-def build_stats_embed(todos: list, archive_count: int) -> discord.Embed:
-    counts = {s: len([t for t in todos if t["status"] == s])
-              for s in ["todo", "in_progress", "review_needed", "blocked"]}
+# Progress bar helper (Discord block chars)
+def _progress_bar(value: int, total: int, length: int = 10) -> str:
+    if total == 0:
+        return "░" * length
+    filled = round((value / total) * length)
+    return "█" * filled + "░" * (length - filled)
+
+# ── Style 1 — Clean (top accent via description rule line) ───────────────────
+def _card_style1(t: dict) -> tuple[str, str]:
+    status   = t.get("status", "todo")
+    label    = STATUS_LABELS.get(status, status)
+    priority = PRIORITY_LABELS.get(t.get("priority", "medium"), "Medium")
+    pri_icon = PRIORITY_ICONS.get(t.get("priority", "medium"), "◈")
+    asgn     = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "Unassigned"
+    added    = f"<@{t['added_by_id']}>"
+    ai_tag   = "  ✦ AI" if t.get("auto_generated") else ""
+    desc     = t.get("ai_description") or ""
+    desc_line = f"\n> *{desc[:120]}*" if desc else ""
+    name  = f"#{t['id']} — {t['title'][:65]}"
+    value = (
+        f"`{label}`  {pri_icon} {priority}{ai_tag}{desc_line}\n"
+        f"-# Assigned: {asgn}  ·  Added by: {added}"
+    )
+    return name, value
+
+def _stats_style1(counts: dict, archive_count: int, active_count: int) -> discord.Embed:
     e = discord.Embed(
         title="AnymeX — TODO Board",
         color=0x5865F2,
         timestamp=datetime.datetime.now(datetime.timezone.utc),
     )
-    e.add_field(name="To Do",         value=str(counts["todo"]),          inline=True)
-    e.add_field(name="In Progress",   value=str(counts["in_progress"]),   inline=True)
-    e.add_field(name="Review Needed", value=str(counts["review_needed"]), inline=True)
-    e.add_field(name="Blocked",       value=str(counts["blocked"]),       inline=True)
-    e.add_field(name="Total Done",    value=str(archive_count),           inline=True)
-    e.add_field(name="Active",        value=str(len(todos)),              inline=True)
-    e.set_footer(text="Last updated")
+    e.add_field(name="○ To Do",         value=str(counts["todo"]),          inline=True)
+    e.add_field(name="◑ In Progress",   value=str(counts["in_progress"]),   inline=True)
+    e.add_field(name="◇ Review Needed", value=str(counts["review_needed"]), inline=True)
+    e.add_field(name="✕ Blocked",       value=str(counts["blocked"]),       inline=True)
+    e.add_field(name="✓ Done",          value=str(archive_count),           inline=True)
+    e.add_field(name="Active",          value=str(active_count),            inline=True)
+    e.set_footer(text="Style 1 — Clean  ·  Last updated")
     return e
 
-def build_todo_card(t: dict) -> tuple[str, str]:
-    """Returns (name, value) for an embed field."""
+# ── Style 2 — Sidebar (left bar via bold separator trick) ────────────────────
+def _card_style2(t: dict) -> tuple[str, str]:
     status   = t.get("status", "todo")
     label    = STATUS_LABELS.get(status, status)
+    color_bar = {
+        "todo": "🔵", "in_progress": "🟠",
+        "review_needed": "⚪", "blocked": "🔴", "done": "🟢",
+    }.get(status, "⚪")
     priority = PRIORITY_LABELS.get(t.get("priority", "medium"), "Medium")
     asgn     = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "Unassigned"
     added    = f"<@{t['added_by_id']}>"
-    name     = f"#{t['id']} — {t['title'][:65]}"
-    # Show AI description if present, otherwise show source text snippet
-    desc = t.get("ai_description") or ""
-    desc_line = f"\n> {desc[:120]}" if desc else ""
-    auto_tag  = " ✦ AI title" if t.get("auto_generated") else ""
-    value    = (
-        f"`{label}`  ·  {priority}{auto_tag}{desc_line}\n"
-        f"Assigned: {asgn}  ·  Added by: {added}"
+    ai_tag   = "  ✦ AI" if t.get("auto_generated") else ""
+    desc     = t.get("ai_description") or ""
+    desc_line = f"\n> *{desc[:120]}*" if desc else ""
+    name  = f"{color_bar} #{t['id']} — {t['title'][:60]}"
+    value = (
+        f"**{label}**  ·  {priority}{ai_tag}{desc_line}\n"
+        f"-# {asgn}  ·  {added}"
     )
     return name, value
 
-def build_page_embed(todos: list, page: int, total_pages: int) -> discord.Embed:
+def _stats_style2(counts: dict, archive_count: int, active_count: int) -> discord.Embed:
+    total = active_count or 1
+    bar_todo    = _progress_bar(counts["todo"],          total, 8)
+    bar_inprog  = _progress_bar(counts["in_progress"],   total, 8)
+    bar_review  = _progress_bar(counts["review_needed"], total, 8)
+    bar_blocked = _progress_bar(counts["blocked"],       total, 8)
     e = discord.Embed(
-        title=f"Active TODOs — Page {page}/{total_pages}",
+        title="AnymeX — TODO Board",
         color=0x5865F2,
         timestamp=datetime.datetime.now(datetime.timezone.utc),
     )
+    e.description = (
+        f"🔵 **To Do**       `{bar_todo}` {counts['todo']}\n"
+        f"🟠 **In Progress** `{bar_inprog}` {counts['in_progress']}\n"
+        f"⚪ **Review**      `{bar_review}` {counts['review_needed']}\n"
+        f"🔴 **Blocked**     `{bar_blocked}` {counts['blocked']}\n"
+        f"\n✓ Done: **{archive_count}**  ·  Active: **{active_count}**"
+    )
+    e.set_footer(text="Style 2 — Sidebar  ·  Last updated")
+    return e
+
+# ── Style 3 — Minimal (clean, no icons, just text) ───────────────────────────
+def _card_style3(t: dict) -> tuple[str, str]:
+    status   = t.get("status", "todo")
+    label    = STATUS_LABELS.get(status, status)
+    priority = PRIORITY_LABELS.get(t.get("priority", "medium"), "Medium")
+    asgn     = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "—"
+    added    = f"<@{t['added_by_id']}>"
+    name  = f"#{t['id']}  {t['title'][:70]}"
+    value = f"`{label}`  ·  {priority}  ·  {asgn}  ·  {added}"
+    return name, value
+
+def _stats_style3(counts: dict, archive_count: int, active_count: int) -> discord.Embed:
+    e = discord.Embed(
+        title="AnymeX — TODO Board",
+        color=0x5865F2,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    e.description = (
+        f"`To Do` {counts['todo']}   "
+        f"`In Progress` {counts['in_progress']}   "
+        f"`Review` {counts['review_needed']}   "
+        f"`Blocked` {counts['blocked']}   "
+        f"`Done` {archive_count}"
+    )
+    e.set_footer(text="Style 3 — Minimal  ·  Last updated")
+    return e
+
+# ── Style 4 — Detailed (AI summary + quote block) ────────────────────────────
+def _card_style4(t: dict) -> tuple[str, str]:
+    status   = t.get("status", "todo")
+    label    = STATUS_LABELS.get(status, status)
+    st_icon  = STATUS_ICONS.get(status, "○")
+    priority = PRIORITY_LABELS.get(t.get("priority", "medium"), "Medium")
+    pri_icon = PRIORITY_ICONS.get(t.get("priority", "medium"), "◈")
+    asgn     = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "Unassigned"
+    added    = f"<@{t['added_by_id']}>"
+    ai_tag   = "  ✦ AI" if t.get("auto_generated") else ""
+
+    lines = [f"`{st_icon} {label}`  {pri_icon} {priority}{ai_tag}"]
+
+    ai_desc = t.get("ai_description", "")
+    if ai_desc:
+        lines.append(f"> **Summary:** *{ai_desc[:150]}*")
+
+    src_text = t.get("source_message_text", "")
+    if src_text and t.get("auto_generated"):
+        snippet = src_text.strip()[:100].replace("\n", " ")
+        lines.append(f"> \"{snippet}\"")
+
+    lines.append(f"-# Assigned: {asgn}  ·  Added by: {added}")
+    name  = f"#{t['id']} — {t['title'][:60]}"
+    value = "\n".join(lines)
+    return name, value
+
+def _stats_style4(counts: dict, archive_count: int, active_count: int) -> discord.Embed:
+    total     = active_count or 1
+    done_pct  = round((archive_count / max(archive_count + active_count, 1)) * 100)
+    full_bar  = _progress_bar(archive_count, archive_count + active_count, 12)
+    e = discord.Embed(
+        title="AnymeX — TODO Board",
+        color=0x5865F2,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    e.add_field(name="○ To Do",         value=str(counts["todo"]),          inline=True)
+    e.add_field(name="◑ In Progress",   value=str(counts["in_progress"]),   inline=True)
+    e.add_field(name="✕ Blocked",       value=str(counts["blocked"]),       inline=True)
+    e.add_field(name="◇ Review Needed", value=str(counts["review_needed"]), inline=True)
+    e.add_field(name="✓ Done",          value=str(archive_count),           inline=True)
+    e.add_field(name="Active",          value=str(active_count),            inline=True)
+    e.add_field(
+        name="Overall progress",
+        value=f"`{full_bar}` {done_pct}% done",
+        inline=False,
+    )
+    e.set_footer(text="Style 4 — Detailed  ·  Last updated")
+    return e
+
+# ── Dispatchers ──────────────────────────────────────────────────────────────
+_CARD_BUILDERS  = {1: _card_style1, 2: _card_style2, 3: _card_style3, 4: _card_style4}
+_STATS_BUILDERS = {1: _stats_style1, 2: _stats_style2, 3: _stats_style3, 4: _stats_style4}
+
+def build_todo_card(t: dict, style: int = 1) -> tuple[str, str]:
+    fn = _CARD_BUILDERS.get(style, _card_style1)
+    return fn(t)
+
+def build_stats_embed(todos: list, archive_count: int, style: int = 1) -> discord.Embed:
+    counts = {s: len([t for t in todos if t["status"] == s])
+              for s in ["todo", "in_progress", "review_needed", "blocked"]}
+    fn = _STATS_BUILDERS.get(style, _stats_style1)
+    return fn(counts, archive_count, len(todos))
+
+def build_page_embed(todos: list, page: int, total_pages: int, style: int = 1) -> discord.Embed:
+    color = 0x5865F2
+    e = discord.Embed(
+        title=f"Active TODOs — Page {page}/{total_pages}",
+        color=color,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
     for t in todos:
-        name, value = build_todo_card(t)
+        name, value = build_todo_card(t, style=style)
         e.add_field(name=name, value=value, inline=False)
     if not todos:
         e.description = "No active TODOs on this page."
-    e.set_footer(text=f"Page {page} of {total_pages}  ·  Last updated")
+    e.set_footer(text=f"Page {page} of {total_pages}  ·  Style {style}  ·  Last updated")
     return e
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -333,9 +481,10 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
     pages   = [active[i:i+TODOS_PER_PAGE] for i in range(0, max(len(active), 1), TODOS_PER_PAGE)]
     total_pages = len(pages)
     cfg_dirty   = False
+    style       = int(cfg.get("todo_style", 1))
 
     # Stats message
-    stats_embed  = build_stats_embed(active, len(archive))
+    stats_embed  = build_stats_embed(active, len(archive), style=style)
     stats_msg_id = cfg.get("todo_stats_message_id")
     if stats_msg_id:
         try:
@@ -353,7 +502,7 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
     # Page messages
     page_ids: list = list(cfg.get("todo_page_message_ids") or [])
     for i, page_todos in enumerate(pages):
-        embed = build_page_embed(page_todos, i + 1, total_pages)
+        embed = build_page_embed(page_todos, i + 1, total_pages, style=style)
         if i < len(page_ids):
             try:
                 msg = await ch.fetch_message(int(page_ids[i]))
@@ -885,15 +1034,18 @@ async def todo_list(interaction: discord.Interaction):
     async with aiohttp.ClientSession() as session:
         todos,   _ = await gh_read(session, FILE_TODOS)
         archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        cfg,     _ = await gh_read(session, FILE_CONFIG)
     todos   = todos   or []
     archive = archive or []
+    cfg     = cfg     or {}
+    style   = int(cfg.get("todo_style", 1))
     active  = [t for t in todos if t["status"] != "done"]
     if not active:
         await interaction.followup.send(f"No active TODOs. {len(archive)} total completed.")
         return
     pages = [active[i:i+TODOS_PER_PAGE] for i in range(0, len(active), TODOS_PER_PAGE)]
     for i, page in enumerate(pages[:3]):
-        await interaction.followup.send(embed=build_page_embed(page, i + 1, len(pages)))
+        await interaction.followup.send(embed=build_page_embed(page, i + 1, len(pages), style=style))
 
 
 @bot.tree.command(name="todo_mine", description="Show TODOs assigned to you")
@@ -901,14 +1053,17 @@ async def todo_mine(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     async with aiohttp.ClientSession() as session:
         todos, _ = await gh_read(session, FILE_TODOS)
-    todos = todos or []
-    mine  = [t for t in todos if t.get("assigned_to_id") == str(interaction.user.id)]
+        cfg,   _ = await gh_read(session, FILE_CONFIG)
+    todos  = todos or []
+    cfg    = cfg   or {}
+    style  = int(cfg.get("todo_style", 1))
+    mine   = [t for t in todos if t.get("assigned_to_id") == str(interaction.user.id)]
     if not mine:
         await interaction.followup.send("No TODOs assigned to you.", ephemeral=True)
         return
     e = discord.Embed(title="Your TODOs", color=0x5865F2)
     for t in mine:
-        name, value = build_todo_card(t)
+        name, value = build_todo_card(t, style=style)
         e.add_field(name=name, value=value, inline=False)
     await interaction.followup.send(embed=e, ephemeral=True)
 
@@ -918,7 +1073,10 @@ async def todo_archive(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     async with aiohttp.ClientSession() as session:
         archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        cfg,     _ = await gh_read(session, FILE_CONFIG)
     archive = archive or []
+    cfg     = cfg     or {}
+    style   = int(cfg.get("todo_style", 1))
     if not archive:
         await interaction.followup.send("No completed TODOs yet.", ephemeral=True)
         return
@@ -929,13 +1087,8 @@ async def todo_archive(interaction: discord.Interaction):
         timestamp=datetime.datetime.now(datetime.timezone.utc),
     )
     for t in recent[:10]:
-        done_by = f"<@{t['done_by_id']}>" if t.get("done_by_id") else t.get("done_by_name", "?")
-        done_at = t.get("done_at", "")[:10]
-        e.add_field(
-            name=f"#{t['id']} — {t['title'][:65]}",
-            value=f"Done by {done_by}  ·  {done_at}",
-            inline=False,
-        )
+        name, value = build_todo_card(t, style=style)
+        e.add_field(name=name, value=value, inline=False)
     e.set_footer(text="Showing most recent 10")
     await interaction.followup.send(embed=e, ephemeral=True)
 
@@ -1067,7 +1220,10 @@ async def todo_filter(
     await interaction.response.defer(ephemeral=True)
     async with aiohttp.ClientSession() as session:
         todos, _ = await gh_read(session, FILE_TODOS)
-    todos = todos or []
+        cfg,   _ = await gh_read(session, FILE_CONFIG)
+    todos   = todos or []
+    cfg     = cfg   or {}
+    style   = int(cfg.get("todo_style", 1))
     results = [t for t in todos if t["status"] != "done"]
 
     if status:
@@ -1093,11 +1249,45 @@ async def todo_filter(
         timestamp=datetime.datetime.now(datetime.timezone.utc),
     )
     for t in results[:15]:
-        name, value = build_todo_card(t)
+        name, value = build_todo_card(t, style=style)
         e.add_field(name=name, value=value, inline=False)
     if len(results) > 15:
         e.set_footer(text=f"Showing first 15 of {len(results)}")
     await interaction.followup.send(embed=e, ephemeral=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STYLE COMMAND
+# ══════════════════════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="todo_style", description="Change the TODO board card style (Admin)")
+@app_commands.describe(style="Card style to use for the live board")
+@app_commands.choices(style=[
+    app_commands.Choice(name="Style 1 — Clean (top accent bar)",        value=1),
+    app_commands.Choice(name="Style 2 — Sidebar (progress bars)",       value=2),
+    app_commands.Choice(name="Style 3 — Minimal (compact, no icons)",   value=3),
+    app_commands.Choice(name="Style 4 — Detailed (AI summary + quote)", value=4),
+])
+@app_commands.default_permissions(administrator=True)
+async def todo_style(interaction: discord.Interaction, style: int):
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        current = int(cfg.get("todo_style", 1))
+        if current == style:
+            await interaction.followup.send(
+                f"Board is already using Style {style}.", ephemeral=True
+            )
+            return
+        cfg["todo_style"] = style
+        await gh_write(session, FILE_CONFIG, cfg, sha, f"TODO board style -> {style}")
+
+    await interaction.followup.send(
+        f"Board style changed to **Style {style}**. Rebuilding the board now...",
+        ephemeral=True,
+    )
+    await update_todo_board(interaction.guild, cfg)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
