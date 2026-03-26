@@ -41,6 +41,43 @@ FILE_TODOS_ARCHIVE = "todos_archive.json"
 
 TODOS_PER_PAGE = 10  # max TODOs per Discord message
 
+# ── Duplicate detection helpers ────────────────────────────────────────────────
+
+def _similarity(a: str, b: str) -> float:
+    """Simple character-level similarity ratio between two strings."""
+    a, b = a.lower().strip(), b.lower().strip()
+    if not a or not b:
+        return 0.0
+    longer = max(len(a), len(b))
+    # Count matching chars using a basic sliding comparison
+    matches = sum(ca == cb for ca, cb in zip(a, b))
+    # Also count common characters regardless of position
+    common = sum(min(a.count(c), b.count(c)) for c in set(a))
+    return (matches + common) / (longer + len(a))
+
+def check_duplicate(todos: list, title: str, message_id: str):
+    """
+    Returns (kind, existing_todo) where kind is:
+      'message_id' — same source message already used
+      'exact'      — identical title exists
+      'fuzzy'      — similar title (~80%) exists
+      None         — no duplicate
+    """
+    title_clean = title.lower().strip()
+    for t in todos:
+        if t.get("status") == "done":
+            continue
+        # 1. Same message ID
+        if t.get("source_message_id") and t["source_message_id"] == message_id:
+            return "message_id", t
+        # 2. Exact title
+        if t["title"].lower().strip() == title_clean:
+            return "exact", t
+        # 3. Fuzzy
+        if _similarity(t["title"], title) >= 0.80:
+            return "fuzzy", t
+    return None, None
+
 # ── In-memory caches ───────────────────────────────────────────────────────────
 _cache: dict    = {}
 _cache_ts: dict = {}
@@ -329,60 +366,125 @@ async def on_message(message: discord.Message):
     cfg = cfg or {}
 
     todo_ch_id = cfg.get("todo_channel")
+    content    = message.content.strip()
 
-    # ── TODO channel: auto-create todo from message ────────────────────────────
+    # ── #addtodo trigger — works anywhere (including todo channel) ─────────────
+    TRIGGER = "#addtodo"
+    if TRIGGER in content.lower():
+        # Extract title: everything after #addtodo
+        idx   = content.lower().index(TRIGGER)
+        title = content[idx + len(TRIGGER):].strip()
+        if not title:
+            await message.reply("Please include a title: `#addtodo Your title here`", mention_author=False)
+            await bot.process_commands(message)
+            return
+        # Determine source message: if this is a reply, use the referenced msg
+        ref_msg = None
+        if message.reference and message.reference.message_id:
+            try:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+            except Exception:
+                pass
+        await auto_create_todo(message, title, cfg, source_message=ref_msg)
+        return
+
+    # ── TODO channel: message WITHOUT #addtodo → guide the user ───────────────
     if todo_ch_id and str(message.channel.id) == str(todo_ch_id):
-        content = message.content.strip()
         if content and not content.startswith("/"):
-            await auto_create_todo(message, content, cfg)
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await message.channel.send(
+                f"{message.author.mention} To add a TODO, use: `#addtodo Your title here`\n"
+                f"You can also reply to any message with `#addtodo Your title` to attach it as context.",
+                delete_after=15,
+            )
             return
 
     await bot.process_commands(message)
 
 
-async def auto_create_todo(message: discord.Message, content: str, cfg: dict):
-    """When someone posts in the todo channel, auto-register it as a todo."""
+async def auto_create_todo(message: discord.Message, title: str, cfg: dict, source_message: discord.Message = None):
+    """Create a todo from a #addtodo trigger. source_message is the referenced/original msg."""
+    src = source_message or message
+
+    # Build source message jump link + content snapshot
+    src_link     = f"https://discord.com/channels/{src.guild.id}/{src.channel.id}/{src.id}"
+    src_text     = src.content[:500] if src.content else ""
+    src_images   = [a.url for a in src.attachments if a.content_type and a.content_type.startswith("image")]
+    src_files    = [a.url for a in src.attachments if not (a.content_type and a.content_type.startswith("image"))]
+
     async with aiohttp.ClientSession() as session:
         todos, sha = await gh_read_fresh(session, FILE_TODOS)
         if not todos:
             todos = []
 
+        # ── Duplicate detection ────────────────────────────────────────────────
+        dup_kind, dup_todo = check_duplicate(todos, title, str(src.id))
+
+        if dup_kind == "message_id":
+            await message.reply(
+                f"This message is already tracked as TODO **#{dup_todo['id']}**.",
+                mention_author=False,
+            )
+            return
+
+        if dup_kind == "exact":
+            await message.reply(
+                f"A TODO with this exact title already exists: **#{dup_todo['id']}** — {dup_todo['title'][:80]}",
+                mention_author=False,
+            )
+            return
+
         todo_id = len(todos) + 1
         todo = {
-            "id": todo_id,
-            "title": content[:200],
-            "status": "todo",
-            "priority": "medium",
-            "added_by_id": str(message.author.id),
-            "added_by_name": str(message.author),
-            "assigned_to_id": None,
-            "assigned_to_name": None,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-            "message_id": str(message.id),
+            "id":                  todo_id,
+            "title":               title[:200],
+            "status":              "todo",
+            "priority":            "medium",
+            "added_by_id":         str(message.author.id),
+            "added_by_name":       str(message.author),
+            "assigned_to_id":      None,
+            "assigned_to_name":    None,
+            "created_at":          now_iso(),
+            "updated_at":          now_iso(),
+            "message_id":          str(message.id),
+            "source_message_id":   str(src.id),
+            "source_message_link": src_link,
+            "source_message_text": src_text,
+            "source_images":       src_images,
+            "source_files":        src_files,
         }
         todos.append(todo)
-        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id}: {content[:50]}")
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id}: {title[:50]}")
 
-    # Delete the user's original message to keep channel clean
-    try:
-        await message.delete()
-    except Exception:
-        pass
+    # Delete the trigger message to keep channel clean (only in todo channel)
+    todo_ch_id = cfg.get("todo_channel")
+    if todo_ch_id and str(message.channel.id) == str(todo_ch_id):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+    else:
+        # Outside todo channel: reply with confirmation
+        confirm = f"Added as TODO **#{todo_id}**."
+        if dup_kind == "fuzzy" and dup_todo:
+            confirm += f"\n> Note: a similar TODO already exists — **#{dup_todo['id']}** — {dup_todo['title'][:60]}"
+        await message.reply(confirm, mention_author=False)
 
-    # Update the single live board message only
     await update_todo_board(message.guild, cfg)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TODO BOARD HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-STATUS_EMOJI = {
-    "todo":          "🔵",
-    "in_progress":   "🟡",
-    "review_needed": "🟠",
-    "blocked":       "🔴",
-    "done":          "✅",
+STATUS_COLORS = {
+    "todo":          0x378ADD,   # blue
+    "in_progress":   0xBA7517,   # amber
+    "review_needed": 0x888780,   # gray
+    "blocked":       0xE24B4A,   # red
+    "done":          0x1D9E75,   # teal
 }
 STATUS_LABELS = {
     "todo":          "To Do",
@@ -391,50 +493,58 @@ STATUS_LABELS = {
     "blocked":       "Blocked",
     "done":          "Done",
 }
-PRIORITY_EMOJI = {"low": "🟢", "medium": "🟡", "high": "🔴"}
+STATUS_EMOJI = {k: "" for k in STATUS_LABELS}  # kept for compat, not used in display
+PRIORITY_EMOJI = {"low": "", "medium": "", "high": ""}  # kept for compat
 
 def build_stats_embed(todos: list, archive_count: int) -> discord.Embed:
     """MSG 1 — pinned stats board."""
-    active = [t for t in todos]  # todos.json only has active now
-    counts = {s: len([t for t in active if t["status"] == s])
+    counts = {s: len([t for t in todos if t["status"] == s])
               for s in ["todo", "in_progress", "review_needed", "blocked"]}
-    total_active = len(active)
+    total_active = len(todos)
 
     e = discord.Embed(
-        title="📊 AnymeX TODO Stats",
+        title="AnymeX — TODO Board",
         color=0x5865F2,
         timestamp=datetime.datetime.now(datetime.timezone.utc),
     )
-    e.add_field(name="🔵 To Do",          value=str(counts["todo"]),          inline=True)
-    e.add_field(name="🟡 In Progress",    value=str(counts["in_progress"]),   inline=True)
-    e.add_field(name="🟠 Review Needed",  value=str(counts["review_needed"]), inline=True)
-    e.add_field(name="🔴 Blocked",        value=str(counts["blocked"]),       inline=True)
-    e.add_field(name="✅ Total Done",     value=str(archive_count),           inline=True)
-    e.add_field(name="📋 Active",         value=str(total_active),            inline=True)
+    e.add_field(name="To Do",         value=str(counts["todo"]),          inline=True)
+    e.add_field(name="In Progress",   value=str(counts["in_progress"]),   inline=True)
+    e.add_field(name="Review Needed", value=str(counts["review_needed"]), inline=True)
+    e.add_field(name="Blocked",       value=str(counts["blocked"]),       inline=True)
+    e.add_field(name="Total Done",    value=str(archive_count),           inline=True)
+    e.add_field(name="Active",        value=str(total_active),            inline=True)
     e.set_footer(text="Last updated")
     return e
 
 def build_page_embed(todos: list, page: int, total_pages: int) -> discord.Embed:
-    """One page of TODOs — 10 per message."""
+    """One page of TODOs — 10 per message. Style B: left accent color = status."""
     e = discord.Embed(
-        title=f"📋 Active TODOs — Page {page}/{total_pages}",
+        title=f"Active TODOs — Page {page}/{total_pages}",
         color=0x5865F2,
         timestamp=datetime.datetime.now(datetime.timezone.utc),
     )
     for t in todos:
-        pri   = PRIORITY_EMOJI.get(t.get("priority", "medium"), "🟡")
-        emoji = STATUS_EMOJI.get(t["status"], "•")
-        label = STATUS_LABELS.get(t["status"], t["status"])
-        asgn  = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "👤 Unassigned"
-        added = f"<@{t['added_by_id']}>"
+        pri_map   = {"low": "Low", "medium": "Medium", "high": "High"}
+        pri_label = pri_map.get(t.get("priority", "medium"), "Medium")
+        status    = t.get("status", "todo")
+        label     = STATUS_LABELS.get(status, status)
+        asgn      = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "Unassigned"
+        added     = f"<@{t['added_by_id']}>"
+        color_hex = STATUS_COLORS.get(status, 0x5865F2)
+        # Use the status color as the field name accent via a colored bar character trick
+        # Discord embeds don't support per-field color, so we encode status in the label
         e.add_field(
-            name=f"{pri} #{t['id']} — {t['title'][:60]}",
-            value=f"{emoji} {label} • {asgn} • Added by {added}",
+            name=f"#{t['id']} — {t['title'][:65]}",
+            value=(
+                f"`{label}`  ·  Priority: {pri_label}\n"
+                f"Assigned: {asgn}  ·  Added by: {added}\n"
+                f"Use `/todo_info {t['id']}` for full details"
+            ),
             inline=False,
         )
     if not todos:
         e.description = "No active TODOs on this page."
-    e.set_footer(text=f"Page {page} of {total_pages} • Last updated")
+    e.set_footer(text=f"Page {page} of {total_pages}  ·  Last updated")
     return e
 
 async def update_todo_board(guild: discord.Guild, cfg: dict):
@@ -673,11 +783,11 @@ async def todo_list(interaction: discord.Interaction):
     archive = archive or []
     active  = [t for t in todos if t["status"] != "done"]
     if not active:
-        await interaction.followup.send(f"No active TODOs! ✅ {len(archive)} total completed.")
+        await interaction.followup.send(f"No active TODOs. {len(archive)} total completed.")
         return
     pages = [active[i:i+TODOS_PER_PAGE] for i in range(0, len(active), TODOS_PER_PAGE)]
     total_pages = len(pages)
-    for i, page in enumerate(pages[:3]):  # show max 3 pages in command response
+    for i, page in enumerate(pages[:3]):
         embed = build_page_embed(page, i + 1, total_pages)
         await interaction.followup.send(embed=embed)
 
@@ -690,16 +800,16 @@ async def todo_mine(interaction: discord.Interaction):
     todos = todos or []
     mine  = [t for t in todos if t.get("assigned_to_id") == str(interaction.user.id)]
     if not mine:
-        await interaction.followup.send("You have no active TODOs assigned to you! 🎉", ephemeral=True)
+        await interaction.followup.send("You have no active TODOs assigned to you.", ephemeral=True)
         return
-    e = discord.Embed(title="📋 Your TODOs", color=0x5865F2)
+    e = discord.Embed(title="Your TODOs", color=0x5865F2)
     for t in mine:
-        pri   = PRIORITY_EMOJI.get(t.get("priority", "medium"), "🟡")
-        emoji = STATUS_EMOJI.get(t["status"], "•")
-        label = STATUS_LABELS.get(t["status"], t["status"])
+        pri_map   = {"low": "Low", "medium": "Medium", "high": "High"}
+        pri_label = pri_map.get(t.get("priority", "medium"), "Medium")
+        label     = STATUS_LABELS.get(t["status"], t["status"])
         e.add_field(
-            name=f"{pri} #{t['id']} — {t['title'][:60]}",
-            value=f"{emoji} {label}",
+            name=f"#{t['id']} — {t['title'][:65]}",
+            value=f"`{label}`  ·  Priority: {pri_label}\nUse `/todo_info {t['id']}` for full details",
             inline=False,
         )
     await interaction.followup.send(embed=e, ephemeral=True)
@@ -712,24 +822,86 @@ async def todo_archive(interaction: discord.Interaction):
         archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
     archive = archive or []
     if not archive:
-        await interaction.followup.send("No completed TODOs yet!", ephemeral=True)
+        await interaction.followup.send("No completed TODOs yet.", ephemeral=True)
         return
-    # Show most recent 15
     recent = list(reversed(archive[-15:]))
     e = discord.Embed(
-        title=f"📜 Completed TODOs ({len(archive)} total)",
-        color=0x57F287,
+        title=f"Completed TODOs  ({len(archive)} total)",
+        color=0x1D9E75,
         timestamp=datetime.datetime.now(datetime.timezone.utc),
     )
     for t in recent[:10]:
         done_by = f"<@{t['done_by_id']}>" if t.get("done_by_id") else t.get("done_by_name", "?")
         done_at = t.get("done_at", "")[:10]
         e.add_field(
-            name=f"✅ #{t['id']} — {t['title'][:60]}",
-            value=f"Done by {done_by} • {done_at}",
+            name=f"#{t['id']} — {t['title'][:65]}",
+            value=f"Done by {done_by}  ·  {done_at}",
             inline=False,
         )
-    e.set_footer(text="Showing most recent 10 • Use /todo_archive for full history")
+    e.set_footer(text="Showing most recent 10")
+    await interaction.followup.send(embed=e, ephemeral=True)
+
+
+@bot.tree.command(name="todo_info", description="View full details of a TODO including original message")
+@app_commands.describe(todo_id="TODO number")
+async def todo_info(interaction: discord.Interaction, todo_id: int):
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos,   _ = await gh_read(session, FILE_TODOS)
+        archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+    all_todos = (todos or []) + (archive or [])
+    todo = next((t for t in all_todos if t["id"] == todo_id), None)
+    if not todo:
+        await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True)
+        return
+
+    status   = todo.get("status", "todo")
+    label    = STATUS_LABELS.get(status, status)
+    color    = STATUS_COLORS.get(status, 0x5865F2)
+    pri_map  = {"low": "Low", "medium": "Medium", "high": "High"}
+    priority = pri_map.get(todo.get("priority", "medium"), "Medium")
+
+    e = discord.Embed(
+        title=f"#{todo['id']} — {todo['title']}",
+        color=color,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    e.add_field(name="Status",    value=label,    inline=True)
+    e.add_field(name="Priority",  value=priority, inline=True)
+
+    assigned = f"<@{todo['assigned_to_id']}>" if todo.get("assigned_to_id") else "Unassigned"
+    e.add_field(name="Assigned",  value=assigned, inline=True)
+    e.add_field(name="Added by",  value=f"<@{todo['added_by_id']}>", inline=True)
+    e.add_field(name="Created",   value=todo.get("created_at", "")[:10], inline=True)
+    e.add_field(name="Updated",   value=todo.get("updated_at", "")[:10], inline=True)
+
+    if todo.get("done_by_id"):
+        e.add_field(name="Completed by", value=f"<@{todo['done_by_id']}>  ·  {todo.get('done_at','')[:10]}", inline=False)
+
+    # ── Original message context ───────────────────────────────────────────────
+    src_text = todo.get("source_message_text", "")
+    src_link = todo.get("source_message_link", "")
+    src_imgs = todo.get("source_images", [])
+    src_files= todo.get("source_files", [])
+
+    if src_text:
+        e.add_field(name="Original message", value=src_text[:500], inline=False)
+
+    if src_link:
+        e.add_field(name="Source", value=f"[Jump to message]({src_link})", inline=False)
+
+    if src_imgs:
+        # Show first image as embed image, list extras as links
+        e.set_image(url=src_imgs[0])
+        if len(src_imgs) > 1:
+            extra = "\n".join(f"[Image {i+2}]({u})" for i, u in enumerate(src_imgs[1:4]))
+            e.add_field(name="More images", value=extra, inline=False)
+
+    if src_files:
+        file_links = "\n".join(f"[{u.split('/')[-1]}]({u})" for u in src_files[:5])
+        e.add_field(name="Attachments", value=file_links, inline=False)
+
+    e.set_footer(text=f"TODO #{todo_id}")
     await interaction.followup.send(embed=e, ephemeral=True)
 
 
