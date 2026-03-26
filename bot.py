@@ -16,7 +16,11 @@ import time
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN")
+GROQ_API_KEY  = os.environ.get("GROQ_API_KEY")
 PORT          = int(os.environ.get("PORT", 8080))
+
+GROQ_API      = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL    = "llama-3.3-70b-versatile"
 
 # Data storage repo
 DATA_OWNER  = "Shebyyy"
@@ -135,6 +139,71 @@ def check_duplicate(todos: list, title: str, source_msg_id: str):
     return None, None
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GROQ AI HELPER
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def ai_generate_title(message_text: str) -> tuple[str, str]:
+    """
+    Uses Groq to generate a short TODO title and a clean description.
+    Returns (title, description). Falls back to truncated text if AI fails.
+    """
+    if not GROQ_API_KEY or not message_text.strip():
+        fallback = message_text.strip()[:100]
+        return fallback, message_text.strip()
+
+    prompt = f"""Generate a short, clear TODO title AND a clean one-sentence description from the message below.
+
+Rules for title:
+- Max 10 words
+- No punctuation at the end
+- Keep it actionable (start with a verb if possible)
+- No filler words
+
+Rules for description:
+- One sentence, max 150 chars
+- Summarise the core issue or task clearly
+- Keep the user's intent
+
+Respond ONLY in this exact JSON format with no extra text:
+{{"title": "...", "description": "..."}}
+
+Message:
+{message_text[:800]}"""
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 120,
+        "temperature": 0.3,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GROQ_API, headers=headers, json=payload) as r:
+                if r.status != 200:
+                    raise Exception(f"Groq status {r.status}")
+                data = await r.json()
+                raw = data["choices"][0]["message"]["content"].strip()
+                # Strip markdown code fences if present
+                raw = raw.strip("`").strip()
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
+                import json as _json
+                parsed = _json.loads(raw)
+                title = parsed.get("title", "").strip()[:120]
+                desc  = parsed.get("description", "").strip()[:200]
+                if not title:
+                    raise Exception("Empty title")
+                return title, desc
+    except Exception as ex:
+        print(f"Groq AI error: {ex}")
+        fallback = message_text.strip()[:100]
+        return fallback, message_text.strip()[:200]
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CARD STYLES & EMBED BUILDERS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -172,15 +241,19 @@ def build_stats_embed(todos: list, archive_count: int) -> discord.Embed:
     return e
 
 def build_todo_card(t: dict) -> tuple[str, str]:
-    """Returns (name, value) for an embed field — Style B feel via text."""
+    """Returns (name, value) for an embed field."""
     status   = t.get("status", "todo")
     label    = STATUS_LABELS.get(status, status)
     priority = PRIORITY_LABELS.get(t.get("priority", "medium"), "Medium")
     asgn     = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "Unassigned"
     added    = f"<@{t['added_by_id']}>"
     name     = f"#{t['id']} — {t['title'][:65]}"
+    # Show AI description if present, otherwise show source text snippet
+    desc = t.get("ai_description") or ""
+    desc_line = f"\n> {desc[:120]}" if desc else ""
+    auto_tag  = " ✦ AI title" if t.get("auto_generated") else ""
     value    = (
-        f"`{label}`  ·  {priority}\n"
+        f"`{label}`  ·  {priority}{auto_tag}{desc_line}\n"
         f"Assigned: {asgn}  ·  Added by: {added}"
     )
     return name, value
@@ -317,14 +390,17 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TodoConfirmView(discord.ui.View):
-    def __init__(self, author_id: int, title: str, sources: list[dict], cfg: dict, fuzzy_warn: str = ""):
+    def __init__(self, author_id: int, title: str, sources: list[dict], cfg: dict,
+                 fuzzy_warn: str = "", auto_generated: bool = False, ai_description: str = ""):
         super().__init__(timeout=60)
-        self.author_id  = author_id
-        self.title      = title
-        self.sources    = sources   # list of source dicts (one per message)
-        self.cfg        = cfg
-        self.fuzzy_warn = fuzzy_warn
-        self.done       = False
+        self.author_id      = author_id
+        self.title          = title
+        self.sources        = sources
+        self.cfg            = cfg
+        self.fuzzy_warn     = fuzzy_warn
+        self.auto_generated = auto_generated
+        self.ai_description = ai_description
+        self.done           = False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
@@ -354,6 +430,8 @@ class TodoConfirmView(discord.ui.View):
             todo = {
                 "id":                   todo_id,
                 "title":                self.title[:200],
+                "auto_generated":       self.auto_generated,
+                "ai_description":       self.ai_description,
                 "status":               "todo",
                 "priority":             "medium",
                 "added_by_id":          str(interaction.user.id),
@@ -422,6 +500,8 @@ async def trigger_todo_confirm(
     cfg: dict,
     extra_msg_ids: list[str] = None,
     ref_msg: discord.Message = None,
+    auto_generated: bool = False,
+    ai_description: str = "",
 ):
     """
     Show a public confirm prompt (only triggering user can click).
@@ -469,14 +549,27 @@ async def trigger_todo_confirm(
         src_summary += f"\n> Similar todo exists: {fuzzy_warn}"
 
     view = TodoConfirmView(
-        author_id  = trigger_msg.author.id,
-        title      = title,
-        sources    = sources,
-        cfg        = cfg,
-        fuzzy_warn = fuzzy_warn,
+        author_id      = trigger_msg.author.id,
+        title          = title,
+        sources        = sources,
+        cfg            = cfg,
+        fuzzy_warn     = fuzzy_warn,
+        auto_generated = auto_generated,
+        ai_description = ai_description,
     )
+    # Build confirm message — always show original user message alongside AI output
+    confirm_lines = [f"{trigger_msg.author.mention} Add this as a todo?"]
+    confirm_lines.append(f"**Title:** {src_summary}")
+    if auto_generated:
+        confirm_lines.append(f"**AI title** ✦ — generated from your message")
+    if ai_description:
+        confirm_lines.append(f"**Summary:** {ai_description}")
+    # Always show the original message text so user can verify AI understood correctly
+    primary_text = (sources[0].get("text") or "").strip()
+    if primary_text and auto_generated:
+        confirm_lines.append(f"**Your message:** {primary_text[:300]}")
     await trigger_msg.reply(
-        f"{trigger_msg.author.mention} Add this as a todo? {src_summary}",
+        "\n".join(confirm_lines),
         view=view,
         mention_author=False,
     )
@@ -518,7 +611,9 @@ async def on_message(message: discord.Message):
         rest = content[idx + len(TRIGGER):].strip()
 
         # Parse --msgs flag: #addtodo My title --msgs 111 222 333
-        extra_ids = []
+        extra_ids      = []
+        auto_generated = False
+        ai_description = ""
         if "--msgs" in rest:
             parts     = rest.split("--msgs", 1)
             title     = parts[0].strip()
@@ -527,13 +622,31 @@ async def on_message(message: discord.Message):
             title = rest
 
         if not title:
-            await message.reply(
-                "Please include a title: `#addtodo Your title here`\n"
-                "To attach extra messages: `#addtodo Title --msgs ID1 ID2`",
-                mention_author=False,
-            )
-            await bot.process_commands(message)
-            return
+            # No title given — use AI to generate one from the message content
+            # Resolve referenced message first so we get its text too
+            ref_msg_early = None
+            if message.reference and message.reference.message_id:
+                try:
+                    ref_msg_early = await message.channel.fetch_message(message.reference.message_id)
+                except Exception:
+                    pass
+            source_text = (ref_msg_early.content if ref_msg_early else message.content) or ""
+            source_text = source_text.replace(TRIGGER, "").strip()
+            if not source_text:
+                await message.reply(
+                    "Please include a title or some message content for AI to generate one from:\n"
+                    "`#addtodo Your title here`\n"
+                    "Or reply to a message with just `#addtodo` to auto-generate the title.",
+                    mention_author=False,
+                )
+                await bot.process_commands(message)
+                return
+            # Show typing indicator while AI works
+            async with message.channel.typing():
+                ai_title, ai_desc = await ai_generate_title(source_text)
+            title          = ai_title
+            auto_generated = True
+            ai_description = ai_desc
 
         # Resolve referenced message if this is a reply
         ref_msg = None
@@ -550,21 +663,64 @@ async def on_message(message: discord.Message):
             except Exception:
                 pass
 
-        await trigger_todo_confirm(message, title, cfg, extra_ids, ref_msg)
+        await trigger_todo_confirm(
+            message, title, cfg, extra_ids, ref_msg,
+            auto_generated=auto_generated,
+            ai_description=ai_description,
+        )
         return
 
     # ── TODO channel: message without #addtodo → guide the user ───────────────
     if todo_ch_id and str(message.channel.id) == str(todo_ch_id):
         if content and not content.startswith("/"):
+            # Save message details before deleting
+            author_mention = message.author.mention
+            author_name    = str(message.author)
+            jump_link      = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
+            msg_text       = message.content or ""
+            attachments    = message.attachments[:]
+
             try:
                 await message.delete()
             except Exception:
                 pass
+
+            # Copy full message to channel as a log (preserving author, content, attachments, jump link)
+            copy_lines = [
+                f"📋 **Message from {author_mention}** (copied from TODO channel)",
+                f"> {msg_text[:1000]}" if msg_text else "",
+                f"[Jump to original]({jump_link})" if jump_link else "",
+            ]
+            copy_content = "\n".join(l for l in copy_lines if l)
+
+            # Re-attach any files
+            files = []
+            for att in attachments[:5]:
+                try:
+                    async with aiohttp.ClientSession() as dl_session:
+                        async with dl_session.get(att.url) as resp:
+                            if resp.status == 200:
+                                file_bytes = await resp.read()
+                                files.append(discord.File(
+                                    __import__("io").BytesIO(file_bytes),
+                                    filename=att.filename,
+                                ))
+                except Exception:
+                    pass
+
+            # Send copied message back in same channel
+            if files:
+                await message.channel.send(copy_content, files=files, delete_after=30)
+            else:
+                await message.channel.send(copy_content, delete_after=30)
+
+            # Send usage guide
             await message.channel.send(
-                f"{message.author.mention} To add a TODO use: `#addtodo Your title here`\n"
-                f"Reply to a message with `#addtodo Title` to attach it as context.\n"
+                f"{author_mention} This channel is for the TODO board only.\n"
+                f"To add a TODO use: `#addtodo Your title here`\n"
+                f"Or reply to any message with `#addtodo` and I'll auto-generate a title using AI.\n"
                 f"To combine multiple messages: `#addtodo Title --msgs ID1 ID2`",
-                delete_after=20,
+                delete_after=25,
             )
             return
 
@@ -828,8 +984,13 @@ async def todo_info(interaction: discord.Interaction, todo_id: int):
     src_imgs  = todo.get("source_images", [])
     src_files = todo.get("source_files",  [])
 
+    # AI fields — always show user original message alongside AI output
+    ai_title = todo.get("auto_generated")
+    ai_desc  = todo.get("ai_description", "")
+    if ai_title and ai_desc:
+        e.add_field(name="AI summary", value=ai_desc[:300], inline=False)
     if src_text:
-        e.add_field(name="Original message", value=src_text[:500], inline=False)
+        e.add_field(name="Original message (user)", value=src_text[:500], inline=False)
 
     if src_links:
         links_val = "  ·  ".join(f"[Message {i+1}]({l})" for i, l in enumerate(src_links[:5]))
@@ -847,6 +1008,97 @@ async def todo_info(interaction: discord.Interaction, todo_id: int):
 
     e.set_footer(text=f"TODO #{todo_id}")
     await interaction.followup.send(embed=e, ephemeral=True)
+
+@bot.tree.command(name="todo_unassign", description="Remove assignment from a TODO")
+@app_commands.describe(todo_id="TODO number")
+async def todo_unassign(interaction: discord.Interaction, todo_id: int):
+    if not await has_todo_role(interaction):
+        await interaction.response.send_message("No permission to unassign TODOs.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+        if not todo:
+            await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True)
+            return
+        if not todo.get("assigned_to_id"):
+            await interaction.followup.send(f"TODO #{todo_id} is not assigned to anyone.", ephemeral=True)
+            return
+        prev = todo["assigned_to_name"]
+        todo["assigned_to_id"]   = None
+        todo["assigned_to_name"] = None
+        todo["updated_at"]       = now_iso()
+        if todo["status"] == "in_progress":
+            todo["status"] = "todo"
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} unassigned")
+    await interaction.followup.send(
+        f"TODO **#{todo_id}** unassigned from {prev}. Status reset to To Do.",
+        ephemeral=True,
+    )
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await update_todo_board(interaction.guild, cfg or {})
+
+
+@bot.tree.command(name="todo_filter", description="Filter TODOs by status, priority or assigned user")
+@app_commands.describe(
+    status="Filter by status",
+    priority="Filter by priority",
+    user="Filter by assigned user",
+)
+@app_commands.choices(status=[
+    app_commands.Choice(name="To Do",          value="todo"),
+    app_commands.Choice(name="In Progress",    value="in_progress"),
+    app_commands.Choice(name="Review Needed",  value="review_needed"),
+    app_commands.Choice(name="Blocked",        value="blocked"),
+])
+@app_commands.choices(priority=[
+    app_commands.Choice(name="Low",    value="low"),
+    app_commands.Choice(name="Medium", value="medium"),
+    app_commands.Choice(name="High",   value="high"),
+])
+async def todo_filter(
+    interaction: discord.Interaction,
+    status: str = None,
+    priority: str = None,
+    user: discord.Member = None,
+):
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos, _ = await gh_read(session, FILE_TODOS)
+    todos = todos or []
+    results = [t for t in todos if t["status"] != "done"]
+
+    if status:
+        results = [t for t in results if t["status"] == status]
+    if priority:
+        results = [t for t in results if t.get("priority") == priority]
+    if user:
+        results = [t for t in results if t.get("assigned_to_id") == str(user.id)]
+
+    if not results:
+        await interaction.followup.send("No TODOs match those filters.", ephemeral=True)
+        return
+
+    filters_used = []
+    if status:   filters_used.append(STATUS_LABELS.get(status, status))
+    if priority: filters_used.append(PRIORITY_LABELS.get(priority, priority))
+    if user:     filters_used.append(f"assigned to {user.display_name}")
+    filter_str = "  ·  ".join(filters_used) or "All"
+
+    e = discord.Embed(
+        title=f"Filtered TODOs — {filter_str}  ({len(results)} found)",
+        color=0x5865F2,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    for t in results[:15]:
+        name, value = build_todo_card(t)
+        e.add_field(name=name, value=value, inline=False)
+    if len(results) > 15:
+        e.set_footer(text=f"Showing first 15 of {len(results)}")
+    await interaction.followup.send(embed=e, ephemeral=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SETUP COMMANDS
