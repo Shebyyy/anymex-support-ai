@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
     "todo_stats_message_id":  None,
     "todo_page_message_ids":  [],
     "todo_style":             1,
+    "prefix":                 "ax!",
 }
 
 # ── In-memory cache ────────────────────────────────────────────────────────────
@@ -444,7 +445,27 @@ async def start_health_server():
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix="ax!", intents=intents, help_command=None)
+async def _get_prefix(bot, message):
+    try:
+        async with aiohttp.ClientSession() as session:
+            cfg, _ = await gh_read(session, FILE_CONFIG)
+        return (cfg or {}).get("prefix", "ax!")
+    except Exception:
+        return "ax!"
+
+bot = commands.Bot(command_prefix=_get_prefix, intents=intents, help_command=None)
+
+async def has_todo_role_msg(message: discord.Message) -> bool:
+    """Permission check for prefix commands (admin or todo role)."""
+    if message.author.guild_permissions.administrator:
+        return True
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    if not cfg:
+        return False
+    todo_roles    = cfg.get("todo_roles", [])
+    user_role_ids = [str(r.id) for r in message.author.roles]
+    return any(rid in user_role_ids for rid in todo_roles)
 
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1346,6 +1367,472 @@ async def config_view(interaction: discord.Interaction):
     roles = cfg.get("todo_roles", [])
     e.add_field(name="TODO Roles",  value=(", ".join(f"<@&{r}>" for r in roles) or "None"), inline=False)
     await interaction.followup.send(embed=e, ephemeral=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SETPREFIX — slash + prefix
+# ══════════════════════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="setprefix", description="Change the bot command prefix (Admin)")
+@app_commands.describe(new_prefix="New prefix to use, e.g. ! or ax!")
+@app_commands.default_permissions(administrator=True)
+async def setprefix_slash(interaction: discord.Interaction, new_prefix: str):
+    await interaction.response.defer(ephemeral=True)
+    new_prefix = new_prefix.strip()
+    if not new_prefix or len(new_prefix) > 10:
+        await interaction.followup.send("Prefix must be 1–10 characters.", ephemeral=True)
+        return
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        cfg["prefix"] = new_prefix
+        await gh_write(session, FILE_CONFIG, cfg, sha, f"Prefix changed to {new_prefix}")
+    await interaction.followup.send(f"Prefix updated to `{new_prefix}`.", ephemeral=True)
+
+@bot.command(name="setprefix")
+async def setprefix_prefix(ctx, new_prefix: str = None):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("Only admins can change the prefix.", delete_after=10)
+        return
+    if not new_prefix or len(new_prefix.strip()) > 10:
+        await ctx.send("Prefix must be 1–10 characters.", delete_after=10)
+        return
+    new_prefix = new_prefix.strip()
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        cfg["prefix"] = new_prefix
+        await gh_write(session, FILE_CONFIG, cfg, sha, f"Prefix changed to {new_prefix}")
+    await ctx.send(f"Prefix updated to `{new_prefix}`.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELP — slash + prefix
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _build_help_embed(prefix: str) -> discord.Embed:
+    e = discord.Embed(
+        title="AnymeX TODO Bot — Help",
+        description=(
+            f"Use slash commands `/` or prefix `{prefix}` (no underscores).\n"
+            f"Prefix commands require **Admin** or **TODO Role**.\n"
+            f"Change prefix with `{prefix}setprefix <new>` or `/setprefix`."
+        ),
+        color=0x5865F2,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    e.add_field(name="​", value="**── TODO Management ──**", inline=False)
+    e.add_field(
+        name=f"`/todo_style` · `{prefix}todostyle <1-4>`",
+        value="Change the card style for the entire TODO board.\n`1` Clean · `2` Sidebar · `3` Minimal · `4` Detailed",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_list` · `{prefix}todolist`",
+        value="Show all active TODOs (paginated).",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_mine` · `{prefix}todomine`",
+        value="Show TODOs assigned to you.",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_filter` · `{prefix}todofilter [status] [priority] [user]`",
+        value="Filter TODOs by status, priority or assigned user.",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_info <id>` · `{prefix}todoinfo <id>`",
+        value="View full details of a specific TODO.",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_archive` · `{prefix}todoarchive`",
+        value="View the 10 most recently completed TODOs.",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_assign <id> [user]` · `{prefix}todoassign <id> [user]`",
+        value="Assign a TODO to yourself or another user.",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_unassign <id>` · `{prefix}todounassign <id>`",
+        value="Remove assignment from a TODO.",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_status <id> <status>` · `{prefix}todostatus <id> <status>`",
+        value="Update TODO status: `todo` · `in_progress` · `review_needed` · `blocked` · `done`",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_priority <id> <priority>` · `{prefix}todopriority <id> <priority>`",
+        value="Set TODO priority: `low` · `medium` · `high`",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/todo_delete <id>` · `{prefix}tododelete <id>`",
+        value="Delete a TODO. You can only delete ones you added (admins can delete any).",
+        inline=False,
+    )
+    e.add_field(name="​", value="**── Adding TODOs ──**", inline=False)
+    e.add_field(
+        name="`#addtodo <title>`",
+        value=(
+            "Add a TODO by typing in any channel.\n"
+            "Reply to a message + `#addtodo` to auto-generate title with AI.\n"
+            "Combine messages: `#addtodo Title --msgs ID1 ID2`"
+        ),
+        inline=False,
+    )
+    e.add_field(name="​", value="**── Setup & Config ──**", inline=False)
+    e.add_field(
+        name=f"`/setup_todo_channel` · `{prefix}setuptodochannel <#channel>`",
+        value="Set the channel where the live TODO board is posted. (Admin)",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/setup_todo_roles` · `{prefix}setuptodoroles <@role>`",
+        value="Toggle a role's access to manage TODOs. (Admin)",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/config_view` · `{prefix}configview`",
+        value="View current bot config: channel, roles, style, prefix. (Admin)",
+        inline=False,
+    )
+    e.add_field(
+        name=f"`/setprefix <prefix>` · `{prefix}setprefix <prefix>`",
+        value="Change the bot's command prefix. (Admin)",
+        inline=False,
+    )
+    e.set_footer(text="AnymeX TODO Bot")
+    return e
+
+@bot.tree.command(name="help", description="Show all bot commands and usage")
+async def help_slash(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    prefix = (cfg or {}).get("prefix", "ax!")
+    await interaction.followup.send(embed=_build_help_embed(prefix), ephemeral=True)
+
+@bot.command(name="help")
+async def help_prefix(ctx):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("You need the TODO role or admin to use this.", delete_after=10)
+        return
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    prefix = (cfg or {}).get("prefix", "ax!")
+    await ctx.send(embed=_build_help_embed(prefix))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PREFIX VERSIONS OF ALL TODO COMMANDS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@bot.command(name="todostyle")
+async def p_todostyle(ctx, style: int = None):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    if style not in (1, 2, 3, 4):
+        await ctx.send("Usage: `todostyle <1-4>`\n`1` Clean · `2` Sidebar · `3` Minimal · `4` Detailed", delete_after=15)
+        return
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        if int(cfg.get("todo_style", 1)) == style:
+            await ctx.send(f"Board is already using Style {style}."); return
+        cfg["todo_style"] = style
+        await gh_write(session, FILE_CONFIG, cfg, sha, f"TODO board style -> {style}")
+    msg = await ctx.send(f"Style changed to **Style {style}**. Rebuilding board...")
+    await update_todo_board(ctx.guild, cfg)
+    await msg.edit(content=f"Style changed to **Style {style}**. Board updated.")
+
+@bot.command(name="todolist")
+async def p_todolist(ctx):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        todos,   _ = await gh_read(session, FILE_TODOS)
+        archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        cfg,     _ = await gh_read(session, FILE_CONFIG)
+    todos = todos or []; archive = archive or []; cfg = cfg or {}
+    style = int(cfg.get("todo_style", 1))
+    active = [t for t in todos if t["status"] != "done"]
+    if not active:
+        await ctx.send(f"No active TODOs. {len(archive)} total completed."); return
+    pages = [active[i:i+TODOS_PER_PAGE] for i in range(0, len(active), TODOS_PER_PAGE)]
+    for i, page in enumerate(pages[:3]):
+        await ctx.send(embed=build_page_embed(page, i + 1, len(pages), style=style))
+
+@bot.command(name="todomine")
+async def p_todomine(ctx):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        todos, _ = await gh_read(session, FILE_TODOS)
+        cfg,   _ = await gh_read(session, FILE_CONFIG)
+    todos = todos or []; cfg = cfg or {}
+    style = int(cfg.get("todo_style", 1))
+    mine = [t for t in todos if t.get("assigned_to_id") == str(ctx.author.id)]
+    if not mine:
+        await ctx.send("No TODOs assigned to you."); return
+    e = discord.Embed(title="Your TODOs", color=0x5865F2)
+    for t in mine:
+        name, value = build_todo_card(t, style=style)
+        e.add_field(name=name, value=value, inline=False)
+    await ctx.send(embed=e)
+
+@bot.command(name="todofilter")
+async def p_todofilter(ctx, *, args: str = ""):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        todos, _ = await gh_read(session, FILE_TODOS)
+        cfg,   _ = await gh_read(session, FILE_CONFIG)
+    todos = todos or []; cfg = cfg or {}
+    style = int(cfg.get("todo_style", 1))
+    results = [t for t in todos if t["status"] != "done"]
+    for word in args.lower().split():
+        if word in STATUS_LABELS:
+            results = [t for t in results if t["status"] == word]
+        elif word in PRIORITY_LABELS:
+            results = [t for t in results if t.get("priority") == word]
+    if not results:
+        await ctx.send("No TODOs match those filters."); return
+    e = discord.Embed(title=f"Filtered TODOs ({len(results)} found)", color=0x5865F2)
+    for t in results[:15]:
+        name, value = build_todo_card(t, style=style)
+        e.add_field(name=name, value=value, inline=False)
+    await ctx.send(embed=e)
+
+@bot.command(name="todoinfo")
+async def p_todoinfo(ctx, todo_id: int = None):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    if not todo_id:
+        await ctx.send("Usage: `todoinfo <id>`", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        todos,   _ = await gh_read(session, FILE_TODOS)
+        archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+    all_todos = (todos or []) + (archive or [])
+    todo = next((t for t in all_todos if t["id"] == todo_id), None)
+    if not todo:
+        await ctx.send(f"TODO #{todo_id} not found."); return
+    status   = todo.get("status", "todo")
+    color    = STATUS_COLORS.get(status, 0x5865F2)
+    label    = STATUS_LABELS.get(status, status)
+    priority = PRIORITY_LABELS.get(todo.get("priority", "medium"), "Medium")
+    assigned = f"<@{todo['assigned_to_id']}>" if todo.get("assigned_to_id") else "Unassigned"
+    e = discord.Embed(title=f"#{todo['id']} — {todo['title']}", color=color,
+                      timestamp=datetime.datetime.now(datetime.timezone.utc))
+    e.add_field(name="Status",   value=label,    inline=True)
+    e.add_field(name="Priority", value=priority, inline=True)
+    e.add_field(name="Assigned", value=assigned, inline=True)
+    e.add_field(name="Added by", value=f"<@{todo['added_by_id']}>",     inline=True)
+    e.add_field(name="Created",  value=todo.get("created_at","")[:10],  inline=True)
+    e.add_field(name="Updated",  value=todo.get("updated_at","")[:10],  inline=True)
+    if todo.get("ai_description"):
+        e.add_field(name="AI summary", value=todo["ai_description"][:300], inline=False)
+    e.set_footer(text=f"TODO #{todo_id}")
+    await ctx.send(embed=e)
+
+@bot.command(name="todoarchive")
+async def p_todoarchive(ctx):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        cfg,     _ = await gh_read(session, FILE_CONFIG)
+    archive = archive or []; cfg = cfg or {}
+    style = int(cfg.get("todo_style", 1))
+    if not archive:
+        await ctx.send("No completed TODOs yet."); return
+    recent = list(reversed(archive[-15:]))
+    e = discord.Embed(title=f"Completed TODOs ({len(archive)} total)", color=0x1D9E75,
+                      timestamp=datetime.datetime.now(datetime.timezone.utc))
+    for t in recent[:10]:
+        name, value = build_todo_card(t, style=style)
+        e.add_field(name=name, value=value, inline=False)
+    e.set_footer(text="Showing most recent 10")
+    await ctx.send(embed=e)
+
+@bot.command(name="todoassign")
+async def p_todoassign(ctx, todo_id: int = None, user: discord.Member = None):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    if not todo_id:
+        await ctx.send("Usage: `todoassign <id> [user]`", delete_after=10); return
+    target = user or ctx.author
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        if not todos:
+            await ctx.send("No TODOs found."); return
+        todo = next((t for t in todos if t["id"] == todo_id), None)
+        if not todo:
+            await ctx.send(f"TODO #{todo_id} not found."); return
+        todo["assigned_to_id"]   = str(target.id)
+        todo["assigned_to_name"] = str(target)
+        todo["updated_at"]       = now_iso()
+        if todo["status"] == "todo":
+            todo["status"] = "in_progress"
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} assigned to {target}")
+    await ctx.send(f"TODO **#{todo_id}** assigned to {target.mention}.")
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await update_todo_board(ctx.guild, cfg or {})
+
+@bot.command(name="todounassign")
+async def p_todounassign(ctx, todo_id: int = None):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    if not todo_id:
+        await ctx.send("Usage: `todounassign <id>`", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+        if not todo:
+            await ctx.send(f"TODO #{todo_id} not found."); return
+        if not todo.get("assigned_to_id"):
+            await ctx.send(f"TODO #{todo_id} is not assigned to anyone."); return
+        prev = todo["assigned_to_name"]
+        todo["assigned_to_id"]   = None
+        todo["assigned_to_name"] = None
+        todo["updated_at"]       = now_iso()
+        if todo["status"] == "in_progress":
+            todo["status"] = "todo"
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} unassigned")
+    await ctx.send(f"TODO **#{todo_id}** unassigned from {prev}.")
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await update_todo_board(ctx.guild, cfg or {})
+
+@bot.command(name="todostatus")
+async def p_todostatus(ctx, todo_id: int = None, status: str = None):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    valid = ["todo", "in_progress", "review_needed", "blocked", "done"]
+    if not todo_id or status not in valid:
+        await ctx.send(f"Usage: `todostatus <id> <{'|'.join(valid)}>`", delete_after=15); return
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+        if not todo:
+            await ctx.send(f"TODO #{todo_id} not found."); return
+        if status == "done":
+            todo["done_by_id"]   = str(ctx.author.id)
+            todo["done_by_name"] = str(ctx.author)
+            todo["done_at"]      = now_iso()
+            todos = [t for t in todos if t["id"] != todo_id]
+            await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} done")
+            archive, arch_sha = await gh_read_fresh(session, FILE_TODOS_ARCHIVE)
+            archive = archive or []
+            archive.append(todo)
+            await gh_write(session, FILE_TODOS_ARCHIVE, archive, arch_sha, f"Archive TODO #{todo_id}")
+            await ctx.send(f"TODO **#{todo_id}** marked as done and archived.")
+        else:
+            todo["status"] = status
+            await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} status -> {status}")
+            await ctx.send(f"TODO **#{todo_id}** status updated to **{STATUS_LABELS.get(status, status)}**.")
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await update_todo_board(ctx.guild, cfg or {})
+
+@bot.command(name="todopriority")
+async def p_todopriority(ctx, todo_id: int = None, priority: str = None):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    if not todo_id or priority not in ("low", "medium", "high"):
+        await ctx.send("Usage: `todopriority <id> <low|medium|high>`", delete_after=15); return
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+        if not todo:
+            await ctx.send(f"TODO #{todo_id} not found."); return
+        todo["priority"]   = priority
+        todo["updated_at"] = now_iso()
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} priority -> {priority}")
+    await ctx.send(f"TODO **#{todo_id}** priority set to **{PRIORITY_LABELS.get(priority, priority)}**.")
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await update_todo_board(ctx.guild, cfg or {})
+
+@bot.command(name="tododelete")
+async def p_tododelete(ctx, todo_id: int = None):
+    if not await has_todo_role_msg(ctx.message):
+        await ctx.send("No permission.", delete_after=10); return
+    if not todo_id:
+        await ctx.send("Usage: `tododelete <id>`", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+        if not todo:
+            await ctx.send(f"TODO #{todo_id} not found."); return
+        is_author = todo.get("added_by_id") == str(ctx.author.id)
+        is_admin  = ctx.author.guild_permissions.administrator
+        has_role  = await has_todo_role_msg(ctx.message)
+        if not (is_author or has_role or is_admin):
+            await ctx.send(f"You can only delete TODOs you added."); return
+        todos = [t for t in todos if t["id"] != todo_id]
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} deleted by {ctx.author}")
+    await ctx.send(f"TODO **#{todo_id}** deleted.")
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await update_todo_board(ctx.guild, cfg or {})
+
+@bot.command(name="setuptodochannel")
+async def p_setuptodochannel(ctx, channel: discord.TextChannel = None):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("Admin only.", delete_after=10); return
+    if not channel:
+        await ctx.send("Usage: `setuptodochannel <#channel>`", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        cfg["todo_channel"] = str(channel.id)
+        await gh_write(session, FILE_CONFIG, cfg, sha, "Setup: todo channel")
+    await ctx.send(f"TODO board channel set to {channel.mention}.")
+
+@bot.command(name="setuptodoroles")
+async def p_setuptodoroles(ctx, role: discord.Role = None):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("Admin only.", delete_after=10); return
+    if not role:
+        await ctx.send("Usage: `setuptodoroles <@role>`", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        roles = cfg.get("todo_roles", [])
+        if str(role.id) in roles:
+            roles.remove(str(role.id))
+            msg = f"Removed {role.mention} from TODO managers."
+        else:
+            roles.append(str(role.id))
+            msg = f"Added {role.mention} as a TODO manager."
+        cfg["todo_roles"] = roles
+        await gh_write(session, FILE_CONFIG, cfg, sha, "TODO roles updated")
+    await ctx.send(msg)
+
+@bot.command(name="configview")
+async def p_configview(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("Admin only.", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    cfg = cfg or {}
+    def ch_mention(ch_id):
+        if not ch_id: return "Not set"
+        ch = ctx.guild.get_channel(int(ch_id))
+        return ch.mention if ch else f"<#{ch_id}>"
+    e = discord.Embed(title="Bot Configuration", color=0x5865F2)
+    e.add_field(name="TODO Board",  value=ch_mention(cfg.get("todo_channel")), inline=True)
+    e.add_field(name="Style",       value=str(cfg.get("todo_style", 1)),       inline=True)
+    e.add_field(name="Prefix",      value=f"`{cfg.get('prefix', 'ax!')}`",     inline=True)
+    roles = cfg.get("todo_roles", [])
+    e.add_field(name="TODO Roles",  value=(", ".join(f"<@&{r}>" for r in roles) or "None"), inline=False)
+    await ctx.send(embed=e)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
