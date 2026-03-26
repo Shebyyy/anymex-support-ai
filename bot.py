@@ -16,7 +16,7 @@ import time
 # ══════════════════════════════════════════════════════════════════════════════
 
 DISCORD_TOKEN  = os.environ.get("DISCORD_TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_API_KEY = os.environ.get("GROQ_API_KEY")
 GITHUB_TOKEN   = os.environ.get("GITHUB_TOKEN")
 PORT           = int(os.environ.get("PORT", 8080))
 
@@ -43,8 +43,8 @@ FILE_REQUESTS  = "feature_requests.json"
 FILE_FEEDBACK  = "feedback.json"
 FILE_THREADS   = "threads.json"      # active support threads
 
-OPENAI_API     = "https://api.openai.com/v1/chat/completions"
-MODEL          = "gpt-4o"
+OPENAI_API     = "https://api.groq.com/openai/v1/chat/completions"
+MODEL          = "llama-3.3-70b-versatile"
 
 # ── In-memory caches ───────────────────────────────────────────────────────────
 _cache: dict = {}
