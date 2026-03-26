@@ -491,10 +491,9 @@ async def on_ready():
     await ensure_files()
     if not getattr(bot, "_synced", False):
         try:
-            bot.tree.clear_commands(guild=None)
             await bot.tree.sync()
             bot._synced = True
-            print("Slash commands cleared and re-synced")
+            print("Slash commands synced")
         except Exception as e:
             print(f"Sync failed: {e}")
 
