@@ -392,9 +392,174 @@ def _stats_style4(counts: dict, archive_count: int, active_count: int) -> discor
     e.set_footer(text="Style 4 — Detailed  ·  Last updated")
     return e
 
+# ── Style 5 — FAQ (one embed per TODO, compact, badge-style) ─────────────────
+def _embeds_style5(todos: list, page: int, total_pages: int) -> list[discord.Embed]:
+    """Returns one embed per TODO, styled like the AnymeX FAQ cards."""
+    embeds = []
+    if not todos:
+        e = discord.Embed(
+            title="Active TODOs",
+            description="No active TODOs on this page.",
+            color=0x5865F2,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+        e.set_footer(text=f"Page {page} of {total_pages}  ·  Style 5 — FAQ  ·  Last updated")
+        return [e]
+
+    for t in todos:
+        status   = t.get("status", "todo")
+        color    = STATUS_COLORS.get(status, 0x5865F2)
+        label    = STATUS_LABELS.get(status, status)
+        st_icon  = STATUS_ICONS.get(status, "○")
+        priority = PRIORITY_LABELS.get(t.get("priority", "medium"), "Medium")
+        pri_icon = PRIORITY_ICONS.get(t.get("priority", "medium"), "◈")
+        asgn     = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "Unassigned"
+        added    = f"<@{t['added_by_id']}>"
+        ai_tag   = "  ✦ AI" if t.get("auto_generated") else ""
+
+        desc_parts = [f"`{st_icon} {label}`  {pri_icon} **{priority}**{ai_tag}"]
+
+        ai_desc = t.get("ai_description", "")
+        if ai_desc:
+            desc_parts.append(f"> *{ai_desc}*")
+
+        desc_parts.append(f"-# Assigned: {asgn}  ·  Added by: {added}")
+
+        e = discord.Embed(
+            title=f"#{t['id']} — {t['title']}",
+            description="\n".join(desc_parts),
+            color=color,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+
+        src_links = t.get("source_message_links", [])
+        if src_links:
+            e.set_footer(text=f"Page {page}/{total_pages}  ·  Style 5")
+        else:
+            e.set_footer(text=f"Page {page}/{total_pages}  ·  Style 5")
+
+        embeds.append(e)
+
+    return embeds
+
+def _stats_style5(counts: dict, archive_count: int, active_count: int) -> discord.Embed:
+    total    = active_count or 1
+    full_bar = _progress_bar(archive_count, archive_count + active_count, 12)
+    done_pct = round((archive_count / max(archive_count + active_count, 1)) * 100)
+    e = discord.Embed(
+        title="AnymeX — TODO Board",
+        color=0x6A5ACD,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    e.description = (
+        f"`○ To Do` **{counts['todo']}**   "
+        f"`◑ In Progress` **{counts['in_progress']}**   "
+        f"`◇ Review` **{counts['review_needed']}**   "
+        f"`✕ Blocked` **{counts['blocked']}**\n"
+        f"\n`{full_bar}` {done_pct}% done  ·  ✓ **{archive_count}** archived  ·  Active: **{active_count}**"
+    )
+    e.set_footer(text="Style 5 — FAQ  ·  Last updated")
+    return e
+
+# ── Style 6 — Full Detailed (one embed per TODO, full text, no truncation) ────
+def _embeds_style6(todos: list, page: int, total_pages: int) -> list[discord.Embed]:
+    """Returns one rich embed per TODO with full content, no truncation."""
+    embeds = []
+    if not todos:
+        e = discord.Embed(
+            title="Active TODOs",
+            description="No active TODOs on this page.",
+            color=0x5865F2,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+        e.set_footer(text=f"Page {page} of {total_pages}  ·  Style 6 — Full Detail  ·  Last updated")
+        return [e]
+
+    for t in todos:
+        status   = t.get("status", "todo")
+        color    = STATUS_COLORS.get(status, 0x5865F2)
+        label    = STATUS_LABELS.get(status, status)
+        st_icon  = STATUS_ICONS.get(status, "○")
+        priority = PRIORITY_LABELS.get(t.get("priority", "medium"), "Medium")
+        pri_icon = PRIORITY_ICONS.get(t.get("priority", "medium"), "◈")
+        asgn     = f"<@{t['assigned_to_id']}>" if t.get("assigned_to_id") else "Unassigned"
+        added    = f"<@{t['added_by_id']}>"
+        ai_tag   = "  ✦ AI" if t.get("auto_generated") else ""
+
+        e = discord.Embed(
+            title=f"#{t['id']} — {t['title']}",
+            color=color,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+
+        e.add_field(
+            name="Status & Priority",
+            value=f"`{st_icon} {label}`  {pri_icon} **{priority}**{ai_tag}",
+            inline=False,
+        )
+
+        ai_desc = t.get("ai_description", "")
+        if ai_desc:
+            e.add_field(name="Summary", value=f"> *{ai_desc}*", inline=False)
+
+        src_text = t.get("source_message_text", "")
+        if src_text:
+            # Show full source text, split across fields if needed (Discord field limit = 1024)
+            chunks = [src_text[i:i+1000] for i in range(0, len(src_text), 1000)]
+            for idx, chunk in enumerate(chunks):
+                fname = "Original Message" if idx == 0 else "​"  # zero-width space for continuation
+                e.add_field(name=fname, value=f"```\n{chunk}\n```", inline=False)
+
+        e.add_field(name="Assigned to", value=asgn, inline=True)
+        e.add_field(name="Added by",    value=added, inline=True)
+
+        created = t.get("created_at", "")
+        if created:
+            e.add_field(name="Created", value=f"<t:{int(datetime.datetime.fromisoformat(created).timestamp())}:R>", inline=True)
+
+        src_links = t.get("source_message_links", [])
+        if src_links:
+            links_val = "\n".join(f"[Jump to message]({lnk})" for lnk in src_links[:3])
+            e.add_field(name="Source", value=links_val, inline=False)
+
+        src_imgs = t.get("source_images", [])
+        if src_imgs:
+            e.set_image(url=src_imgs[0])
+
+        e.set_footer(text=f"Page {page}/{total_pages}  ·  Style 6 — Full Detail")
+        embeds.append(e)
+
+    return embeds
+
+def _stats_style6(counts: dict, archive_count: int, active_count: int) -> discord.Embed:
+    total    = active_count or 1
+    full_bar = _progress_bar(archive_count, archive_count + active_count, 12)
+    done_pct = round((archive_count / max(archive_count + active_count, 1)) * 100)
+    e = discord.Embed(
+        title="AnymeX — TODO Board",
+        color=0x5865F2,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    e.add_field(name="○ To Do",         value=str(counts["todo"]),          inline=True)
+    e.add_field(name="◑ In Progress",   value=str(counts["in_progress"]),   inline=True)
+    e.add_field(name="◇ Review",        value=str(counts["review_needed"]), inline=True)
+    e.add_field(name="✕ Blocked",       value=str(counts["blocked"]),       inline=True)
+    e.add_field(name="✓ Done",          value=str(archive_count),           inline=True)
+    e.add_field(name="Active",          value=str(active_count),            inline=True)
+    e.add_field(
+        name="Overall progress",
+        value=f"`{full_bar}` {done_pct}% done",
+        inline=False,
+    )
+    e.set_footer(text="Style 6 — Full Detail  ·  Last updated")
+    return e
+
 # ── Dispatchers ──────────────────────────────────────────────────────────────
 _CARD_BUILDERS  = {1: _card_style1, 2: _card_style2, 3: _card_style3, 4: _card_style4}
-_STATS_BUILDERS = {1: _stats_style1, 2: _stats_style2, 3: _stats_style3, 4: _stats_style4}
+_STATS_BUILDERS = {1: _stats_style1, 2: _stats_style2, 3: _stats_style3, 4: _stats_style4,
+                   5: _stats_style5, 6: _stats_style6}
+# Styles 5 & 6 use per-todo embed builders instead of _CARD_BUILDERS
+_MULTI_EMBED_STYLES = {5: _embeds_style5, 6: _embeds_style6}
 
 def build_todo_card(t: dict, style: int = 1) -> tuple[str, str]:
     fn = _CARD_BUILDERS.get(style, _card_style1)
@@ -407,6 +572,7 @@ def build_stats_embed(todos: list, archive_count: int, style: int = 1) -> discor
     return fn(counts, archive_count, len(todos))
 
 def build_page_embed(todos: list, page: int, total_pages: int, style: int = 1) -> discord.Embed:
+    """Single-embed builder for styles 1–4 (fields-based). Used internally."""
     color = 0x5865F2
     e = discord.Embed(
         title=f"Active TODOs — Page {page}/{total_pages}",
@@ -420,6 +586,13 @@ def build_page_embed(todos: list, page: int, total_pages: int, style: int = 1) -
         e.description = "No active TODOs on this page."
     e.set_footer(text=f"Page {page} of {total_pages}  ·  Style {style}  ·  Last updated")
     return e
+
+def build_page_embeds(todos: list, page: int, total_pages: int, style: int = 1) -> list[discord.Embed]:
+    """Returns a list of embeds for a page.
+    Styles 5/6 produce one embed per TODO; styles 1–4 produce a single embed with fields."""
+    if style in _MULTI_EMBED_STYLES:
+        return _MULTI_EMBED_STYLES[style](todos, page, total_pages)
+    return [build_page_embed(todos, page, total_pages, style=style)]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HEALTH SERVER
@@ -504,8 +677,9 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
     style       = int(cfg.get("todo_style", 1))
 
     stats_embed = build_stats_embed(active, len(archive), style=style)
-    page_embeds = [build_page_embed(page_todos, i + 1, total_pages, style=style)
-                   for i, page_todos in enumerate(pages)]
+    # build_page_embeds returns a list of embeds per page; flatten into one list
+    page_embeds = [e for i, page_todos in enumerate(pages)
+                   for e in build_page_embeds(page_todos, i + 1, total_pages, style=style)]
 
     # ── Try to edit existing messages ─────────────────────────────────────────
     stats_msg_id = cfg.get("todo_stats_message_id")
@@ -515,7 +689,7 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
     if stats_msg_id:
         try:
             stats_msg = await ch.fetch_message(int(stats_msg_id))
-            await stats_msg.edit(embed=stats_embed)
+            await safe_edit(stats_msg, stats_embed)
         except Exception:
             need_refresh = True
     else:
@@ -523,20 +697,20 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
 
     if not need_refresh:
         # Check all page messages exist and update them
-        if len(page_ids) != total_pages:
+        if len(page_ids) != len(page_embeds):
             need_refresh = True
         else:
-            for i, (pid, page_embed) in enumerate(zip(page_ids, page_embeds)):
+            for pid, page_embed in zip(page_ids, page_embeds):
                 try:
                     msg = await ch.fetch_message(int(pid))
-                    await msg.edit(embed=page_embed)
+                    await safe_edit(msg, page_embed)
                 except Exception:
                     need_refresh = True
                     break
 
     # ── If anything is missing or wrong — wipe channel and repost everything ──
     if need_refresh:
-        await _refresh_todo_board(ch, stats_embed, page_embeds, cfg)
+        await _refresh_todo_board(ch, stats_embed, page_embeds, cfg, style=style)
         return
 
     # ── Remove extra page messages if TODOs decreased ─────────────────────────
@@ -558,8 +732,44 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
             await gh_write(session, FILE_CONFIG, cfg2, sha, "Update todo board message IDs")
 
 
+async def safe_send(ch: discord.TextChannel, embed: discord.Embed,
+                    delay: float = 0.0) -> discord.Message:
+    """Send one embed, auto-retrying on 429 rate limits. Optional pre-send delay."""
+    if delay > 0:
+        await asyncio.sleep(delay)
+    for attempt in range(5):
+        try:
+            return await ch.send(embed=embed)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                retry_after = float(getattr(e, "retry_after", None) or 1.0)
+                print(f"[rate limit] send throttled — waiting {retry_after:.2f}s (attempt {attempt+1})")
+                await asyncio.sleep(retry_after + 0.25)
+            else:
+                raise
+    raise RuntimeError("safe_send: exceeded retry limit")
+
+async def safe_edit(msg: discord.Message, embed: discord.Embed) -> None:
+    """Edit one message, auto-retrying on 429 rate limits."""
+    for attempt in range(5):
+        try:
+            await msg.edit(embed=embed)
+            return
+        except discord.HTTPException as e:
+            if e.status == 429:
+                retry_after = float(getattr(e, "retry_after", None) or 1.0)
+                print(f"[rate limit] edit throttled — waiting {retry_after:.2f}s (attempt {attempt+1})")
+                await asyncio.sleep(retry_after + 0.25)
+            else:
+                raise
+    raise RuntimeError("safe_edit: exceeded retry limit")
+
+# Delay between sends for styles that post one embed per TODO (5 & 6).
+# Keeps us well under Discord's 5 msg/s burst limit.
+_SEND_DELAY: dict[int, float] = {5: 0.55, 6: 0.55}
+
 async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embed,
-                               page_embeds: list, cfg: dict):
+                               page_embeds: list, cfg: dict, style: int = 1):
     """Wipe the entire todo channel and repost all bot cards cleanly."""
     # Bulk-delete everything in the channel
     try:
@@ -575,11 +785,13 @@ async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embe
         except Exception:
             pass
 
+    delay = _SEND_DELAY.get(style, 0.0)
+
     # Repost stats + all pages
-    stats_msg = await ch.send(embed=stats_embed)
+    stats_msg = await safe_send(ch, stats_embed)
     page_ids  = []
     for page_embed in page_embeds:
-        msg = await ch.send(embed=page_embed)
+        msg = await safe_send(ch, page_embed, delay=delay)
         page_ids.append(str(msg.id))
 
     # Save new message IDs to config
@@ -980,7 +1192,11 @@ async def on_message(message: discord.Message):
 
     # ── todo #N tag — anywhere in any message → reply with info embed ─────────
     import re as _re
-    tag_matches = _re.findall(r'(?i)\btodo\s+#(\d+)', content)
+    tag_matches = []
+    for _tm in _re.finditer(r'(?i)\\btodo\\s+#(\\d+)((?:[\\s,\\-&+/]|and)*#\\d+)*', content):
+        tag_matches.append(_tm.group(1))
+        extras = _re.findall(r'#(\\d+)', _tm.group(0)[len(_tm.group(1))+1:])
+        tag_matches.extend(extras)
     if tag_matches:
         # Deduplicate while preserving order
         seen = set()
@@ -1449,10 +1665,12 @@ async def todo_filter(
 @bot.tree.command(name="todo_style", description="Change the TODO board card style (Admin)")
 @app_commands.describe(style="Card style to use for the live board")
 @app_commands.choices(style=[
-    app_commands.Choice(name="Style 1 — Clean (top accent bar)",        value=1),
-    app_commands.Choice(name="Style 2 — Sidebar (progress bars)",       value=2),
-    app_commands.Choice(name="Style 3 — Minimal (compact, no icons)",   value=3),
-    app_commands.Choice(name="Style 4 — Detailed (AI summary + quote)", value=4),
+    app_commands.Choice(name="Style 1 — Clean (top accent bar)",           value=1),
+    app_commands.Choice(name="Style 2 — Sidebar (progress bars)",          value=2),
+    app_commands.Choice(name="Style 3 — Minimal (compact, no icons)",      value=3),
+    app_commands.Choice(name="Style 4 — Detailed (AI summary + quote)",    value=4),
+    app_commands.Choice(name="Style 5 — FAQ (one embed per TODO)",         value=5),
+    app_commands.Choice(name="Style 6 — Full Detail (no truncation)",      value=6),
 ])
 @app_commands.default_permissions(administrator=True)
 async def todo_style(interaction: discord.Interaction, style: int):
@@ -1587,8 +1805,8 @@ def _build_help_embed(prefix: str) -> discord.Embed:
     )
     e.add_field(name="​", value="**── TODO Management ──**", inline=False)
     e.add_field(
-        name=f"`/todo_style` · `{prefix}todostyle <1-4>`",
-        value="Change the card style for the entire TODO board.\n`1` Clean · `2` Sidebar · `3` Minimal · `4` Detailed",
+        name=f"`/todo_style` · `{prefix}todostyle <1-6>`",
+        value="Change the card style for the entire TODO board.\n`1` Clean · `2` Sidebar · `3` Minimal · `4` Detailed · `5` FAQ · `6` Full Detail",
         inline=False,
     )
     e.add_field(
@@ -1701,8 +1919,12 @@ async def help_prefix(ctx):
 async def p_todostyle(ctx, style: int = None):
     if not await has_todo_role_msg(ctx.message):
         await ctx.send("No permission.", delete_after=10); return
-    if style not in (1, 2, 3, 4):
-        await ctx.send("Usage: `todostyle <1-4>`\n`1` Clean · `2` Sidebar · `3` Minimal · `4` Detailed", delete_after=15)
+    if style not in (1, 2, 3, 4, 5, 6):
+        await ctx.send(
+            "Usage: `todostyle <1-6>`\n"
+            "`1` Clean · `2` Sidebar · `3` Minimal · `4` Detailed · `5` FAQ · `6` Full Detail",
+            delete_after=15,
+        )
         return
     async with aiohttp.ClientSession() as session:
         cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
@@ -2049,9 +2271,9 @@ async def p_todorefresh(ctx):
     total_pages = len(pages)
     style   = int(cfg.get("todo_style", 1))
     stats_embed = build_stats_embed(active, len(archive), style=style)
-    page_embeds = [build_page_embed(page_todos, i + 1, total_pages, style=style)
-                   for i, page_todos in enumerate(pages)]
-    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg)
+    page_embeds = [e for i, page_todos in enumerate(pages)
+                   for e in build_page_embeds(page_todos, i + 1, total_pages, style=style)]
+    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg, style=style)
     if str(ctx.channel.id) != str(todo_ch_id):
         await ctx.send(f"✅ {ch.mention} refreshed — all old messages wiped, board reposted.")
 
@@ -2080,9 +2302,9 @@ async def todo_refresh(interaction: discord.Interaction):
     total_pages = len(pages)
     style   = int(cfg.get("todo_style", 1))
     stats_embed = build_stats_embed(active, len(archive), style=style)
-    page_embeds = [build_page_embed(page_todos, i + 1, total_pages, style=style)
-                   for i, page_todos in enumerate(pages)]
-    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg)
+    page_embeds = [e for i, page_todos in enumerate(pages)
+                   for e in build_page_embeds(page_todos, i + 1, total_pages, style=style)]
+    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg, style=style)
     await interaction.followup.send(f"✅ {ch.mention} refreshed — all messages wiped, board reposted.", ephemeral=True)
 
 
