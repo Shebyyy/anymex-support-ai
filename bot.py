@@ -594,6 +594,44 @@ def build_page_embeds(todos: list, page: int, total_pages: int, style: int = 1) 
         return _MULTI_EMBED_STYLES[style](todos, page, total_pages)
     return [build_page_embed(todos, page, total_pages, style=style)]
 
+async def send_todo_embeds(target, todos: list, style: int, title: str = "",
+                           ephemeral: bool = False, max_pages: int = 3):
+    """Send a list of TODOs respecting the current style.
+    target = ctx (prefix) or interaction.followup (slash).
+    For styles 5/6: sends each TODO as its own embed message.
+    For styles 1–4: batches into paged field-embeds."""
+    if not todos:
+        return
+    pages = [todos[i:i+TODOS_PER_PAGE] for i in range(0, len(todos), TODOS_PER_PAGE)]
+    total_pages = len(pages)
+
+    is_interaction = hasattr(target, "send") and hasattr(target, "followup") is False and callable(getattr(target, "send", None)) and not hasattr(target, "message")
+    # Determine send callable
+    async def _send(embed):
+        if hasattr(target, "followup"):
+            # interaction.followup
+            await target.send(embed=embed, ephemeral=ephemeral)
+        else:
+            # ctx
+            await target.send(embed=embed)
+
+    if style in _MULTI_EMBED_STYLES:
+        # One embed per TODO — send with small delay to avoid rate limits
+        # Add a header message first if title provided
+        if title:
+            header = discord.Embed(description=f"**{title}** — {len(todos)} TODO(s)", color=0x5865F2)
+            await _send(header)
+        for page_todos in pages[:max_pages]:
+            for e in _MULTI_EMBED_STYLES[style](page_todos, 1, 1):
+                await _send(e)
+                await asyncio.sleep(0.55)
+    else:
+        for i, page_todos in enumerate(pages[:max_pages]):
+            e = build_page_embed(page_todos, i + 1, total_pages, style=style)
+            if title and i == 0:
+                e.title = title
+            await _send(e)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HEALTH SERVER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1193,9 +1231,9 @@ async def on_message(message: discord.Message):
     # ── todo #N tag — anywhere in any message → reply with info embed ─────────
     import re as _re
     tag_matches = []
-    for _tm in _re.finditer(r'(?i)\\btodo\\s+#(\\d+)((?:[\\s,\\-&+/]|and)*#\\d+)*', content):
+    for _tm in _re.finditer(r'(?i)\btodo\s+#(\d+)((?:[\s,\-&+/]|and)*#\d+)*', content):
         tag_matches.append(_tm.group(1))
-        extras = _re.findall(r'#(\\d+)', _tm.group(0)[len(_tm.group(1))+1:])
+        extras = _re.findall(r'#(\d+)', _tm.group(0)[len(_tm.group(1))+1:])
         tag_matches.extend(extras)
     if tag_matches:
         # Deduplicate while preserving order
@@ -1445,9 +1483,7 @@ async def todo_list(interaction: discord.Interaction):
     if not active:
         await interaction.followup.send(f"No active TODOs. {len(archive)} total completed.")
         return
-    pages = [active[i:i+TODOS_PER_PAGE] for i in range(0, len(active), TODOS_PER_PAGE)]
-    for i, page in enumerate(pages[:3]):
-        await interaction.followup.send(embed=build_page_embed(page, i + 1, len(pages), style=style))
+    await send_todo_embeds(interaction.followup, active, style, title="Active TODOs")
 
 
 @bot.tree.command(name="todo_mine", description="Show TODOs assigned to you")
@@ -1463,11 +1499,7 @@ async def todo_mine(interaction: discord.Interaction):
     if not mine:
         await interaction.followup.send("No TODOs assigned to you.", ephemeral=True)
         return
-    e = discord.Embed(title="Your TODOs", color=0x5865F2)
-    for t in mine:
-        name, value = build_todo_card(t, style=style)
-        e.add_field(name=name, value=value, inline=False)
-    await interaction.followup.send(embed=e, ephemeral=True)
+    await send_todo_embeds(interaction.followup, mine, style, title="Your TODOs", ephemeral=True)
 
 
 @bot.tree.command(name="todo_archive", description="View completed TODOs")
@@ -1482,17 +1514,9 @@ async def todo_archive(interaction: discord.Interaction):
     if not archive:
         await interaction.followup.send("No completed TODOs yet.", ephemeral=True)
         return
-    recent = list(reversed(archive[-15:]))
-    e = discord.Embed(
-        title=f"Completed TODOs  ({len(archive)} total)",
-        color=0x1D9E75,
-        timestamp=datetime.datetime.now(datetime.timezone.utc),
-    )
-    for t in recent[:10]:
-        name, value = build_todo_card(t, style=style)
-        e.add_field(name=name, value=value, inline=False)
-    e.set_footer(text="Showing most recent 10")
-    await interaction.followup.send(embed=e, ephemeral=True)
+    recent = list(reversed(archive[-20:]))
+    await send_todo_embeds(interaction.followup, recent, style,
+                           title=f"Completed TODOs ({len(archive)} total)", ephemeral=True)
 
 
 @bot.tree.command(name="todo_info", description="View full details of a TODO")
@@ -1645,17 +1669,9 @@ async def todo_filter(
     if user:     filters_used.append(f"assigned to {user.display_name}")
     filter_str = "  ·  ".join(filters_used) or "All"
 
-    e = discord.Embed(
-        title=f"Filtered TODOs — {filter_str}  ({len(results)} found)",
-        color=0x5865F2,
-        timestamp=datetime.datetime.now(datetime.timezone.utc),
-    )
-    for t in results[:15]:
-        name, value = build_todo_card(t, style=style)
-        e.add_field(name=name, value=value, inline=False)
-    if len(results) > 15:
-        e.set_footer(text=f"Showing first 15 of {len(results)}")
-    await interaction.followup.send(embed=e, ephemeral=True)
+    await send_todo_embeds(interaction.followup, results[:20], style,
+                           title=f"Filtered TODOs — {filter_str} ({len(results)} found)",
+                           ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1950,9 +1966,7 @@ async def p_todolist(ctx):
     active = [t for t in todos if t["status"] != "done"]
     if not active:
         await ctx.send(f"No active TODOs. {len(archive)} total completed."); return
-    pages = [active[i:i+TODOS_PER_PAGE] for i in range(0, len(active), TODOS_PER_PAGE)]
-    for i, page in enumerate(pages[:3]):
-        await ctx.send(embed=build_page_embed(page, i + 1, len(pages), style=style))
+    await send_todo_embeds(ctx, active, style, title="Active TODOs")
 
 @bot.command(name="todomine")
 async def p_todomine(ctx):
@@ -1966,11 +1980,7 @@ async def p_todomine(ctx):
     mine = [t for t in todos if t.get("assigned_to_id") == str(ctx.author.id)]
     if not mine:
         await ctx.send("No TODOs assigned to you."); return
-    e = discord.Embed(title="Your TODOs", color=0x5865F2)
-    for t in mine:
-        name, value = build_todo_card(t, style=style)
-        e.add_field(name=name, value=value, inline=False)
-    await ctx.send(embed=e)
+    await send_todo_embeds(ctx, mine, style, title="Your TODOs")
 
 @bot.command(name="todofilter")
 async def p_todofilter(ctx, *, args: str = ""):
@@ -1989,11 +1999,7 @@ async def p_todofilter(ctx, *, args: str = ""):
             results = [t for t in results if t.get("priority") == word]
     if not results:
         await ctx.send("No TODOs match those filters."); return
-    e = discord.Embed(title=f"Filtered TODOs ({len(results)} found)", color=0x5865F2)
-    for t in results[:15]:
-        name, value = build_todo_card(t, style=style)
-        e.add_field(name=name, value=value, inline=False)
-    await ctx.send(embed=e)
+    await send_todo_embeds(ctx, results[:20], style, title=f"Filtered TODOs ({len(results)} found)")
 
 @bot.command(name="todoinfo")
 async def p_todoinfo(ctx, todo_id: int = None):
@@ -2037,14 +2043,8 @@ async def p_todoarchive(ctx):
     style = int(cfg.get("todo_style", 1))
     if not archive:
         await ctx.send("No completed TODOs yet."); return
-    recent = list(reversed(archive[-15:]))
-    e = discord.Embed(title=f"Completed TODOs ({len(archive)} total)", color=0x1D9E75,
-                      timestamp=datetime.datetime.now(datetime.timezone.utc))
-    for t in recent[:10]:
-        name, value = build_todo_card(t, style=style)
-        e.add_field(name=name, value=value, inline=False)
-    e.set_footer(text="Showing most recent 10")
-    await ctx.send(embed=e)
+    recent = list(reversed(archive[-20:]))
+    await send_todo_embeds(ctx, recent, style, title=f"Completed TODOs ({len(archive)} total)")
 
 @bot.command(name="todoassign")
 async def p_todoassign(ctx, todo_id: int = None, user: discord.Member = None):
