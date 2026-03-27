@@ -594,43 +594,29 @@ def build_page_embeds(todos: list, page: int, total_pages: int, style: int = 1) 
         return _MULTI_EMBED_STYLES[style](todos, page, total_pages)
     return [build_page_embed(todos, page, total_pages, style=style)]
 
-async def send_todo_embeds(target, todos: list, style: int, title: str = "",
-                           ephemeral: bool = False, max_pages: int = 3):
+async def send_todo_embeds(send_fn, todos: list, style: int, title: str = "", max_pages: int = 3):
     """Send a list of TODOs respecting the current style.
-    target = ctx (prefix) or interaction.followup (slash).
-    For styles 5/6: sends each TODO as its own embed message.
+    send_fn — an async callable that accepts a single discord.Embed, e.g.:
+        lambda e: ctx.send(embed=e)
+        lambda e: interaction.followup.send(embed=e, ephemeral=True)
+    For styles 5/6: sends one embed per TODO with rate-limit delay.
     For styles 1–4: batches into paged field-embeds."""
     if not todos:
         return
     pages = [todos[i:i+TODOS_PER_PAGE] for i in range(0, len(todos), TODOS_PER_PAGE)]
     total_pages = len(pages)
 
-    is_interaction = hasattr(target, "send") and hasattr(target, "followup") is False and callable(getattr(target, "send", None)) and not hasattr(target, "message")
-    # Determine send callable
-    async def _send(embed):
-        if hasattr(target, "followup"):
-            # interaction.followup
-            await target.send(embed=embed, ephemeral=ephemeral)
-        else:
-            # ctx
-            await target.send(embed=embed)
-
     if style in _MULTI_EMBED_STYLES:
-        # One embed per TODO — send with small delay to avoid rate limits
-        # Add a header message first if title provided
-        if title:
-            header = discord.Embed(description=f"**{title}** — {len(todos)} TODO(s)", color=0x5865F2)
-            await _send(header)
         for page_todos in pages[:max_pages]:
             for e in _MULTI_EMBED_STYLES[style](page_todos, 1, 1):
-                await _send(e)
+                await send_fn(e)
                 await asyncio.sleep(0.55)
     else:
         for i, page_todos in enumerate(pages[:max_pages]):
             e = build_page_embed(page_todos, i + 1, total_pages, style=style)
             if title and i == 0:
                 e.title = title
-            await _send(e)
+            await send_fn(e)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HEALTH SERVER
@@ -1250,47 +1236,26 @@ async def on_message(message: discord.Message):
         all_todos = (todos or []) + (archive or [])
         cfg = cfg or {}
         style = int(cfg.get("todo_style", 1))
-        embeds = []
+        found = []
         not_found = []
         for tid in unique_ids:
             todo = next((t for t in all_todos if t["id"] == tid), None)
             if not todo:
                 not_found.append(tid)
-                continue
-            status   = todo.get("status", "todo")
-            color    = STATUS_COLORS.get(status, 0x5865F2)
-            label    = STATUS_LABELS.get(status, status)
-            priority = PRIORITY_LABELS.get(todo.get("priority", "medium"), "Medium")
-            assigned = f"<@{todo['assigned_to_id']}>" if todo.get("assigned_to_id") else "Unassigned"
-            e = discord.Embed(
-                title=f"#{todo['id']} — {todo['title']}",
-                color=color,
-                timestamp=datetime.datetime.now(datetime.timezone.utc),
-            )
-            e.add_field(name="Status",   value=label,    inline=True)
-            e.add_field(name="Priority", value=priority, inline=True)
-            e.add_field(name="Assigned", value=assigned, inline=True)
-            e.add_field(name="Added by", value=f"<@{todo['added_by_id']}>", inline=True)
-            e.add_field(name="Created",  value=todo.get("created_at", "")[:10], inline=True)
-            if todo.get("done_by_id"):
-                e.add_field(name="Completed by", value=f"<@{todo['done_by_id']}>", inline=True)
-            ai_desc = todo.get("ai_description", "")
-            if ai_desc:
-                e.add_field(name="AI summary", value=ai_desc[:300], inline=False)
-            src_links = todo.get("source_message_links", []) or ([todo["source_message_link"]] if todo.get("source_message_link") else [])
-            if src_links:
-                links_val = "  ·  ".join(f"[Message {i+1}]({l})" for i, l in enumerate(src_links[:5]))
-                e.add_field(name="Source", value=links_val, inline=False)
-            src_imgs = todo.get("source_images", [])
-            if src_imgs:
-                e.set_image(url=src_imgs[0])
-            archived_note = " *(archived)*" if status == "done" else ""
-            e.set_footer(text=f"TODO #{todo['id']}{archived_note}  ·  Use /todo_info for full details")
-            embeds.append(e)
-        # Send all found embeds
-        if embeds:
-            await message.reply(embeds=embeds[:10], mention_author=False)
-        # Report any not found
+            else:
+                found.append(todo)
+        # Build embeds using the active style
+        if found:
+            embeds = build_page_embeds(found, 1, 1, style=style)
+            delay = _SEND_DELAY.get(style, 0.0)
+            first = True
+            for e in embeds:
+                if first:
+                    await message.reply(embed=e, mention_author=False)
+                    first = False
+                else:
+                    await asyncio.sleep(delay)
+                    await message.channel.send(embed=e)
         if not_found:
             nf_str = ", ".join(f"#{i}" for i in not_found)
             await message.reply(f"Could not find TODO(s): {nf_str}", mention_author=False)
@@ -1483,7 +1448,7 @@ async def todo_list(interaction: discord.Interaction):
     if not active:
         await interaction.followup.send(f"No active TODOs. {len(archive)} total completed.")
         return
-    await send_todo_embeds(interaction.followup, active, style, title="Active TODOs")
+    await send_todo_embeds(lambda e: interaction.followup.send(embed=e), active, style, title="Active TODOs")
 
 
 @bot.tree.command(name="todo_mine", description="Show TODOs assigned to you")
@@ -1499,7 +1464,7 @@ async def todo_mine(interaction: discord.Interaction):
     if not mine:
         await interaction.followup.send("No TODOs assigned to you.", ephemeral=True)
         return
-    await send_todo_embeds(interaction.followup, mine, style, title="Your TODOs", ephemeral=True)
+    await send_todo_embeds(lambda e: interaction.followup.send(embed=e, ephemeral=True), mine, style, title="Your TODOs")
 
 
 @bot.tree.command(name="todo_archive", description="View completed TODOs")
@@ -1515,8 +1480,8 @@ async def todo_archive(interaction: discord.Interaction):
         await interaction.followup.send("No completed TODOs yet.", ephemeral=True)
         return
     recent = list(reversed(archive[-20:]))
-    await send_todo_embeds(interaction.followup, recent, style,
-                           title=f"Completed TODOs ({len(archive)} total)", ephemeral=True)
+    await send_todo_embeds(lambda e: interaction.followup.send(embed=e, ephemeral=True), recent, style,
+                           title=f"Completed TODOs ({len(archive)} total)")
 
 
 @bot.tree.command(name="todo_info", description="View full details of a TODO")
@@ -1526,67 +1491,17 @@ async def todo_info(interaction: discord.Interaction, todo_id: int):
     async with aiohttp.ClientSession() as session:
         todos,   _ = await gh_read(session, FILE_TODOS)
         archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        cfg,     _ = await gh_read(session, FILE_CONFIG)
     all_todos = (todos or []) + (archive or [])
     todo = next((t for t in all_todos if t["id"] == todo_id), None)
     if not todo:
         await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True)
         return
-
-    status   = todo.get("status", "todo")
-    color    = STATUS_COLORS.get(status, 0x5865F2)
-    label    = STATUS_LABELS.get(status, status)
-    priority = PRIORITY_LABELS.get(todo.get("priority", "medium"), "Medium")
-    assigned = f"<@{todo['assigned_to_id']}>" if todo.get("assigned_to_id") else "Unassigned"
-
-    e = discord.Embed(
-        title=f"#{todo['id']} — {todo['title']}",
-        color=color,
-        timestamp=datetime.datetime.now(datetime.timezone.utc),
-    )
-    e.add_field(name="Status",   value=label,    inline=True)
-    e.add_field(name="Priority", value=priority, inline=True)
-    e.add_field(name="Assigned", value=assigned, inline=True)
-    e.add_field(name="Added by", value=f"<@{todo['added_by_id']}>",      inline=True)
-    e.add_field(name="Created",  value=todo.get("created_at", "")[:10],  inline=True)
-    e.add_field(name="Updated",  value=todo.get("updated_at", "")[:10],  inline=True)
-
-    if todo.get("done_by_id"):
-        e.add_field(
-            name="Completed by",
-            value=f"<@{todo['done_by_id']}>  ·  {todo.get('done_at','')[:10]}",
-            inline=False,
-        )
-
-    # Source message context
-    src_text  = todo.get("source_message_text", "")
-    src_links = todo.get("source_message_links", []) or ([todo["source_message_link"]] if todo.get("source_message_link") else [])
-    src_imgs  = todo.get("source_images", [])
-    src_files = todo.get("source_files",  [])
-
-    # AI fields — always show user original message alongside AI output
-    ai_title = todo.get("auto_generated")
-    ai_desc  = todo.get("ai_description", "")
-    if ai_title and ai_desc:
-        e.add_field(name="AI summary", value=ai_desc[:300], inline=False)
-    if src_text:
-        e.add_field(name="Original message (user)", value=src_text[:500], inline=False)
-
-    if src_links:
-        links_val = "  ·  ".join(f"[Message {i+1}]({l})" for i, l in enumerate(src_links[:5]))
-        e.add_field(name="Source", value=links_val, inline=False)
-
-    if src_imgs:
-        e.set_image(url=src_imgs[0])
-        if len(src_imgs) > 1:
-            extra = "\n".join(f"[Image {i+2}]({u})" for i, u in enumerate(src_imgs[1:4]))
-            e.add_field(name="More images", value=extra, inline=False)
-
-    if src_files:
-        file_links = "\n".join(f"[{u.split('/')[-1]}]({u})" for u in src_files[:5])
-        e.add_field(name="Attachments", value=file_links, inline=False)
-
-    e.set_footer(text=f"TODO #{todo_id}")
-    await interaction.followup.send(embed=e, ephemeral=True)
+    cfg   = cfg or {}
+    style = int(cfg.get("todo_style", 1))
+    embeds = build_page_embeds([todo], 1, 1, style=style)
+    for e in embeds:
+        await interaction.followup.send(embed=e, ephemeral=True)
 
 @bot.tree.command(name="todo_unassign", description="Remove assignment from a TODO")
 @app_commands.describe(todo_id="TODO number")
@@ -1669,9 +1584,8 @@ async def todo_filter(
     if user:     filters_used.append(f"assigned to {user.display_name}")
     filter_str = "  ·  ".join(filters_used) or "All"
 
-    await send_todo_embeds(interaction.followup, results[:20], style,
-                           title=f"Filtered TODOs — {filter_str} ({len(results)} found)",
-                           ephemeral=True)
+    await send_todo_embeds(lambda e: interaction.followup.send(embed=e, ephemeral=True), results[:20], style,
+                           title=f"Filtered TODOs — {filter_str} ({len(results)} found)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1966,7 +1880,7 @@ async def p_todolist(ctx):
     active = [t for t in todos if t["status"] != "done"]
     if not active:
         await ctx.send(f"No active TODOs. {len(archive)} total completed."); return
-    await send_todo_embeds(ctx, active, style, title="Active TODOs")
+    await send_todo_embeds(lambda e: ctx.send(embed=e), active, style, title="Active TODOs")
 
 @bot.command(name="todomine")
 async def p_todomine(ctx):
@@ -1980,7 +1894,7 @@ async def p_todomine(ctx):
     mine = [t for t in todos if t.get("assigned_to_id") == str(ctx.author.id)]
     if not mine:
         await ctx.send("No TODOs assigned to you."); return
-    await send_todo_embeds(ctx, mine, style, title="Your TODOs")
+    await send_todo_embeds(lambda e: ctx.send(embed=e), mine, style, title="Your TODOs")
 
 @bot.command(name="todofilter")
 async def p_todofilter(ctx, *, args: str = ""):
@@ -1999,7 +1913,7 @@ async def p_todofilter(ctx, *, args: str = ""):
             results = [t for t in results if t.get("priority") == word]
     if not results:
         await ctx.send("No TODOs match those filters."); return
-    await send_todo_embeds(ctx, results[:20], style, title=f"Filtered TODOs ({len(results)} found)")
+    await send_todo_embeds(lambda e: ctx.send(embed=e), results[:20], style, title=f"Filtered TODOs ({len(results)} found)")
 
 @bot.command(name="todoinfo")
 async def p_todoinfo(ctx, todo_id: int = None):
@@ -2010,27 +1924,16 @@ async def p_todoinfo(ctx, todo_id: int = None):
     async with aiohttp.ClientSession() as session:
         todos,   _ = await gh_read(session, FILE_TODOS)
         archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        cfg,     _ = await gh_read(session, FILE_CONFIG)
     all_todos = (todos or []) + (archive or [])
     todo = next((t for t in all_todos if t["id"] == todo_id), None)
     if not todo:
         await ctx.send(f"TODO #{todo_id} not found."); return
-    status   = todo.get("status", "todo")
-    color    = STATUS_COLORS.get(status, 0x5865F2)
-    label    = STATUS_LABELS.get(status, status)
-    priority = PRIORITY_LABELS.get(todo.get("priority", "medium"), "Medium")
-    assigned = f"<@{todo['assigned_to_id']}>" if todo.get("assigned_to_id") else "Unassigned"
-    e = discord.Embed(title=f"#{todo['id']} — {todo['title']}", color=color,
-                      timestamp=datetime.datetime.now(datetime.timezone.utc))
-    e.add_field(name="Status",   value=label,    inline=True)
-    e.add_field(name="Priority", value=priority, inline=True)
-    e.add_field(name="Assigned", value=assigned, inline=True)
-    e.add_field(name="Added by", value=f"<@{todo['added_by_id']}>",     inline=True)
-    e.add_field(name="Created",  value=todo.get("created_at","")[:10],  inline=True)
-    e.add_field(name="Updated",  value=todo.get("updated_at","")[:10],  inline=True)
-    if todo.get("ai_description"):
-        e.add_field(name="AI summary", value=todo["ai_description"][:300], inline=False)
-    e.set_footer(text=f"TODO #{todo_id}")
-    await ctx.send(embed=e)
+    cfg   = cfg or {}
+    style = int(cfg.get("todo_style", 1))
+    embeds = build_page_embeds([todo], 1, 1, style=style)
+    for e in embeds:
+        await ctx.send(embed=e)
 
 @bot.command(name="todoarchive")
 async def p_todoarchive(ctx):
@@ -2044,7 +1947,7 @@ async def p_todoarchive(ctx):
     if not archive:
         await ctx.send("No completed TODOs yet."); return
     recent = list(reversed(archive[-20:]))
-    await send_todo_embeds(ctx, recent, style, title=f"Completed TODOs ({len(archive)} total)")
+    await send_todo_embeds(lambda e: ctx.send(embed=e), recent, style, title=f"Completed TODOs ({len(archive)} total)")
 
 @bot.command(name="todoassign")
 async def p_todoassign(ctx, todo_id: int = None, user: discord.Member = None):
