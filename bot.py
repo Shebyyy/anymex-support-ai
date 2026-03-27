@@ -624,7 +624,8 @@ class TodoConfirmView(discord.ui.View):
         async with aiohttp.ClientSession() as session:
             todos, sha = await gh_read_fresh(session, FILE_TODOS)
             todos = todos or []
-            todo_id = len(todos) + 1
+            all_ids = [t["id"] for t in todos]
+            todo_id = (max(all_ids) + 1) if all_ids else 1
             # Merge all source messages
             combined_text  = "\n---\n".join(s["text"]  for s in self.sources if s.get("text"))
             combined_imgs  = [u for s in self.sources for u in s.get("images", [])]
@@ -974,6 +975,72 @@ async def on_message(message: discord.Message):
                 await message.channel.send("\n".join(guide_lines), files=files, delete_after=30)
             else:
                 await message.channel.send("\n".join(guide_lines), delete_after=30)
+        return
+
+
+    # ── todo #N tag — anywhere in any message → reply with info embed ─────────
+    import re as _re
+    tag_matches = _re.findall(r'(?i)\btodo\s+#(\d+)', content)
+    if tag_matches:
+        # Deduplicate while preserving order
+        seen = set()
+        unique_ids = []
+        for m in tag_matches:
+            if m not in seen:
+                seen.add(m)
+                unique_ids.append(int(m))
+        async with aiohttp.ClientSession() as session:
+            todos,   _ = await gh_read(session, FILE_TODOS)
+            archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+            cfg,     _ = await gh_read(session, FILE_CONFIG)
+        all_todos = (todos or []) + (archive or [])
+        cfg = cfg or {}
+        style = int(cfg.get("todo_style", 1))
+        embeds = []
+        not_found = []
+        for tid in unique_ids:
+            todo = next((t for t in all_todos if t["id"] == tid), None)
+            if not todo:
+                not_found.append(tid)
+                continue
+            status   = todo.get("status", "todo")
+            color    = STATUS_COLORS.get(status, 0x5865F2)
+            label    = STATUS_LABELS.get(status, status)
+            priority = PRIORITY_LABELS.get(todo.get("priority", "medium"), "Medium")
+            assigned = f"<@{todo['assigned_to_id']}>" if todo.get("assigned_to_id") else "Unassigned"
+            e = discord.Embed(
+                title=f"#{todo['id']} — {todo['title']}",
+                color=color,
+                timestamp=datetime.datetime.now(datetime.timezone.utc),
+            )
+            e.add_field(name="Status",   value=label,    inline=True)
+            e.add_field(name="Priority", value=priority, inline=True)
+            e.add_field(name="Assigned", value=assigned, inline=True)
+            e.add_field(name="Added by", value=f"<@{todo['added_by_id']}>", inline=True)
+            e.add_field(name="Created",  value=todo.get("created_at", "")[:10], inline=True)
+            if todo.get("done_by_id"):
+                e.add_field(name="Completed by", value=f"<@{todo['done_by_id']}>", inline=True)
+            ai_desc = todo.get("ai_description", "")
+            if ai_desc:
+                e.add_field(name="AI summary", value=ai_desc[:300], inline=False)
+            src_links = todo.get("source_message_links", []) or ([todo["source_message_link"]] if todo.get("source_message_link") else [])
+            if src_links:
+                links_val = "  ·  ".join(f"[Message {i+1}]({l})" for i, l in enumerate(src_links[:5]))
+                e.add_field(name="Source", value=links_val, inline=False)
+            src_imgs = todo.get("source_images", [])
+            if src_imgs:
+                e.set_image(url=src_imgs[0])
+            archived_note = " *(archived)*" if status == "done" else ""
+            e.set_footer(text=f"TODO #{todo['id']}{archived_note}  ·  Use /todo_info for full details")
+            embeds.append(e)
+        # Send all found embeds
+        if embeds:
+            await message.reply(embeds=embeds[:10], mention_author=False)
+        # Report any not found
+        if not_found:
+            nf_str = ", ".join(f"#{i}" for i in not_found)
+            await message.reply(f"Could not find TODO(s): {nf_str}", mention_author=False)
+        await bot.process_commands(message)
         return
 
     await bot.process_commands(message)
