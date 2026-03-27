@@ -501,42 +501,46 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
     active  = [t for t in todos if t["status"] != "done"]
     pages   = [active[i:i+TODOS_PER_PAGE] for i in range(0, max(len(active), 1), TODOS_PER_PAGE)]
     total_pages = len(pages)
-    cfg_dirty   = False
     style       = int(cfg.get("todo_style", 1))
 
-    # Stats message
-    stats_embed  = build_stats_embed(active, len(archive), style=style)
+    stats_embed = build_stats_embed(active, len(archive), style=style)
+    page_embeds = [build_page_embed(page_todos, i + 1, total_pages, style=style)
+                   for i, page_todos in enumerate(pages)]
+
+    # ── Try to edit existing messages ─────────────────────────────────────────
     stats_msg_id = cfg.get("todo_stats_message_id")
+    page_ids     = list(cfg.get("todo_page_message_ids") or [])
+    need_refresh = False
+
     if stats_msg_id:
         try:
             stats_msg = await ch.fetch_message(int(stats_msg_id))
             await stats_msg.edit(embed=stats_embed)
         except Exception:
-            stats_msg = await ch.send(embed=stats_embed)
-            cfg["todo_stats_message_id"] = str(stats_msg.id)
-            cfg_dirty = True
+            need_refresh = True
     else:
-        stats_msg = await ch.send(embed=stats_embed)
-        cfg["todo_stats_message_id"] = str(stats_msg.id)
-        cfg_dirty = True
+        need_refresh = True
 
-    # Page messages
-    page_ids: list = list(cfg.get("todo_page_message_ids") or [])
-    for i, page_todos in enumerate(pages):
-        embed = build_page_embed(page_todos, i + 1, total_pages, style=style)
-        if i < len(page_ids):
-            try:
-                msg = await ch.fetch_message(int(page_ids[i]))
-                await msg.edit(embed=embed)
-            except Exception:
-                msg = await ch.send(embed=embed)
-                page_ids[i] = str(msg.id)
-                cfg_dirty = True
+    if not need_refresh:
+        # Check all page messages exist and update them
+        if len(page_ids) != total_pages:
+            need_refresh = True
         else:
-            msg = await ch.send(embed=embed)
-            page_ids.append(str(msg.id))
-            cfg_dirty = True
+            for i, (pid, page_embed) in enumerate(zip(page_ids, page_embeds)):
+                try:
+                    msg = await ch.fetch_message(int(pid))
+                    await msg.edit(embed=page_embed)
+                except Exception:
+                    need_refresh = True
+                    break
 
+    # ── If anything is missing or wrong — wipe channel and repost everything ──
+    if need_refresh:
+        await _refresh_todo_board(ch, stats_embed, page_embeds, cfg)
+        return
+
+    # ── Remove extra page messages if TODOs decreased ─────────────────────────
+    cfg_dirty = False
     while len(page_ids) > total_pages:
         old_id = page_ids.pop()
         try:
@@ -546,14 +550,45 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
             pass
         cfg_dirty = True
 
-    if cfg_dirty or page_ids != cfg.get("todo_page_message_ids"):
-        cfg["todo_page_message_ids"] = page_ids
+    if cfg_dirty:
         async with aiohttp.ClientSession() as session:
             cfg2, sha = await gh_read_fresh(session, FILE_CONFIG)
             cfg2 = cfg2 or {}
-            cfg2["todo_stats_message_id"] = cfg.get("todo_stats_message_id")
             cfg2["todo_page_message_ids"] = page_ids
             await gh_write(session, FILE_CONFIG, cfg2, sha, "Update todo board message IDs")
+
+
+async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embed,
+                               page_embeds: list, cfg: dict):
+    """Wipe the entire todo channel and repost all bot cards cleanly."""
+    # Bulk-delete everything in the channel
+    try:
+        await ch.purge(limit=None, check=lambda m: True)
+    except Exception:
+        # Fallback: delete one by one
+        try:
+            async for msg in ch.history(limit=200):
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Repost stats + all pages
+    stats_msg = await ch.send(embed=stats_embed)
+    page_ids  = []
+    for page_embed in page_embeds:
+        msg = await ch.send(embed=page_embed)
+        page_ids.append(str(msg.id))
+
+    # Save new message IDs to config
+    async with aiohttp.ClientSession() as session:
+        cfg2, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg2 = cfg2 or {}
+        cfg2["todo_stats_message_id"] = str(stats_msg.id)
+        cfg2["todo_page_message_ids"] = page_ids
+        await gh_write(session, FILE_CONFIG, cfg2, sha, "Refreshed todo board")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIRM VIEW  (Yes / No buttons, only triggering user can click)
@@ -745,6 +780,64 @@ async def trigger_todo_confirm(
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
+# REASSIGN CONFIRM VIEW  (Yes / No buttons for reassigning an already-assigned TODO)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ReassignConfirmView(discord.ui.View):
+    def __init__(self, author_id: int, todo_id: int, target: discord.Member,
+                 current_assignee_id: str, todos: list, sha: str, cfg: dict, guild: discord.Guild):
+        super().__init__(timeout=60)
+        self.author_id          = author_id
+        self.todo_id            = todo_id
+        self.target             = target
+        self.current_assignee_id = current_assignee_id
+        self.todos              = todos
+        self.sha                = sha
+        self.cfg                = cfg
+        self.guild              = guild
+        self.done               = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Only the person who triggered this can confirm.", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Yes, reassign", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.done = True
+        self.stop()
+        todo = next((t for t in self.todos if t["id"] == self.todo_id), None)
+        if not todo:
+            await interaction.response.edit_message(content=f"TODO #{self.todo_id} no longer exists.", view=None)
+            return
+        todo["assigned_to_id"]   = str(self.target.id)
+        todo["assigned_to_name"] = str(self.target)
+        todo["updated_at"]       = now_iso()
+        if todo["status"] == "todo":
+            todo["status"] = "in_progress"
+        async with aiohttp.ClientSession() as session:
+            await gh_write(session, FILE_TODOS, self.todos, self.sha,
+                           f"TODO #{self.todo_id} reassigned to {self.target}")
+        await interaction.response.edit_message(
+            content=f"✅ TODO **#{self.todo_id}** reassigned to {self.target.mention}.",
+            view=None,
+        )
+        await update_todo_board(self.guild, self.cfg)
+
+    @discord.ui.button(label="No, cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.done = True
+        self.stop()
+        await interaction.response.edit_message(content="Reassignment cancelled.", view=None)
+
+    async def on_timeout(self):
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # EVENTS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -840,59 +933,48 @@ async def on_message(message: discord.Message):
         )
         return
 
-    # ── TODO channel: message without #addtodo → guide the user ───────────────
+    # ── TODO channel: delete ALL human messages — only bot cards stay ──────────
     if todo_ch_id and str(message.channel.id) == str(todo_ch_id):
-        if content and not content.startswith("/"):
-            # Save message details before deleting
-            author_mention = message.author.mention
-            author_name    = str(message.author)
-            jump_link      = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
-            msg_text       = message.content or ""
-            attachments    = message.attachments[:]
+        # Save details before deleting
+        author_mention = message.author.mention
+        msg_text       = message.content or ""
+        attachments    = message.attachments[:]
 
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        # Re-attach any files to send as temp notice
+        files = []
+        for att in attachments[:5]:
             try:
-                await message.delete()
+                async with aiohttp.ClientSession() as dl_session:
+                    async with dl_session.get(att.url) as resp:
+                        if resp.status == 200:
+                            file_bytes = await resp.read()
+                            files.append(discord.File(
+                                __import__("io").BytesIO(file_bytes),
+                                filename=att.filename,
+                            ))
             except Exception:
                 pass
 
-            # Copy full message to channel as a log (preserving author, content, attachments, jump link)
-            copy_lines = [
-                f"📋 **Message from {author_mention}** (copied from TODO channel)",
-                f"> {msg_text[:1000]}" if msg_text else "",
-                f"[Jump to original]({jump_link})" if jump_link else "",
-            ]
-            copy_content = "\n".join(l for l in copy_lines if l)
-
-            # Re-attach any files
-            files = []
-            for att in attachments[:5]:
-                try:
-                    async with aiohttp.ClientSession() as dl_session:
-                        async with dl_session.get(att.url) as resp:
-                            if resp.status == 200:
-                                file_bytes = await resp.read()
-                                files.append(discord.File(
-                                    __import__("io").BytesIO(file_bytes),
-                                    filename=att.filename,
-                                ))
-                except Exception:
-                    pass
-
-            # Send copied message back in same channel
-            if files:
-                await message.channel.send(copy_content, files=files, delete_after=30)
-            else:
-                await message.channel.send(copy_content, delete_after=30)
-
-            # Send usage guide
-            await message.channel.send(
-                f"{author_mention} This channel is for the TODO board only.\n"
-                f"To add a TODO use: `#addtodo Your title here`\n"
-                f"Or reply to any message with `#addtodo` and I'll auto-generate a title using AI.\n"
+        # If it was a #addtodo command we already handled it above — don't guide again
+        if TRIGGER not in content.lower():
+            guide_lines = [
+                f"{author_mention} This channel is for the TODO board only.",
+                f"To add a TODO: `#addtodo Your title here`",
+                f"Or reply to any message with `#addtodo` and AI will auto-generate a title.",
                 f"To combine multiple messages: `#addtodo Title --msgs ID1 ID2`",
-                delete_after=25,
-            )
-            return
+            ]
+            if msg_text and not msg_text.startswith(("/", "ax!", "!")):
+                guide_lines.insert(1, f"> {msg_text[:300]}")
+            if files:
+                await message.channel.send("\n".join(guide_lines), files=files, delete_after=30)
+            else:
+                await message.channel.send("\n".join(guide_lines), delete_after=30)
+        return
 
     await bot.process_commands(message)
 
@@ -906,39 +988,55 @@ async def todo_assign(interaction: discord.Interaction, todo_id: int, user: disc
     if not await has_todo_role(interaction):
         await interaction.response.send_message("No permission to assign TODOs.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
     target = user or interaction.user
 
     async with aiohttp.ClientSession() as session:
         todos, sha = await gh_read_fresh(session, FILE_TODOS)
-        if not todos:
-            await interaction.followup.send("No TODOs found.", ephemeral=True)
-            return
-        todo = next((t for t in todos if t["id"] == todo_id), None)
-        if not todo:
-            await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True)
-            return
-        if todo.get("assigned_to_id") and todo["assigned_to_id"] != str(interaction.user.id):
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.followup.send(
-                    f"TODO #{todo_id} is already assigned to <@{todo['assigned_to_id']}>. Only an admin can reassign it.",
-                    ephemeral=True,
-                )
-                return
-        todo["assigned_to_id"]   = str(target.id)
-        todo["assigned_to_name"] = str(target)
-        todo["updated_at"]       = now_iso()
-        if todo["status"] == "todo":
-            todo["status"] = "in_progress"
-        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} assigned to {target}")
+        cfg, _     = await gh_read(session, FILE_CONFIG)
+    cfg = cfg or {}
+    if not todos:
+        await interaction.response.send_message("No TODOs found.", ephemeral=True)
+        return
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        await interaction.response.send_message(f"TODO #{todo_id} not found.", ephemeral=True)
+        return
 
+    # Already assigned to someone else? Show confirmation prompt (non-admin)
+    if todo.get("assigned_to_id") and todo["assigned_to_id"] != str(target.id):
+        if not interaction.user.guild_permissions.administrator:
+            current_id = todo["assigned_to_id"]
+            view = ReassignConfirmView(
+                author_id           = interaction.user.id,
+                todo_id             = todo_id,
+                target              = target,
+                current_assignee_id = current_id,
+                todos               = todos,
+                sha                 = sha,
+                cfg                 = cfg,
+                guild               = interaction.guild,
+            )
+            await interaction.response.send_message(
+                f"⚠️ TODO **#{todo_id}** is already assigned to <@{current_id}>."
+                f" Do you want to transfer it to {target.mention}?",
+                view=view,
+                ephemeral=True,
+            )
+            return
+
+    await interaction.response.defer(ephemeral=True)
+    todo["assigned_to_id"]   = str(target.id)
+    todo["assigned_to_name"] = str(target)
+    todo["updated_at"]       = now_iso()
+    if todo["status"] == "todo":
+        todo["status"] = "in_progress"
+    async with aiohttp.ClientSession() as session:
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} assigned to {target}")
     await interaction.followup.send(
         f"TODO **#{todo_id}** assigned to {target.mention}. Status set to In Progress.",
         ephemeral=True,
     )
-    async with aiohttp.ClientSession() as session:
-        cfg, _ = await gh_read(session, FILE_CONFIG)
-    await update_todo_board(interaction.guild, cfg or {})
+    await update_todo_board(interaction.guild, cfg)
 
 
 @bot.tree.command(name="todo_status", description="Update the status of a TODO")
@@ -1668,21 +1766,44 @@ async def p_todoassign(ctx, todo_id: int = None, user: discord.Member = None):
     target = user or ctx.author
     async with aiohttp.ClientSession() as session:
         todos, sha = await gh_read_fresh(session, FILE_TODOS)
-        if not todos:
-            await ctx.send("No TODOs found."); return
-        todo = next((t for t in todos if t["id"] == todo_id), None)
-        if not todo:
-            await ctx.send(f"TODO #{todo_id} not found."); return
-        todo["assigned_to_id"]   = str(target.id)
-        todo["assigned_to_name"] = str(target)
-        todo["updated_at"]       = now_iso()
-        if todo["status"] == "todo":
-            todo["status"] = "in_progress"
+        cfg, _     = await gh_read(session, FILE_CONFIG)
+    cfg = cfg or {}
+    if not todos:
+        await ctx.send("No TODOs found."); return
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        await ctx.send(f"TODO #{todo_id} not found."); return
+
+    # Already assigned to someone else? Ask for confirmation first
+    if todo.get("assigned_to_id") and todo["assigned_to_id"] != str(ctx.author.id):
+        if not ctx.author.guild_permissions.administrator:
+            view = ReassignConfirmView(
+                author_id           = ctx.author.id,
+                todo_id             = todo_id,
+                target              = target,
+                current_assignee_id = todo["assigned_to_id"],
+                todos               = todos,
+                sha                 = sha,
+                cfg                 = cfg,
+                guild               = ctx.guild,
+            )
+            current_id = todo['assigned_to_id']
+            await ctx.send(
+                f"⚠️ TODO **#{todo_id}** is already assigned to <@{current_id}>."
+                f" Do you want to transfer it to {target.mention}?",
+                view=view,
+            )
+            return
+
+    todo["assigned_to_id"]   = str(target.id)
+    todo["assigned_to_name"] = str(target)
+    todo["updated_at"]       = now_iso()
+    if todo["status"] == "todo":
+        todo["status"] = "in_progress"
+    async with aiohttp.ClientSession() as session:
         await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} assigned to {target}")
     await ctx.send(f"TODO **#{todo_id}** assigned to {target.mention}.")
-    async with aiohttp.ClientSession() as session:
-        cfg, _ = await gh_read(session, FILE_CONFIG)
-    await update_todo_board(ctx.guild, cfg or {})
+    await update_todo_board(ctx.guild, cfg)
 
 @bot.command(name="todounassign")
 async def p_todounassign(ctx, todo_id: int = None):
@@ -1833,6 +1954,70 @@ async def p_configview(ctx):
     roles = cfg.get("todo_roles", [])
     e.add_field(name="TODO Roles",  value=(", ".join(f"<@&{r}>" for r in roles) or "None"), inline=False)
     await ctx.send(embed=e)
+
+@bot.command(name="todorefresh")
+async def p_todorefresh(ctx):
+    """Wipe the todo channel and repost all bot cards cleanly. Admin only."""
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("Admin only.", delete_after=10); return
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read_fresh(session, FILE_CONFIG)
+    cfg = cfg or {}
+    todo_ch_id = cfg.get("todo_channel")
+    if not todo_ch_id:
+        await ctx.send("No TODO channel configured. Use `setuptodochannel` first.", delete_after=10); return
+    ch = ctx.guild.get_channel(int(todo_ch_id))
+    if not ch:
+        await ctx.send("TODO channel not found.", delete_after=10); return
+    # Delete command message if it's not in the todo channel (to avoid it getting wiped silently)
+    if str(ctx.channel.id) != str(todo_ch_id):
+        await ctx.send(f"Refreshing {ch.mention}...")
+    async with aiohttp.ClientSession() as session:
+        todos,   _ = await gh_read_fresh(session, FILE_TODOS)
+        archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+    todos   = todos   or []
+    archive = archive or []
+    active  = [t for t in todos if t["status"] != "done"]
+    pages   = [active[i:i+TODOS_PER_PAGE] for i in range(0, max(len(active), 1), TODOS_PER_PAGE)]
+    total_pages = len(pages)
+    style   = int(cfg.get("todo_style", 1))
+    stats_embed = build_stats_embed(active, len(archive), style=style)
+    page_embeds = [build_page_embed(page_todos, i + 1, total_pages, style=style)
+                   for i, page_todos in enumerate(pages)]
+    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg)
+    if str(ctx.channel.id) != str(todo_ch_id):
+        await ctx.send(f"✅ {ch.mention} refreshed — all old messages wiped, board reposted.")
+
+
+@bot.tree.command(name="todo_refresh", description="Wipe the TODO channel and repost everything fresh (admin only)")
+async def todo_refresh(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Admin only.", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read_fresh(session, FILE_CONFIG)
+    cfg = cfg or {}
+    todo_ch_id = cfg.get("todo_channel")
+    if not todo_ch_id:
+        await interaction.followup.send("No TODO channel configured.", ephemeral=True); return
+    ch = interaction.guild.get_channel(int(todo_ch_id))
+    if not ch:
+        await interaction.followup.send("TODO channel not found.", ephemeral=True); return
+    async with aiohttp.ClientSession() as session:
+        todos,   _ = await gh_read_fresh(session, FILE_TODOS)
+        archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+    todos   = todos   or []
+    archive = archive or []
+    active  = [t for t in todos if t["status"] != "done"]
+    pages   = [active[i:i+TODOS_PER_PAGE] for i in range(0, max(len(active), 1), TODOS_PER_PAGE)]
+    total_pages = len(pages)
+    style   = int(cfg.get("todo_style", 1))
+    stats_embed = build_stats_embed(active, len(archive), style=style)
+    page_embeds = [build_page_embed(page_todos, i + 1, total_pages, style=style)
+                   for i, page_todos in enumerate(pages)]
+    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg)
+    await interaction.followup.send(f"✅ {ch.mention} refreshed — all messages wiped, board reposted.", ephemeral=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
