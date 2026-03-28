@@ -134,6 +134,8 @@ def get_access_token(code):
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
     r = req.post(DISCORD_TOKEN_URL, data=data)
+    print("TOKEN RESPONSE STATUS:", r.status_code)
+    print("TOKEN RESPONSE BODY:", r.text)
     return r.json() if r.ok else None
 
 def get_guild_member(token, guild_id):
