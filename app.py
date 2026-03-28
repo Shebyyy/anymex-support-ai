@@ -169,10 +169,14 @@ def get_access_token(code):
         "code": code,
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
-    r = req.post(DISCORD_TOKEN_URL, data=data)
-    print("TOKEN RESPONSE STATUS:", r.status_code)
-    print("TOKEN RESPONSE BODY:", r.text)
-    return r.json() if r.ok else None
+    try:
+        r = req.post(DISCORD_TOKEN_URL, data=data, timeout=10)
+        print("TOKEN RESPONSE STATUS:", r.status_code)
+        print("TOKEN RESPONSE BODY:", r.text)
+        return r.json() if r.ok else r.json()
+    except Exception as e:
+        print("TOKEN REQUEST EXCEPTION:", str(e))
+        return {"error": type(e).__name__, "error_description": str(e)}
 
 def get_guild_member(token, guild_id):
     r = req.get(
