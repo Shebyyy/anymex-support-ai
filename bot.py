@@ -32,7 +32,8 @@ GITHUB_API  = "https://api.github.com"
 FILE_CONFIG        = "config.json"
 FILE_TODOS         = "todos.json"
 FILE_TODOS_ARCHIVE = "todos_archive.json"
-FILE_BOARD_IDS     = "board_ids.json"   # dedicated store for Discord message IDs
+FILE_BOARD_IDS       = "board_ids.json"        # dedicated store for Discord message IDs
+FILE_THREAD_MESSAGES = "thread_messages.json"  # saved thread conversation history
 
 TODOS_PER_PAGE = 10
 
@@ -125,6 +126,7 @@ async def ensure_files():
             (FILE_TODOS,         []),
             (FILE_TODOS_ARCHIVE, []),
             (FILE_BOARD_IDS,     DEFAULT_BOARD_IDS),
+            (FILE_THREAD_MESSAGES, {}),
         ]:
             data, sha = await gh_read(session, filepath)
             if sha is None and data is None:
@@ -1001,7 +1003,28 @@ async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embe
       [{"todo_ids": [...], "embed": discord.Embed}, ...]
     Saves fresh message IDs to board_ids.json afterwards.
     """
-    # Bulk-delete everything in the channel
+    # For styles 5/6 — delete all existing threads on board cards first
+    if style in (5, 6):
+        try:
+            active_threads = await ch.guild.active_threads()
+            for t in active_threads:
+                if t.parent_id == ch.id:
+                    try:
+                        await t.delete()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # Also purge thread_channel if configured (styles 1-4)
+    async with aiohttp.ClientSession() as _s:
+        _cfg, _ = await gh_read(_s, FILE_CONFIG)
+    _cfg = _cfg or {}
+    thread_ch_id = _cfg.get("thread_channel")
+    if thread_ch_id and ch.guild:
+        await _purge_channel_threads(ch.guild, thread_ch_id)
+
+    # Bulk-delete everything in the board channel
     try:
         await ch.purge(limit=None, check=lambda m: True)
     except Exception:
@@ -1328,10 +1351,41 @@ async def _create_todo_thread(msg: discord.Message, todo_id: int, todo_title: st
             await thread.edit(invitable=False)
         except Exception:
             pass
+        # Restore saved conversation history if any
+        await _restore_thread_history(thread, todo_id)
         return str(thread.id)
     except Exception as e:
         print(f"[thread] Failed to create thread for TODO #{todo_id}: {e}")
         return None
+
+
+async def _purge_channel_threads(guild: discord.Guild, channel_id: str):
+    """Delete all active threads inside a channel, then purge the channel messages."""
+    ch = guild.get_channel(int(channel_id))
+    if not ch:
+        return
+    try:
+        active_threads = await guild.active_threads()
+        for t in active_threads:
+            if t.parent_id == ch.id:
+                try:
+                    await t.delete()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # Also wipe the channel messages (thread starter messages)
+    try:
+        await ch.purge(limit=None, check=lambda m: True)
+    except Exception:
+        try:
+            async for m in ch.history(limit=200):
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 async def _get_or_create_thread_for_todo(guild: discord.Guild, cfg: dict,
@@ -1358,7 +1412,8 @@ async def _get_or_create_thread_for_todo(guild: discord.Guild, cfg: dict,
             await thread.edit(invitable=False)
         except Exception:
             pass
-        # No add_user — access controlled via channel permissions (TODO role can view)
+        # Restore saved conversation history if any
+        await _restore_thread_history(thread, todo_id)
         return thread
     except Exception as e:
         print(f"[thread] Failed to get/create thread for TODO #{todo_id}: {e}")
@@ -1541,6 +1596,131 @@ async def reminder_task():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# THREAD MESSAGE SYNC  (saves thread conversations to DB every 30 min)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _read_thread_messages(thread: discord.Thread) -> list[dict]:
+    """Read all non-bot messages from a thread, oldest first."""
+    messages = []
+    try:
+        async for msg in thread.history(limit=500, oldest_first=True):
+            if msg.author.bot:
+                continue
+            messages.append({
+                "author":     msg.author.display_name,
+                "author_id":  str(msg.author.id),
+                "content":    msg.content[:1000],
+                "at":         msg.created_at.isoformat(),
+                "msg_id":     str(msg.id),
+            })
+    except Exception:
+        pass
+    return messages
+
+
+async def _restore_thread_history(thread: discord.Thread, todo_id: int):
+    """Post saved history into a freshly created thread."""
+    async with aiohttp.ClientSession() as session:
+        history, _ = await gh_read(session, FILE_THREAD_MESSAGES)
+    history = history or {}
+    messages = history.get(str(todo_id), [])
+    if not messages:
+        return
+
+    # Split into chunks of 10 messages per embed to stay under Discord limits
+    chunk_size = 10
+    chunks = [messages[i:i+chunk_size] for i in range(0, len(messages), chunk_size)]
+    for idx, chunk in enumerate(chunks):
+        lines = [f"📜 **Previous discussion** {'(continued)' if idx > 0 else ''}", "─" * 30]
+        for m in chunk:
+            try:
+                ts = datetime.datetime.fromisoformat(m["at"])
+                time_str = f"<t:{int(ts.timestamp())}:R>"
+            except Exception:
+                time_str = m.get("at", "")[:10]
+            lines.append(f"**{m['author']}** {time_str}")
+            lines.append(m["content"])
+            lines.append("")
+        try:
+            await thread.send("\n".join(lines))
+            await asyncio.sleep(0.5)
+        except Exception:
+            pass
+
+
+@tasks.loop(minutes=30)
+async def thread_sync_task():
+    """Every 30 min — read all active TODO threads and save messages to DB."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            cfg, _   = await gh_read(session, FILE_CONFIG)
+            bid, _   = await gh_read(session, FILE_BOARD_IDS)
+            history, sha = await gh_read_fresh(session, FILE_THREAD_MESSAGES)
+
+        cfg     = cfg     or {}
+        bid     = bid     or DEFAULT_BOARD_IDS.copy()
+        history = history or {}
+
+        todo_ch_id   = cfg.get("todo_channel")
+        thread_ch_id = cfg.get("thread_channel")
+        changed      = False
+
+        for guild in bot.guilds:
+            try:
+                active_threads = await guild.active_threads()
+            except Exception:
+                continue
+
+            for thread in active_threads:
+                parent_id = str(thread.parent_id) if thread.parent_id else None
+
+                # Match thread to a TODO id
+                todo_id = None
+
+                # Styles 5/6 — thread_id stored in board_ids.json
+                if parent_id == todo_ch_id:
+                    for page in bid.get("pages", []):
+                        if page.get("thread_id") == str(thread.id) and page.get("todo_ids"):
+                            todo_id = page["todo_ids"][0]
+                            break
+
+                # Styles 1-4 — thread name contains "TODO #N"
+                if todo_id is None and parent_id == thread_ch_id:
+                    import re as _re
+                    m = _re.search(r"TODO #(\d+)", thread.name)
+                    if m:
+                        todo_id = int(m.group(1))
+
+                if todo_id is None:
+                    continue
+
+                # Read messages from thread
+                messages = await _read_thread_messages(thread)
+                if not messages:
+                    continue
+
+                # Only save if there are new messages since last sync
+                existing = history.get(str(todo_id), [])
+                existing_ids = {m["msg_id"] for m in existing}
+                new_msgs = [m for m in messages if m["msg_id"] not in existing_ids]
+                if not new_msgs:
+                    continue
+
+                history[str(todo_id)] = messages  # full replace with latest snapshot
+                changed = True
+
+        if changed:
+            async with aiohttp.ClientSession() as session:
+                _, sha2 = await gh_read_fresh(session, FILE_THREAD_MESSAGES)
+                await gh_write(session, FILE_THREAD_MESSAGES, history, sha2,
+                               "Thread sync: update conversation history")
+            print(f"[thread_sync] Saved updated thread history")
+
+    except Exception as e:
+        print(f"[thread_sync_task] Error: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # EVENTS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1558,6 +1738,9 @@ async def on_ready():
     if not reminder_task.is_running():
         reminder_task.start()
         print("Reminder task started")
+    if not thread_sync_task.is_running():
+        thread_sync_task.start()
+        print("Thread sync task started")
 
 
 
@@ -2450,20 +2633,6 @@ async def setup_todo_roles(interaction: discord.Interaction, role: discord.Role)
         cfg["todo_roles"] = roles
         await gh_write(session, FILE_CONFIG, cfg, sha, "TODO roles updated")
 
-    # Sync thread channel permissions if configured
-    thread_ch_id = cfg.get("thread_channel")
-    if thread_ch_id:
-        ch = interaction.guild.get_channel(int(thread_ch_id))
-        if ch:
-            try:
-                if adding:
-                    await ch.set_permissions(role, view_channel=True, send_messages=False)
-                else:
-                    await ch.set_permissions(role, overwrite=None)  # remove override
-                msg += f"\n✅ Thread channel permissions updated."
-            except Exception as e:
-                msg += f"\n⚠️ Could not update thread channel permissions: {e}"
-
     await interaction.followup.send(msg, ephemeral=True)
 
 
@@ -2525,30 +2694,10 @@ async def setup_thread_channel(interaction: discord.Interaction, channel: discor
         cfg = cfg or DEFAULT_CONFIG.copy()
         cfg["thread_channel"] = str(channel.id)
         await gh_write(session, FILE_CONFIG, cfg, sha, "Setup: thread channel")
-
-    # Set channel permissions: hide from @everyone, allow TODO roles
-    todo_role_ids = cfg.get("todo_roles", [])
-    errors = []
-    try:
-        await channel.set_permissions(
-            interaction.guild.default_role,
-            view_channel=False,
-        )
-    except Exception as e:
-        errors.append(f"Could not restrict @everyone: {e}")
-
-    for rid in todo_role_ids:
-        role = interaction.guild.get_role(int(rid))
-        if role:
-            try:
-                await channel.set_permissions(role, view_channel=True, send_messages=False)
-            except Exception as e:
-                errors.append(f"Could not set perms for {role.name}: {e}")
-
-    msg = f"Thread channel set to {channel.mention}.\n✅ Permissions set — TODO roles can view, @everyone hidden."
-    if errors:
-        msg += "\n⚠️ Some permission errors:\n" + "\n".join(errors)
-    await interaction.followup.send(msg, ephemeral=True)
+    await interaction.followup.send(
+        f"Thread channel set to {channel.mention}. Use `/todo_thread <id>` to open a discussion.",
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="config_view", description="View current bot configuration (Admin)")
