@@ -119,6 +119,40 @@ def gh_write(filepath: str, data, sha, msg: str):
     r = req.put(url, headers=gh_headers(), json=payload)
     return r.status_code in (200, 201)
 
+
+FILE_SESSIONS = "sessions.json"
+SESSION_TTL_DAYS = 30
+
+def session_read_all():
+    data, sha = gh_read(FILE_SESSIONS, force=True)
+    return (data or {}), sha
+
+def session_save(sid, payload):
+    sessions, sha = session_read_all()
+    sessions[sid] = {
+        **payload,
+        "expires_at": (datetime.datetime.utcnow() + datetime.timedelta(days=SESSION_TTL_DAYS)).isoformat()
+    }
+    # Clean expired sessions
+    now = datetime.datetime.utcnow().isoformat()
+    sessions = {k: v for k, v in sessions.items() if v.get("expires_at", "") > now}
+    gh_write(FILE_SESSIONS, sessions, sha, f"Session: save {sid[:8]}")
+
+def session_get(sid):
+    sessions, _ = session_read_all()
+    s = sessions.get(sid)
+    if not s:
+        return None
+    if s.get("expires_at", "") < datetime.datetime.utcnow().isoformat():
+        return None
+    return s
+
+def session_delete(sid):
+    sessions, sha = session_read_all()
+    if sid in sessions:
+        del sessions[sid]
+        gh_write(FILE_SESSIONS, sessions, sha, f"Session: delete {sid[:8]}")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DISCORD OAUTH HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -173,7 +207,7 @@ def resolve_access_level(member, cfg):
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if "user" not in session:
+        if "user" not in get_session():
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
@@ -181,9 +215,10 @@ def login_required(f):
 def manager_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if "user" not in session:
+        s = get_session()
+        if "user" not in s:
             return redirect(url_for("login"))
-        if session.get("access_level") not in ("manager", "admin", "owner"):
+        if s.get("access_level") not in ("manager", "admin", "owner"):
             abort(403)
         return f(*args, **kwargs)
     return decorated
@@ -191,9 +226,10 @@ def manager_required(f):
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if "user" not in session:
+        s = get_session()
+        if "user" not in s:
             return redirect(url_for("login"))
-        if session.get("access_level") not in ("admin", "owner"):
+        if s.get("access_level") not in ("admin", "owner"):
             abort(403)
         return f(*args, **kwargs)
     return decorated
@@ -243,15 +279,17 @@ app.jinja_env.globals.update(
 @app.route("/login")
 def login():
     state = secrets.token_hex(16)
-    session["oauth_state"] = state
-    params = (
+    sid = secrets.token_hex(32)
+    session_save(sid, {"oauth_state": state})
+    resp = redirect(DISCORD_OAUTH + (
         f"?client_id={DISCORD_CLIENT_ID}"
         f"&redirect_uri={DISCORD_REDIRECT_URI}"
         f"&response_type=code"
         f"&scope={DISCORD_SCOPE.replace(' ', '%20')}"
         f"&state={state}"
-    )
-    return redirect(DISCORD_OAUTH + params)
+    ))
+    resp.set_cookie("sid", sid, max_age=600, httponly=True, samesite="Lax")
+    return resp
 
 @app.route("/callback")
 def callback():
@@ -259,8 +297,13 @@ def callback():
     if error:
         return redirect(url_for("index") + "?error=discord_denied")
 
+    sid = request.cookies.get("sid")
+    sid_data = session_get(sid) if sid else None
+    if not sid_data:
+        return redirect(url_for("index") + "?error=state_mismatch")
+
     state = request.args.get("state")
-    if state != session.pop("oauth_state", None):
+    if state != sid_data.get("oauth_state"):
         return redirect(url_for("index") + "?error=state_mismatch")
 
     code = request.args.get("code")
@@ -273,7 +316,6 @@ def callback():
     if not user:
         return redirect(url_for("index") + "?error=user_fail")
 
-    # Get guild member info for permission check
     member = None
     if DISCORD_GUILD_ID:
         member = get_guild_member(access_token, DISCORD_GUILD_ID)
@@ -282,18 +324,33 @@ def callback():
     cfg = cfg or DEFAULT_CONFIG.copy()
     access_level = resolve_access_level(member, cfg)
 
-    session["user"]         = user
-    session["access_token"] = access_token
-    session["access_level"] = access_level
-    session["member"]       = member
-    session.permanent       = True
+    # Save full session to GitHub
+    new_sid = secrets.token_hex(32)
+    session_save(new_sid, {
+        "user": user,
+        "access_token": access_token,
+        "access_level": access_level,
+        "member": member,
+    })
 
-    return redirect(url_for("dashboard"))
+    resp = redirect(url_for("dashboard"))
+    resp.set_cookie("sid", new_sid, max_age=60*60*24*30, httponly=True, samesite="Lax")
+    return resp
+
+def get_session():
+    sid = request.cookies.get("sid")
+    if not sid:
+        return {}
+    return session_get(sid) or {}
 
 @app.route("/logout")
 def logout():
-    session.clear()
-    return redirect(url_for("index"))
+    sid = request.cookies.get("sid")
+    if sid:
+        session_delete(sid)
+    resp = redirect(url_for("index"))
+    resp.delete_cookie("sid")
+    return resp
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ROUTES — PAGES
@@ -312,13 +369,13 @@ def index():
 
     return render_template("index.html",
         todos=todos, counts=counts, archive_count=len(archive),
-        user=session.get("user"), access_level=session.get("access_level", "public"),
+        user=get_session().get("user"), access_level=get_session().get("access_level", "public"),
     )
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    user = session["user"]
+    user = get_session()["user"]
     todos, _   = gh_read(FILE_TODOS)
     archive, _ = gh_read(FILE_TODOS_ARCHIVE)
     todos   = todos or []
@@ -334,7 +391,7 @@ def dashboard():
     counts["done"] = len(archive)
 
     return render_template("dashboard.html",
-        user=user, access_level=session.get("access_level"),
+        user=user, access_level=get_session().get("access_level"),
         my_todos=my_todos, added_todos=added_todos,
         active_todos=active_todos, counts=counts,
         archive_count=len(archive),
@@ -373,7 +430,7 @@ def board():
         cfg=cfg, all_tags=all_tags,
         status_filter=status_filter, priority_filter=priority_filter,
         tag_filter=tag_filter, search=search,
-        user=session.get("user"), access_level=session.get("access_level", "public"),
+        user=get_session().get("user"), access_level=get_session().get("access_level", "public"),
     )
 
 @app.route("/analytics")
@@ -409,7 +466,7 @@ def analytics():
     manual_count = len(all_todos) - ai_count
 
     return render_template("analytics.html",
-        user=session["user"], access_level=session.get("access_level"),
+        user=get_session()["user"], access_level=get_session().get("access_level"),
         counts=counts, total=len(all_todos), archive_count=len(archive),
         tag_counts=dict(tag_counts), pri_counts=dict(pri_counts),
         ai_count=ai_count, manual_count=manual_count,
@@ -424,7 +481,7 @@ def settings():
     cfg, _ = gh_read(FILE_CONFIG, force=True)
     cfg = cfg or DEFAULT_CONFIG.copy()
     return render_template("settings.html",
-        user=session["user"], access_level=session.get("access_level"),
+        user=get_session()["user"], access_level=get_session().get("access_level"),
         cfg=cfg,
     )
 
@@ -448,7 +505,7 @@ def api_todo_get(todo_id):
 
 @app.route("/api/todo", methods=["POST"])
 def api_todo_create():
-    if session.get("access_level") not in ("manager", "admin", "owner"):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
     data = request.json or {}
     title = (data.get("title") or "").strip()
@@ -458,7 +515,7 @@ def api_todo_create():
     todos, sha = gh_read(FILE_TODOS, force=True)
     todos = todos or []
     next_id = max((t["id"] for t in todos), default=0) + 1
-    user = session.get("user", {})
+    user = get_session().get("user", {})
 
     new_todo = {
         "id": next_id,
@@ -483,7 +540,7 @@ def api_todo_create():
 
 @app.route("/api/todo/<int:todo_id>", methods=["PATCH"])
 def api_todo_update(todo_id):
-    if session.get("access_level") not in ("manager", "admin", "owner"):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
 
     todos, sha = gh_read(FILE_TODOS, force=True)
@@ -512,7 +569,7 @@ def api_todo_update(todo_id):
 
 @app.route("/api/todo/<int:todo_id>", methods=["DELETE"])
 def api_todo_delete(todo_id):
-    if session.get("access_level") not in ("manager", "admin", "owner"):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
 
     todos, sha = gh_read(FILE_TODOS, force=True)
@@ -526,7 +583,7 @@ def api_todo_delete(todo_id):
 
 @app.route("/api/config", methods=["POST"])
 def api_config_save():
-    if session.get("access_level") not in ("admin", "owner"):
+    if get_session().get("access_level") not in ("admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
     data = request.json or {}
     cfg, sha = gh_read(FILE_CONFIG, force=True)
@@ -541,9 +598,9 @@ def api_config_save():
 @app.route("/api/me")
 def api_me():
     return jsonify({
-        "user": session.get("user"),
-        "access_level": session.get("access_level", "public"),
-        "member": session.get("member"),
+        "user": get_session().get("user"),
+        "access_level": get_session().get("access_level", "public"),
+        "member": get_session().get("member"),
     })
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -554,13 +611,13 @@ def api_me():
 def forbidden(e):
     return render_template("error.html", code=403,
         message="You don't have permission to view this page.",
-        user=session.get("user"), access_level=session.get("access_level", "public")), 403
+        user=get_session().get("user"), access_level=get_session().get("access_level", "public")), 403
 
 @app.errorhandler(404)
 def not_found(e):
     return render_template("error.html", code=404,
         message="Page not found.",
-        user=session.get("user"), access_level=session.get("access_level", "public")), 404
+        user=get_session().get("user"), access_level=get_session().get("access_level", "public")), 404
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
