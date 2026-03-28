@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from aiohttp import web
 import aiohttp
 import asyncio
@@ -38,10 +38,18 @@ TODOS_PER_PAGE = 10
 
 # Default config
 DEFAULT_CONFIG = {
-    "todo_channel":  None,
-    "todo_roles":    [],
-    "todo_style":    1,
-    "prefix":        "ax!",
+    "todo_channel":    None,
+    "todo_roles":      [],
+    "todo_style":      1,
+    "prefix":          "ax!",
+    # Activity log
+    "log_channel":     None,
+    # Reminders
+    "reminder_days":   3,
+    "reminder_time":   "09:00",
+    "reminder_channel": None,   # None = DM assigned user
+    # Threads (styles 1-4)
+    "thread_channel":  None,
 }
 
 # board_ids.json schema — separate file so config.json stays clean
@@ -51,6 +59,7 @@ DEFAULT_CONFIG = {
 #   "pages": [           <- one entry per Discord message on the board
 #     {
 #       "message_id": "discord_msg_id",
+#       "thread_id":  "discord_thread_id" | null,  <- for styles 5/6
 #       "todo_ids":   [1, 3, 7]   <- which todo IDs live in this message
 #     }                              styles 1-4: multiple per message (one page)
 #   ]                                styles 5-6: exactly one todo per message
@@ -268,9 +277,10 @@ def _card_style1(t: dict) -> tuple[str, str]:
     ai_tag   = "  ✦ AI" if t.get("auto_generated") else ""
     desc     = t.get("ai_description") or ""
     desc_line = f"\n> *{desc[:120]}*" if desc else ""
+    tags_line = f"\n{_tag_badges(t.get('tags', []))}" if t.get("tags") else ""
     name  = f"#{t['id']} — {t['title'][:65]}"
     value = (
-        f"`{label}`  {pri_icon} {priority}{ai_tag}{desc_line}\n"
+        f"`{label}`  {pri_icon} {priority}{ai_tag}{desc_line}{tags_line}\n"
         f"-# Assigned: {asgn}  ·  Added by: {added}"
     )
     return name, value
@@ -304,9 +314,10 @@ def _card_style2(t: dict) -> tuple[str, str]:
     ai_tag   = "  ✦ AI" if t.get("auto_generated") else ""
     desc     = t.get("ai_description") or ""
     desc_line = f"\n> *{desc[:120]}*" if desc else ""
+    tags_line = f"\n{_tag_badges(t.get('tags', []))}" if t.get("tags") else ""
     name  = f"{color_bar} #{t['id']} — {t['title'][:60]}"
     value = (
-        f"**{label}**  ·  {priority}{ai_tag}{desc_line}\n"
+        f"**{label}**  ·  {priority}{ai_tag}{desc_line}{tags_line}\n"
         f"-# {asgn}  ·  {added}"
     )
     return name, value
@@ -381,6 +392,10 @@ def _card_style4(t: dict) -> tuple[str, str]:
         snippet = src_text.strip()[:100].replace("\n", " ")
         lines.append(f"> \"{snippet}\"")
 
+    tags = t.get("tags", [])
+    if tags:
+        lines.append(_tag_badges(tags))
+
     lines.append(f"-# Assigned: {asgn}  ·  Added by: {added}")
     name  = f"#{t['id']} — {t['title'][:60]}"
     value = "\n".join(lines)
@@ -439,6 +454,10 @@ def _embeds_style5(todos: list, page: int, total_pages: int) -> list[discord.Emb
         ai_desc = t.get("ai_description", "")
         if ai_desc:
             desc_parts.append(f"> *{ai_desc}*")
+
+        tags = t.get("tags", [])
+        if tags:
+            desc_parts.append(_tag_badges(tags))
 
         desc_parts.append(f"-# Assigned: {asgn}  ·  Added by: {added}")
 
@@ -514,6 +533,10 @@ def _embeds_style6(todos: list, page: int, total_pages: int) -> list[discord.Emb
             value=f"`{st_icon} {label}`  {pri_icon} **{priority}**{ai_tag}",
             inline=False,
         )
+
+        tags = t.get("tags", [])
+        if tags:
+            e.add_field(name="Tags", value=_tag_badges(tags), inline=False)
 
         ai_desc = t.get("ai_description", "")
         if ai_desc:
@@ -683,6 +706,52 @@ async def has_todo_role_msg(message: discord.Message) -> bool:
 
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ACTIVITY LOG
+# ══════════════════════════════════════════════════════════════════════════════
+
+TAG_COLORS = {
+    "bug":      "🔴",
+    "feature":  "🟢",
+    "urgent":   "🟠",
+    "docs":     "🔵",
+    "refactor": "🟣",
+    "question": "🟡",
+}
+
+def _tag_badges(tags: list) -> str:
+    """Return a compact string of tag badges, e.g. `bug` `urgent`"""
+    if not tags:
+        return ""
+    return "  ".join(f"`{t}`" for t in tags)
+
+async def log_activity(guild: discord.Guild, cfg: dict, action: str, todo: dict,
+                       user: discord.Member | None, extra: str = ""):
+    """Post an activity embed to the configured log channel."""
+    log_ch_id = cfg.get("log_channel")
+    if not log_ch_id:
+        return
+    ch = guild.get_channel(int(log_ch_id))
+    if not ch:
+        return
+    status = todo.get("status", "todo")
+    color  = STATUS_COLORS.get(status, 0x5865F2)
+    title_str = todo.get("title", "")[:60]
+    user_str  = user.mention if user else "Unknown"
+    e = discord.Embed(
+        title=f"📋 TODO #{todo['id']} — {title_str}",
+        description=f"**{action}**\n{extra}" if extra else f"**{action}**",
+        color=color,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    e.set_footer(text=f"By {user.display_name if user else 'Unknown'}")
+    try:
+        await ch.send(embed=e)
+    except Exception:
+        pass
+
+
 
 async def has_todo_role(interaction: discord.Interaction) -> bool:
     if interaction.user.guild_permissions.administrator:
@@ -855,7 +924,13 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
             try:
                 existing = await ch.fetch_message(int(reuse_mid))
                 await safe_edit(existing, slot_embed)
-                new_pages.append({"message_id": reuse_mid, "todo_ids": slot_tids})
+                # Preserve existing thread_id
+                existing_thread_id = None
+                for s in stored_pages:
+                    if s.get("message_id") == reuse_mid:
+                        existing_thread_id = s.get("thread_id")
+                        break
+                new_pages.append({"message_id": reuse_mid, "thread_id": existing_thread_id, "todo_ids": slot_tids})
             except Exception:
                 # Message gone — need a full wipe to be safe
                 await _refresh_todo_board(ch, stats_embed, wanted, style=style)
@@ -865,7 +940,10 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
             need_save = True
             delay = _SEND_DELAY.get(style, 0.0)
             new_msg = await safe_send(ch, slot_embed, delay=delay)
-            new_pages.append({"message_id": str(new_msg.id), "todo_ids": slot_tids})
+            thread_id = None
+            if style in (5, 6) and slot_tids:
+                thread_id = await _create_todo_thread(new_msg, slot_tids[0])
+            new_pages.append({"message_id": str(new_msg.id), "thread_id": thread_id, "todo_ids": slot_tids})
 
     # ── Save updated board_ids.json if anything changed ───────────────────────
     if need_save:
@@ -941,7 +1019,12 @@ async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embe
     new_pages  = []
     for slot in wanted:
         msg = await safe_send(ch, slot["embed"], delay=delay)
-        new_pages.append({"message_id": str(msg.id), "todo_ids": slot["todo_ids"]})
+        thread_id = None
+        # Auto-create thread for single-TODO styles 5 & 6
+        if style in (5, 6) and slot["todo_ids"]:
+            tid = slot["todo_ids"][0]
+            thread_id = await _create_todo_thread(msg, tid)
+        new_pages.append({"message_id": str(msg.id), "thread_id": thread_id, "todo_ids": slot["todo_ids"]})
 
     # Save everything to board_ids.json
     async with aiohttp.ClientSession() as session:
@@ -1002,12 +1085,14 @@ class TodoConfirmView(discord.ui.View):
                 "ai_description":       self.ai_description,
                 "status":               "todo",
                 "priority":             "medium",
+                "tags":                 [],
                 "added_by_id":          str(interaction.user.id),
                 "added_by_name":        str(interaction.user),
                 "assigned_to_id":       None,
                 "assigned_to_name":     None,
                 "created_at":           now_iso(),
                 "updated_at":           now_iso(),
+                "last_reminded_at":     None,
                 "source_message_ids":   source_ids,
                 "source_message_links": combined_links,
                 "source_message_text":  combined_text[:1000],
@@ -1021,6 +1106,10 @@ class TodoConfirmView(discord.ui.View):
         if self.fuzzy_warn:
             reply += f"\n> Similar existing todo: {self.fuzzy_warn}"
         await interaction.edit_original_response(content=reply, view=None)
+        async with aiohttp.ClientSession() as _s:
+            _cfg2, _ = await gh_read(_s, FILE_CONFIG)
+        await log_activity(interaction.guild, _cfg2 or {}, "TODO Added", todo,
+                           interaction.guild.get_member(interaction.user.id))
         await update_todo_board(interaction.guild, self.cfg)
 
     @discord.ui.button(label="No, cancel", style=discord.ButtonStyle.secondary)
@@ -1188,6 +1277,20 @@ class ReassignConfirmView(discord.ui.View):
             content=f"✅ TODO **#{self.todo_id}** reassigned to {self.target.mention}.",
             view=None,
         )
+        # Notify old assignee
+        old_member = self.guild.get_member(int(self.current_assignee_id))
+        if old_member and old_member.id != interaction.user.id:
+            try:
+                await old_member.send(
+                    f"You were unassigned from **TODO #{self.todo_id}** by {interaction.user.mention} in **{self.guild.name}**."
+                )
+            except Exception:
+                pass
+        async with aiohttp.ClientSession() as _s:
+            _cfg2, _ = await gh_read(_s, FILE_CONFIG)
+        await log_activity(self.guild, _cfg2 or {}, "Reassigned",
+                           todo, interaction.guild.get_member(interaction.user.id),
+                           extra=f"→ {self.target.mention}")
         await update_todo_board(self.guild, self.cfg)
 
     @discord.ui.button(label="No, cancel", style=discord.ButtonStyle.secondary)
@@ -1198,6 +1301,256 @@ class ReassignConfirmView(discord.ui.View):
 
     async def on_timeout(self):
         pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THREAD HELPER
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _create_todo_thread(msg: discord.Message, todo_id: int) -> str | None:
+    """
+    Create a thread on a board card message (styles 5/6).
+    Sets invitable=False, adds all members with a TODO role.
+    Returns the thread ID as string, or None on failure.
+    """
+    try:
+        thread = await msg.create_thread(
+            name=f"TODO #{todo_id}",
+            auto_archive_duration=10080,  # 7 days
+        )
+        try:
+            await thread.edit(invitable=False)
+        except Exception:
+            pass
+        async with aiohttp.ClientSession() as session:
+            cfg, _ = await gh_read(session, FILE_CONFIG)
+        cfg = cfg or {}
+        todo_role_ids = [int(r) for r in cfg.get("todo_roles", [])]
+        guild = msg.guild
+        if guild and todo_role_ids:
+            for member in guild.members:
+                if any(r.id in todo_role_ids for r in member.roles):
+                    try:
+                        await thread.add_user(member)
+                    except Exception:
+                        pass
+        return str(thread.id)
+    except Exception as e:
+        print(f"[thread] Failed to create thread for TODO #{todo_id}: {e}")
+        return None
+
+
+async def _get_or_create_thread_for_todo(guild: discord.Guild, cfg: dict,
+                                          todo_id: int, todo_title: str) -> discord.Thread | None:
+    """
+    For styles 1-4: get/create a dedicated thread in the thread_channel.
+    Returns the thread object or None.
+    """
+    thread_ch_id = cfg.get("thread_channel")
+    if not thread_ch_id:
+        return None
+    ch = guild.get_channel(int(thread_ch_id))
+    if not ch:
+        return None
+    try:
+        thread_name = f"TODO #{todo_id} — {todo_title[:40]}"
+        active_threads = await guild.active_threads()
+        for t in active_threads:
+            if t.parent_id == ch.id and f"TODO #{todo_id}" in t.name:
+                return t
+        msg = await ch.send(f"**TODO #{todo_id}** — {todo_title[:80]}")
+        thread = await msg.create_thread(name=thread_name, auto_archive_duration=10080)
+        try:
+            await thread.edit(invitable=False)
+        except Exception:
+            pass
+        todo_role_ids = [int(r) for r in cfg.get("todo_roles", [])]
+        if todo_role_ids:
+            for member in guild.members:
+                if any(r.id in todo_role_ids for r in member.roles):
+                    try:
+                        await thread.add_user(member)
+                    except Exception:
+                        pass
+        return thread
+    except Exception as e:
+        print(f"[thread] Failed to get/create thread for TODO #{todo_id}: {e}")
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTO-ASSIGN — REACTION  (✋ on board card)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TakeOverView(discord.ui.View):
+    """Confirm taking over an already-assigned TODO via ✋ reaction."""
+    def __init__(self, reactor: discord.Member, todo: dict, todos: list, sha: str,
+                 cfg: dict, guild: discord.Guild):
+        super().__init__(timeout=60)
+        self.reactor = reactor
+        self.todo    = todo
+        self.todos   = todos
+        self.sha     = sha
+        self.cfg     = cfg
+        self.guild   = guild
+        self.done    = False
+
+    @discord.ui.button(label="Take Over", style=discord.ButtonStyle.danger)
+    async def take_over(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.reactor.id:
+            await interaction.response.send_message("Not for you.", ephemeral=True); return
+        self.done = True
+        self.stop()
+        old_id = self.todo.get("assigned_to_id")
+        self.todo["assigned_to_id"]   = str(self.reactor.id)
+        self.todo["assigned_to_name"] = str(self.reactor)
+        self.todo["updated_at"]       = now_iso()
+        if self.todo["status"] == "todo":
+            self.todo["status"] = "in_progress"
+        async with aiohttp.ClientSession() as session:
+            await gh_write(session, FILE_TODOS, self.todos, self.sha,
+                           f"TODO #{self.todo['id']} taken over by {self.reactor}")
+        await interaction.response.edit_message(
+            content=f"✅ You're now assigned to **TODO #{self.todo['id']}**.", view=None
+        )
+        if old_id:
+            old_member = self.guild.get_member(int(old_id))
+            if old_member and old_member.id != self.reactor.id:
+                try:
+                    await old_member.send(
+                        f"You were unassigned from **TODO #{self.todo['id']}** by "
+                        f"{self.reactor.mention} in **{self.guild.name}**."
+                    )
+                except Exception:
+                    pass
+        async with aiohttp.ClientSession() as _s:
+            _cfg2, _ = await gh_read(_s, FILE_CONFIG)
+        await log_activity(self.guild, _cfg2 or {}, "Taken Over (✋ reaction)",
+                           self.todo, self.reactor, extra=f"→ {self.reactor.mention}")
+        await update_todo_board(self.guild, self.cfg)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.reactor.id:
+            await interaction.response.send_message("Not for you.", ephemeral=True); return
+        self.done = True
+        self.stop()
+        await interaction.response.edit_message(content="Cancelled.", view=None)
+
+    async def on_timeout(self):
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REMINDER BACKGROUND TASK
+# ══════════════════════════════════════════════════════════════════════════════
+
+_reminder_last_fired: str = ""   # "YYYY-MM-DD HH:MM" — prevents double-fire within a day
+
+
+def _add_minutes(hhmm: str, mins: int) -> str:
+    """Add minutes to HH:MM string and return HH:MM."""
+    try:
+        h, m = map(int, hhmm.split(":"))
+        total = h * 60 + m + mins
+        return f"{(total // 60) % 24:02d}:{total % 60:02d}"
+    except Exception:
+        return "99:99"
+
+
+@tasks.loop(minutes=5)
+async def reminder_task():
+    """Fire reminders once per day at the configured UTC time."""
+    global _reminder_last_fired
+    try:
+        async with aiohttp.ClientSession() as session:
+            cfg, _ = await gh_read(session, FILE_CONFIG)
+        cfg = cfg or {}
+        reminder_time = cfg.get("reminder_time", "09:00")
+        reminder_days = int(cfg.get("reminder_days", 3))
+        reminder_ch_id = cfg.get("reminder_channel")
+
+        now_utc  = datetime.datetime.now(datetime.timezone.utc)
+        now_hhmm = now_utc.strftime("%H:%M")
+        today_key = f"{now_utc.strftime('%Y-%m-%d')} {reminder_time}"
+
+        # Only fire inside the correct 5-minute window, once per day
+        if not (reminder_time <= now_hhmm < _add_minutes(reminder_time, 5)):
+            return
+        if _reminder_last_fired == today_key:
+            return
+        _reminder_last_fired = today_key
+
+        async with aiohttp.ClientSession() as session:
+            todos, _ = await gh_read_fresh(session, FILE_TODOS)
+        todos = todos or []
+
+        cutoff   = now_utc - datetime.timedelta(days=reminder_days)
+        need_save = False
+
+        for guild in bot.guilds:
+            for todo in todos:
+                if todo.get("status") not in ("in_progress", "blocked"):
+                    continue
+                if not todo.get("assigned_to_id"):
+                    continue
+
+                # Check last updated time
+                updated_str = todo.get("updated_at") or todo.get("created_at", "")
+                try:
+                    updated_dt = datetime.datetime.fromisoformat(updated_str)
+                    if updated_dt.tzinfo is None:
+                        updated_dt = updated_dt.replace(tzinfo=datetime.timezone.utc)
+                except Exception:
+                    continue
+                if updated_dt > cutoff:
+                    continue
+
+                # Already reminded recently?
+                last_reminded = todo.get("last_reminded_at")
+                if last_reminded:
+                    try:
+                        lr_dt = datetime.datetime.fromisoformat(last_reminded)
+                        if lr_dt.tzinfo is None:
+                            lr_dt = lr_dt.replace(tzinfo=datetime.timezone.utc)
+                        if (now_utc - lr_dt).days < reminder_days:
+                            continue
+                    except Exception:
+                        pass
+
+                member = guild.get_member(int(todo["assigned_to_id"]))
+                if not member:
+                    continue
+
+                msg_text = (
+                    f"⏰ **Reminder** — TODO **#{todo['id']}** *{todo['title'][:60]}* "
+                    f"has been **{STATUS_LABELS.get(todo['status'], todo['status'])}** "
+                    f"for {reminder_days}+ days without an update. {member.mention}"
+                )
+                try:
+                    if reminder_ch_id:
+                        ch = guild.get_channel(int(reminder_ch_id))
+                        if ch:
+                            await ch.send(msg_text)
+                    else:
+                        await member.send(msg_text)
+                except Exception:
+                    pass
+
+                todo["last_reminded_at"] = now_iso()
+                need_save = True
+
+        if need_save:
+            async with aiohttp.ClientSession() as session:
+                todos2, sha2 = await gh_read_fresh(session, FILE_TODOS)
+                id_map = {t["id"]: t.get("last_reminded_at") for t in todos if t.get("last_reminded_at")}
+                for t in (todos2 or []):
+                    if t["id"] in id_map:
+                        t["last_reminded_at"] = id_map[t["id"]]
+                await gh_write(session, FILE_TODOS, todos2 or todos, sha2, "Reminders: update last_reminded_at")
+
+    except Exception as e:
+        print(f"[reminder_task] Error: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1215,6 +1568,47 @@ async def on_ready():
             print("Slash commands synced")
         except Exception as e:
             print(f"Sync failed: {e}")
+    if not reminder_task.is_running():
+        reminder_task.start()
+        print("Reminder task started")
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    """When a member gains a TODO role, add them to all open TODO threads."""
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    cfg = cfg or {}
+    todo_role_ids = [str(r) for r in cfg.get("todo_roles", [])]
+    if not todo_role_ids:
+        return
+
+    before_role_ids = {str(r.id) for r in before.roles}
+    after_role_ids  = {str(r.id) for r in after.roles}
+    newly_added = after_role_ids - before_role_ids
+
+    # Check if any of the newly added roles is a TODO role
+    if not any(rid in todo_role_ids for rid in newly_added):
+        return
+
+    # Add this member to all currently active threads
+    try:
+        active_threads = await after.guild.active_threads()
+    except Exception:
+        return
+
+    todo_ch_id    = cfg.get("todo_channel")
+    thread_ch_id  = cfg.get("thread_channel")
+
+    for thread in active_threads:
+        parent_id = str(thread.parent_id) if thread.parent_id else None
+        # Only touch threads that belong to the TODO board channel or thread channel
+        if parent_id not in (todo_ch_id, thread_ch_id):
+            continue
+        try:
+            await thread.add_user(after)
+        except Exception:
+            pass
 
 
 @bot.event
@@ -1390,9 +1784,190 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TODO COMMANDS
-# ══════════════════════════════════════════════════════════════════════════════
+    # ── Auto-assign: scan TODO threads for "I'll handle/fix/take/do this" etc. ─
+    if isinstance(message.channel, discord.Thread) and message.channel.parent:
+        import re as _re2
+        AUTO_PHRASES = [
+            r"i'?ll\s+(handle|fix|take\s+care\s+of|do|work\s+on)\s+this",
+            r"(taking|on)\s+this",
+            r"i'?ll\s+take\s+this",
+        ]
+        if any(_re2.search(p, content, _re2.IGNORECASE) for p in AUTO_PHRASES):
+            # Find which TODO this thread belongs to
+            async with aiohttp.ClientSession() as session:
+                bid, _ = await gh_read(session, FILE_BOARD_IDS)
+                todos2, sha2 = await gh_read_fresh(session, FILE_TODOS)
+                cfg2, _ = await gh_read(session, FILE_CONFIG)
+            bid   = bid or DEFAULT_BOARD_IDS.copy()
+            todos2 = todos2 or []
+            cfg2   = cfg2 or {}
+            thread_id_str = str(message.channel.id)
+            matched_todo = None
+            for page in bid.get("pages", []):
+                if page.get("thread_id") == thread_id_str and page.get("todo_ids"):
+                    tid = page["todo_ids"][0]
+                    matched_todo = next((t for t in todos2 if t["id"] == tid), None)
+                    break
+            if matched_todo and matched_todo.get("status") != "done":
+                reactor = message.author
+
+                class _ThreadAssignView(discord.ui.View):
+                    def __init__(self):
+                        super().__init__(timeout=60)
+                        self.done = False
+
+                    @discord.ui.button(label="Yes, assign me", style=discord.ButtonStyle.primary)
+                    async def yes_btn(self, intr: discord.Interaction, btn: discord.ui.Button):
+                        if intr.user.id != reactor.id:
+                            await intr.response.send_message("Not for you.", ephemeral=True); return
+                        self.done = True; self.stop()
+                        old_id = matched_todo.get("assigned_to_id")
+                        matched_todo["assigned_to_id"]   = str(reactor.id)
+                        matched_todo["assigned_to_name"] = str(reactor)
+                        matched_todo["updated_at"]       = now_iso()
+                        if matched_todo["status"] == "todo":
+                            matched_todo["status"] = "in_progress"
+                        async with aiohttp.ClientSession() as _ss:
+                            await gh_write(_ss, FILE_TODOS, todos2, sha2,
+                                           f"TODO #{matched_todo['id']} auto-assigned to {reactor}")
+                        await intr.response.edit_message(
+                            content=f"✅ Assigned **TODO #{matched_todo['id']}** to you.", view=None
+                        )
+                        if old_id and old_id != str(reactor.id):
+                            old_m = message.guild.get_member(int(old_id))
+                            if old_m:
+                                try:
+                                    await old_m.send(
+                                        f"You were unassigned from **TODO #{matched_todo['id']}** by "
+                                        f"{reactor.mention} in **{message.guild.name}**."
+                                    )
+                                except Exception:
+                                    pass
+                        async with aiohttp.ClientSession() as _ss:
+                            _cfg3, _ = await gh_read(_ss, FILE_CONFIG)
+                        await log_activity(message.guild, _cfg3 or {}, "Auto-assigned (thread)",
+                                           matched_todo, reactor, extra=f"→ {reactor.mention}")
+                        await update_todo_board(message.guild, cfg2)
+
+                    @discord.ui.button(label="No", style=discord.ButtonStyle.secondary)
+                    async def no_btn(self, intr: discord.Interaction, btn: discord.ui.Button):
+                        if intr.user.id != reactor.id:
+                            await intr.response.send_message("Not for you.", ephemeral=True); return
+                        self.done = True; self.stop()
+                        await intr.response.edit_message(content="OK, no assignment made.", view=None)
+
+                    async def on_timeout(self): pass
+
+                await message.reply(
+                    f"{reactor.mention} Assign **TODO #{matched_todo['id']}** to you?",
+                    view=_ThreadAssignView(),
+                    mention_author=False,
+                )
+
+
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    """Auto-assign TODO via ✋ reaction on a board card."""
+    if str(payload.emoji) != "✋":
+        return
+    if not payload.guild_id:
+        return
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+    reactor = guild.get_member(payload.user_id)
+    if not reactor or reactor.bot:
+        return
+
+    async with aiohttp.ClientSession() as session:
+        cfg, _  = await gh_read(session, FILE_CONFIG)
+        bid, _  = await gh_read(session, FILE_BOARD_IDS)
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+    cfg   = cfg or {}
+    bid   = bid or DEFAULT_BOARD_IDS.copy()
+    todos = todos or []
+
+    # Check if this message is a board card
+    msg_id_str = str(payload.message_id)
+    matched_todo = None
+    for page in bid.get("pages", []):
+        if page.get("message_id") == msg_id_str and page.get("todo_ids"):
+            tid = page["todo_ids"][0]
+            matched_todo = next((t for t in todos if t["id"] == tid), None)
+            break
+
+    if not matched_todo:
+        return  # Not a board card
+
+    # Remove the reaction silently
+    try:
+        ch = guild.get_channel(payload.channel_id)
+        if ch:
+            msg = await ch.fetch_message(payload.message_id)
+            await msg.remove_reaction(payload.emoji, reactor)
+    except Exception:
+        pass
+
+    if matched_todo.get("status") == "done":
+        try:
+            await reactor.send(f"TODO #{matched_todo['id']} is already done.")
+        except Exception:
+            pass
+        return
+
+    # Already assigned to self
+    if matched_todo.get("assigned_to_id") == str(reactor.id):
+        try:
+            ch2 = guild.get_channel(payload.channel_id)
+            if ch2:
+                await ch2.send(f"{reactor.mention} You're already assigned to **TODO #{matched_todo['id']}**.",
+                                delete_after=10)
+        except Exception:
+            pass
+        return
+
+    # Already assigned to someone else — show TakeOverView
+    if matched_todo.get("assigned_to_id"):
+        current_id = matched_todo["assigned_to_id"]
+        view = TakeOverView(
+            reactor=reactor, todo=matched_todo, todos=todos, sha=sha,
+            cfg=cfg, guild=guild
+        )
+        try:
+            ch2 = guild.get_channel(payload.channel_id)
+            if ch2:
+                await ch2.send(
+                    f"{reactor.mention} **TODO #{matched_todo['id']}** is already assigned to <@{current_id}>. "
+                    f"Do you want to take it over?",
+                    view=view,
+                )
+        except Exception:
+            pass
+        return
+
+    # Unassigned — assign directly
+    matched_todo["assigned_to_id"]   = str(reactor.id)
+    matched_todo["assigned_to_name"] = str(reactor)
+    matched_todo["updated_at"]       = now_iso()
+    if matched_todo["status"] == "todo":
+        matched_todo["status"] = "in_progress"
+    async with aiohttp.ClientSession() as session:
+        await gh_write(session, FILE_TODOS, todos, sha,
+                       f"TODO #{matched_todo['id']} assigned to {reactor} via ✋")
+    try:
+        ch2 = guild.get_channel(payload.channel_id)
+        if ch2:
+            await ch2.send(
+                f"✅ {reactor.mention} assigned to **TODO #{matched_todo['id']}**.",
+                delete_after=15,
+            )
+    except Exception:
+        pass
+    await log_activity(guild, cfg, "Assigned (✋ reaction)", matched_todo, reactor,
+                       extra=f"→ {reactor.mention}")
+    await update_todo_board(guild, cfg)
+
+
 
 @bot.tree.command(name="todo_assign", description="Assign a TODO to yourself or someone else")
 @app_commands.describe(todo_id="TODO number", user="User to assign (leave blank for yourself)")
@@ -1448,6 +2023,9 @@ async def todo_assign(interaction: discord.Interaction, todo_id: int, user: disc
         f"TODO **#{todo_id}** assigned to {target.mention}. Status set to In Progress.",
         ephemeral=True,
     )
+    await log_activity(interaction.guild, cfg, "Assigned", todo,
+                       interaction.guild.get_member(interaction.user.id),
+                       extra=f"→ {target.mention}")
     await update_todo_board(interaction.guild, cfg)
 
 
@@ -1495,6 +2073,8 @@ async def todo_status(interaction: discord.Interaction, todo_id: int, status: st
 
     async with aiohttp.ClientSession() as session:
         cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(interaction.guild, cfg or {}, f"Status → {STATUS_LABELS.get(status, status)}",
+                       todo, interaction.guild.get_member(interaction.user.id))
     await update_todo_board(interaction.guild, cfg or {})
 
 
@@ -1525,6 +2105,8 @@ async def todo_priority(interaction: discord.Interaction, todo_id: int, priority
     await interaction.followup.send(f"TODO **#{todo_id}** priority set to **{label}**.", ephemeral=True)
     async with aiohttp.ClientSession() as session:
         cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(interaction.guild, cfg or {}, f"Priority → {label}",
+                       todo, interaction.guild.get_member(interaction.user.id))
     await update_todo_board(interaction.guild, cfg or {})
 
 
@@ -1556,6 +2138,8 @@ async def todo_delete(interaction: discord.Interaction, todo_id: int):
     await interaction.followup.send(f"TODO **#{todo_id}** deleted.", ephemeral=True)
     async with aiohttp.ClientSession() as session:
         cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(interaction.guild, cfg or {}, "Deleted", todo,
+                       interaction.guild.get_member(interaction.user.id))
     await update_todo_board(interaction.guild, cfg or {})
 
 
@@ -1658,6 +2242,8 @@ async def todo_unassign(interaction: discord.Interaction, todo_id: int):
     )
     async with aiohttp.ClientSession() as session:
         cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(interaction.guild, cfg or {}, "Unassigned", todo,
+                       interaction.guild.get_member(interaction.user.id))
     await update_todo_board(interaction.guild, cfg or {})
 
 
@@ -1712,6 +2298,133 @@ async def todo_filter(
 
     await send_todo_embeds(lambda e: interaction.followup.send(embed=e, ephemeral=True), results[:20], style,
                            title=f"Filtered TODOs — {filter_str} ({len(results)} found)")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAG COMMANDS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="todo_tag", description="Add a tag to a TODO")
+@app_commands.describe(todo_id="TODO number", tag="Tag to add (e.g. bug, feature, urgent)")
+async def todo_tag(interaction: discord.Interaction, todo_id: int, tag: str):
+    if not await has_todo_role(interaction):
+        await interaction.response.send_message("No permission.", ephemeral=True); return
+    tag = tag.strip().lower()[:30]
+    if not tag:
+        await interaction.response.send_message("Tag cannot be empty.", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+        if not todo:
+            await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True); return
+        tags = todo.setdefault("tags", [])
+        if tag in tags:
+            await interaction.followup.send(f"Tag `{tag}` already on TODO #{todo_id}.", ephemeral=True); return
+        tags.append(tag)
+        todo["updated_at"] = now_iso()
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} tag +{tag}")
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await interaction.followup.send(f"Added tag `{tag}` to TODO **#{todo_id}**.", ephemeral=True)
+    await log_activity(interaction.guild, cfg or {}, f"Tag Added: `{tag}`", todo,
+                       interaction.guild.get_member(interaction.user.id))
+    await update_todo_board(interaction.guild, cfg or {})
+
+
+@bot.tree.command(name="todo_untag", description="Remove a tag from a TODO")
+@app_commands.describe(todo_id="TODO number", tag="Tag to remove")
+async def todo_untag(interaction: discord.Interaction, todo_id: int, tag: str):
+    if not await has_todo_role(interaction):
+        await interaction.response.send_message("No permission.", ephemeral=True); return
+    tag = tag.strip().lower()[:30]
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+        if not todo:
+            await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True); return
+        tags = todo.get("tags", [])
+        if tag not in tags:
+            await interaction.followup.send(f"Tag `{tag}` not on TODO #{todo_id}.", ephemeral=True); return
+        tags.remove(tag)
+        todo["updated_at"] = now_iso()
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} tag -{tag}")
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await interaction.followup.send(f"Removed tag `{tag}` from TODO **#{todo_id}**.", ephemeral=True)
+    await log_activity(interaction.guild, cfg or {}, f"Tag Removed: `{tag}`", todo,
+                       interaction.guild.get_member(interaction.user.id))
+    await update_todo_board(interaction.guild, cfg or {})
+
+
+@bot.tree.command(name="todo_filter_tag", description="Filter TODOs by tag")
+@app_commands.describe(tag="Tag to filter by (e.g. bug, feature, urgent)")
+async def todo_filter_tag(interaction: discord.Interaction, tag: str):
+    await interaction.response.defer(ephemeral=True)
+    tag = tag.strip().lower()
+    async with aiohttp.ClientSession() as session:
+        todos, _ = await gh_read(session, FILE_TODOS)
+        cfg,   _ = await gh_read(session, FILE_CONFIG)
+    todos   = todos or []
+    cfg     = cfg   or {}
+    style   = int(cfg.get("todo_style", 1))
+    results = [t for t in todos if t.get("status") != "done" and tag in t.get("tags", [])]
+    if not results:
+        await interaction.followup.send(f"No active TODOs with tag `{tag}`.", ephemeral=True); return
+    await send_todo_embeds(lambda e: interaction.followup.send(embed=e, ephemeral=True), results, style,
+                           title=f"TODOs tagged `{tag}` ({len(results)} found)")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# THREAD COMMAND  (styles 1-4: open/jump to discussion thread)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="todo_thread", description="Open or jump to the discussion thread for a TODO")
+@app_commands.describe(todo_id="TODO number")
+async def todo_thread(interaction: discord.Interaction, todo_id: int):
+    if not await has_todo_role(interaction):
+        await interaction.response.send_message("No permission.", ephemeral=True); return
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos, _ = await gh_read(session, FILE_TODOS)
+        cfg,   _ = await gh_read(session, FILE_CONFIG)
+        bid,   _ = await gh_read(session, FILE_BOARD_IDS)
+    todos = todos or []
+    cfg   = cfg   or {}
+    bid   = bid   or DEFAULT_BOARD_IDS.copy()
+
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True); return
+
+    style = int(cfg.get("todo_style", 1))
+
+    # Styles 5/6 — thread is on the board card itself
+    if style in (5, 6):
+        for page in bid.get("pages", []):
+            if todo_id in page.get("todo_ids", []) and page.get("thread_id"):
+                thread = interaction.guild.get_thread(int(page["thread_id"]))
+                if thread:
+                    await interaction.followup.send(
+                        f"Jump to the thread for **TODO #{todo_id}**: {thread.mention}", ephemeral=True
+                    ); return
+        await interaction.followup.send(
+            f"No thread found for TODO #{todo_id}. Try `/todo_refresh` to rebuild the board.",
+            ephemeral=True,
+        ); return
+
+    # Styles 1-4 — get or create thread in thread_channel
+    thread = await _get_or_create_thread_for_todo(interaction.guild, cfg, todo_id, todo["title"])
+    if thread:
+        await interaction.followup.send(
+            f"Discussion thread for **TODO #{todo_id}**: {thread.mention}", ephemeral=True
+        )
+    else:
+        await interaction.followup.send(
+            "No thread channel configured. Ask an admin to run `/setup_thread_channel`.",
+            ephemeral=True,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1787,6 +2500,70 @@ async def setup_todo_roles(interaction: discord.Interaction, role: discord.Role)
     await interaction.followup.send(msg, ephemeral=True)
 
 
+@bot.tree.command(name="setup_log_channel", description="Set the activity log channel (Admin)")
+@app_commands.describe(channel="Channel where all activity is logged")
+@app_commands.default_permissions(administrator=True)
+async def setup_log_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        cfg["log_channel"] = str(channel.id)
+        await gh_write(session, FILE_CONFIG, cfg, sha, "Setup: log channel")
+    await interaction.followup.send(f"Activity log channel set to {channel.mention}.", ephemeral=True)
+
+
+@bot.tree.command(name="setup_reminder", description="Configure reminder schedule (Admin)")
+@app_commands.describe(
+    days="Ping assigned user after this many days of no activity (default 3)",
+    time="UTC time to send reminders HH:MM (default 09:00)",
+    channel="Channel for reminder pings (leave blank to DM the assigned user)",
+)
+@app_commands.default_permissions(administrator=True)
+async def setup_reminder(
+    interaction: discord.Interaction,
+    days: int = 3,
+    time: str = "09:00",
+    channel: discord.TextChannel = None,
+):
+    await interaction.response.defer(ephemeral=True)
+    import re as _re
+    if not _re.match(r"^\d{2}:\d{2}$", time):
+        await interaction.followup.send("Time must be in HH:MM format (UTC), e.g. `09:00`.", ephemeral=True)
+        return
+    if days < 1 or days > 365:
+        await interaction.followup.send("Days must be between 1 and 365.", ephemeral=True)
+        return
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        cfg["reminder_days"]    = days
+        cfg["reminder_time"]    = time
+        cfg["reminder_channel"] = str(channel.id) if channel else None
+        await gh_write(session, FILE_CONFIG, cfg, sha, "Setup: reminders")
+    dest = channel.mention if channel else "DM to assigned user"
+    await interaction.followup.send(
+        f"Reminders set: ping after **{days} days** of no activity at **{time} UTC** → {dest}.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="setup_thread_channel", description="Set channel for TODO discussion threads (styles 1-4) (Admin)")
+@app_commands.describe(channel="Channel where per-TODO discussion threads will be created")
+@app_commands.default_permissions(administrator=True)
+async def setup_thread_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        cfg["thread_channel"] = str(channel.id)
+        await gh_write(session, FILE_CONFIG, cfg, sha, "Setup: thread channel")
+    await interaction.followup.send(
+        f"Thread channel set to {channel.mention}. Use `/todo_thread <id>` to open a discussion.",
+        ephemeral=True,
+    )
+
+
 @bot.tree.command(name="config_view", description="View current bot configuration (Admin)")
 @app_commands.default_permissions(administrator=True)
 async def config_view(interaction: discord.Interaction):
@@ -1802,10 +2579,22 @@ async def config_view(interaction: discord.Interaction):
         return ch.mention if ch else f"<#{ch_id}>"
 
     e = discord.Embed(title="Bot Configuration", color=0x5865F2)
-    e.add_field(name="TODO Board",  value=ch_mention(cfg.get("todo_channel")), inline=True)
+    e.add_field(name="TODO Board",      value=ch_mention(cfg.get("todo_channel")),    inline=True)
+    e.add_field(name="Style",           value=str(cfg.get("todo_style", 1)),          inline=True)
+    e.add_field(name="Prefix",          value=f"`{cfg.get('prefix', 'ax!')}`",        inline=True)
+    e.add_field(name="Activity Log",    value=ch_mention(cfg.get("log_channel")),     inline=True)
+    e.add_field(name="Thread Channel",  value=ch_mention(cfg.get("thread_channel")), inline=True)
+    reminder_dest = ch_mention(cfg.get("reminder_channel")) if cfg.get("reminder_channel") else "DM to assignee"
+    e.add_field(
+        name="Reminders",
+        value=f"Every **{cfg.get('reminder_days', 3)}** days at **{cfg.get('reminder_time', '09:00')} UTC** → {reminder_dest}",
+        inline=False,
+    )
     roles = cfg.get("todo_roles", [])
-    e.add_field(name="TODO Roles",  value=(", ".join(f"<@&{r}>" for r in roles) or "None"), inline=False)
+    e.add_field(name="TODO Roles", value=(", ".join(f"<@&{r}>" for r in roles) or "None"), inline=False)
     await interaction.followup.send(embed=e, ephemeral=True)
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1915,6 +2704,45 @@ def _build_help_embed(prefix: str) -> discord.Embed:
         value="Delete a TODO. You can only delete ones you added (admins can delete any).",
         inline=False,
     )
+    e.add_field(name="​", value="**── Tags ──**", inline=False)
+    e.add_field(
+        name="`/todo_tag <id> <tag>`",
+        value="Add a tag to a TODO (e.g. `bug`, `feature`, `urgent`).",
+        inline=False,
+    )
+    e.add_field(
+        name="`/todo_untag <id> <tag>`",
+        value="Remove a tag from a TODO.",
+        inline=False,
+    )
+    e.add_field(
+        name="`/todo_filter_tag <tag>`",
+        value="Show all active TODOs with a specific tag.",
+        inline=False,
+    )
+    e.add_field(name="​", value="**── Threads & Auto-assign ──**", inline=False)
+    e.add_field(
+        name="`/todo_thread <id>`",
+        value=(
+            "Open or jump to the discussion thread for a TODO.\n"
+            "Styles 5/6: thread is on the board card itself (auto-created).\n"
+            "Styles 1-4: thread is created in the configured thread channel."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="✋ Reaction on board card",
+        value=(
+            "React ✋ on any board card to assign that TODO to yourself.\n"
+            "If already assigned to someone else, you'll be asked to confirm a takeover."
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name="Thread auto-assign",
+        value='Say "I\'ll handle this", "taking this", "on it" etc. in a TODO\'s thread to trigger auto-assign.',
+        inline=False,
+    )
     e.add_field(name="​", value="**── Adding TODOs ──**", inline=False)
     e.add_field(
         name="`#addtodo <title>`",
@@ -1937,8 +2765,23 @@ def _build_help_embed(prefix: str) -> discord.Embed:
         inline=False,
     )
     e.add_field(
+        name="`/setup_log_channel <#channel>`",
+        value="Set the activity log channel — every change posts an embed there. (Admin)",
+        inline=False,
+    )
+    e.add_field(
+        name="`/setup_reminder [days] [time] [channel]`",
+        value="Configure reminder schedule. Default: 3 days, 09:00 UTC, DM to assignee. (Admin)",
+        inline=False,
+    )
+    e.add_field(
+        name="`/setup_thread_channel <#channel>`",
+        value="Set the channel for TODO discussion threads (styles 1-4). (Admin)",
+        inline=False,
+    )
+    e.add_field(
         name=f"`/config_view` · `{prefix}configview`",
-        value="View current bot config: channel, roles, style, prefix. (Admin)",
+        value="View current bot config: channels, roles, style, reminders. (Admin)",
         inline=False,
     )
     e.add_field(
@@ -2121,6 +2964,7 @@ async def p_todoassign(ctx, todo_id: int = None, user: discord.Member = None):
     async with aiohttp.ClientSession() as session:
         await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} assigned to {target}")
     await ctx.send(f"TODO **#{todo_id}** assigned to {target.mention}.")
+    await log_activity(ctx.guild, cfg, "Assigned", todo, ctx.author, extra=f"→ {target.mention}")
     await update_todo_board(ctx.guild, cfg)
 
 @bot.command(name="todounassign")
@@ -2146,6 +2990,7 @@ async def p_todounassign(ctx, todo_id: int = None):
     await ctx.send(f"TODO **#{todo_id}** unassigned from {prev}.")
     async with aiohttp.ClientSession() as session:
         cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(ctx.guild, cfg or {}, "Unassigned", todo, ctx.author)
     await update_todo_board(ctx.guild, cfg or {})
 
 @bot.command(name="todostatus")
@@ -2177,6 +3022,7 @@ async def p_todostatus(ctx, todo_id: int = None, status: str = None):
             await ctx.send(f"TODO **#{todo_id}** status updated to **{STATUS_LABELS.get(status, status)}**.")
     async with aiohttp.ClientSession() as session:
         cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(ctx.guild, cfg or {}, f"Status → {STATUS_LABELS.get(status, status)}", todo, ctx.author)
     await update_todo_board(ctx.guild, cfg or {})
 
 @bot.command(name="todopriority")
@@ -2196,6 +3042,7 @@ async def p_todopriority(ctx, todo_id: int = None, priority: str = None):
     await ctx.send(f"TODO **#{todo_id}** priority set to **{PRIORITY_LABELS.get(priority, priority)}**.")
     async with aiohttp.ClientSession() as session:
         cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(ctx.guild, cfg or {}, f"Priority → {PRIORITY_LABELS.get(priority, priority)}", todo, ctx.author)
     await update_todo_board(ctx.guild, cfg or {})
 
 @bot.command(name="tododelete")
