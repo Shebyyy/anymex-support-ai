@@ -84,6 +84,19 @@ _cache_ts: dict = {}
 
 import requests as req
 
+# Proxy config (optional — set env vars to enable)
+_PROXY_HOST = os.environ.get('WEB_PROXY_HOST')
+_PROXY_PORT = os.environ.get('WEB_PROXY_PORT')
+_PROXY_USER = os.environ.get('WEB_PROXY_USER')
+_PROXY_PASS = os.environ.get('WEB_PROXY_PASS')
+
+def get_proxies():
+    if _PROXY_HOST and _PROXY_PORT:
+        auth = f"{_PROXY_USER}:{_PROXY_PASS}@" if _PROXY_USER else ""
+        proxy_url = f"http://{auth}{_PROXY_HOST}:{_PROXY_PORT}"
+        return {"http": proxy_url, "https": proxy_url}
+    return None
+
 def gh_headers():
     return {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -158,7 +171,7 @@ def session_delete(sid):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def discord_get(endpoint, token):
-    r = req.get(f"{DISCORD_API}{endpoint}", headers={"Authorization": f"Bearer {token}"})
+    r = req.get(f"{DISCORD_API}{endpoint}", headers={"Authorization": f"Bearer {token}"}, proxies=get_proxies())
     return r.json() if r.ok else None
 
 def get_access_token(code):
@@ -170,7 +183,7 @@ def get_access_token(code):
         "redirect_uri": DISCORD_REDIRECT_URI,
     }
     try:
-        r = req.post(DISCORD_TOKEN_URL, data=data, timeout=10)
+        r = req.post(DISCORD_TOKEN_URL, data=data, timeout=10, proxies=get_proxies())
         print("TOKEN RESPONSE STATUS:", r.status_code)
         print("TOKEN RESPONSE BODY:", r.text)
         return r.json() if r.ok else r.json()
@@ -181,7 +194,8 @@ def get_access_token(code):
 def get_guild_member(token, guild_id):
     r = req.get(
         f"{DISCORD_API}/users/@me/guilds/{guild_id}/member",
-        headers={"Authorization": f"Bearer {token}"}
+        headers={"Authorization": f"Bearer {token}"},
+        proxies=get_proxies()
     )
     return r.json() if r.ok else None
 
