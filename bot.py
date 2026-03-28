@@ -17,7 +17,7 @@ import time
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN")
 GROQ_API_KEY  = os.environ.get("GROQ_API_KEY")
-PORT          = int(os.environ.get("PORT", 8080))
+PORT          = int(os.environ.get("HEALTH_PORT", 8081))
 
 GROQ_API      = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL    = "llama-3.3-70b-versatile"
