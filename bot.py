@@ -942,7 +942,8 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
             new_msg = await safe_send(ch, slot_embed, delay=delay)
             thread_id = None
             if style in (5, 6) and slot_tids:
-                thread_id = await _create_todo_thread(new_msg, slot_tids[0])
+                _todo_title = next((t["title"] for t in active if t["id"] == slot_tids[0]), "")
+                thread_id = await _create_todo_thread(new_msg, slot_tids[0], _todo_title)
             new_pages.append({"message_id": str(new_msg.id), "thread_id": thread_id, "todo_ids": slot_tids})
 
     # ── Save updated board_ids.json if anything changed ───────────────────────
@@ -1023,7 +1024,10 @@ async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embe
         # Auto-create thread for single-TODO styles 5 & 6
         if style in (5, 6) and slot["todo_ids"]:
             tid = slot["todo_ids"][0]
-            thread_id = await _create_todo_thread(msg, tid)
+            # Extract title from the embed (format: "#N — Title")
+            _raw = slot["embed"].title or ""
+            _todo_title = _raw.split(" — ", 1)[1] if " — " in _raw else ""
+            thread_id = await _create_todo_thread(msg, tid, _todo_title)
         new_pages.append({"message_id": str(msg.id), "thread_id": thread_id, "todo_ids": slot["todo_ids"]})
 
     # Save everything to board_ids.json
@@ -1307,33 +1311,23 @@ class ReassignConfirmView(discord.ui.View):
 # THREAD HELPER
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _create_todo_thread(msg: discord.Message, todo_id: int) -> str | None:
+async def _create_todo_thread(msg: discord.Message, todo_id: int, todo_title: str = "") -> str | None:
     """
     Create a thread on a board card message (styles 5/6).
-    Sets invitable=False, adds all members with a TODO role.
+    Sets invitable=False. Access is controlled via channel permissions
+    (TODO role can view, @everyone cannot) — no add_user, no pings.
     Returns the thread ID as string, or None on failure.
     """
     try:
+        title_suffix = f" — {todo_title[:40]}" if todo_title else ""
         thread = await msg.create_thread(
-            name=f"TODO #{todo_id}",
+            name=f"TODO #{todo_id}{title_suffix}",
             auto_archive_duration=10080,  # 7 days
         )
         try:
             await thread.edit(invitable=False)
         except Exception:
             pass
-        async with aiohttp.ClientSession() as session:
-            cfg, _ = await gh_read(session, FILE_CONFIG)
-        cfg = cfg or {}
-        todo_role_ids = [int(r) for r in cfg.get("todo_roles", [])]
-        guild = msg.guild
-        if guild and todo_role_ids:
-            for member in guild.members:
-                if any(r.id in todo_role_ids for r in member.roles):
-                    try:
-                        await thread.add_user(member)
-                    except Exception:
-                        pass
         return str(thread.id)
     except Exception as e:
         print(f"[thread] Failed to create thread for TODO #{todo_id}: {e}")
@@ -1364,14 +1358,7 @@ async def _get_or_create_thread_for_todo(guild: discord.Guild, cfg: dict,
             await thread.edit(invitable=False)
         except Exception:
             pass
-        todo_role_ids = [int(r) for r in cfg.get("todo_roles", [])]
-        if todo_role_ids:
-            for member in guild.members:
-                if any(r.id in todo_role_ids for r in member.roles):
-                    try:
-                        await thread.add_user(member)
-                    except Exception:
-                        pass
+        # No add_user — access controlled via channel permissions (TODO role can view)
         return thread
     except Exception as e:
         print(f"[thread] Failed to get/create thread for TODO #{todo_id}: {e}")
@@ -1573,42 +1560,6 @@ async def on_ready():
         print("Reminder task started")
 
 
-@bot.event
-async def on_member_update(before: discord.Member, after: discord.Member):
-    """When a member gains a TODO role, add them to all open TODO threads."""
-    async with aiohttp.ClientSession() as session:
-        cfg, _ = await gh_read(session, FILE_CONFIG)
-    cfg = cfg or {}
-    todo_role_ids = [str(r) for r in cfg.get("todo_roles", [])]
-    if not todo_role_ids:
-        return
-
-    before_role_ids = {str(r.id) for r in before.roles}
-    after_role_ids  = {str(r.id) for r in after.roles}
-    newly_added = after_role_ids - before_role_ids
-
-    # Check if any of the newly added roles is a TODO role
-    if not any(rid in todo_role_ids for rid in newly_added):
-        return
-
-    # Add this member to all currently active threads
-    try:
-        active_threads = await after.guild.active_threads()
-    except Exception:
-        return
-
-    todo_ch_id    = cfg.get("todo_channel")
-    thread_ch_id  = cfg.get("thread_channel")
-
-    for thread in active_threads:
-        parent_id = str(thread.parent_id) if thread.parent_id else None
-        # Only touch threads that belong to the TODO board channel or thread channel
-        if parent_id not in (todo_ch_id, thread_ch_id):
-            continue
-        try:
-            await thread.add_user(after)
-        except Exception:
-            pass
 
 
 @bot.event
@@ -2489,7 +2440,8 @@ async def setup_todo_roles(interaction: discord.Interaction, role: discord.Role)
         cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
         cfg = cfg or DEFAULT_CONFIG.copy()
         roles = cfg.get("todo_roles", [])
-        if str(role.id) in roles:
+        adding = str(role.id) not in roles
+        if not adding:
             roles.remove(str(role.id))
             msg = f"Removed {role.mention} from TODO managers."
         else:
@@ -2497,6 +2449,21 @@ async def setup_todo_roles(interaction: discord.Interaction, role: discord.Role)
             msg = f"Added {role.mention} as a TODO manager."
         cfg["todo_roles"] = roles
         await gh_write(session, FILE_CONFIG, cfg, sha, "TODO roles updated")
+
+    # Sync thread channel permissions if configured
+    thread_ch_id = cfg.get("thread_channel")
+    if thread_ch_id:
+        ch = interaction.guild.get_channel(int(thread_ch_id))
+        if ch:
+            try:
+                if adding:
+                    await ch.set_permissions(role, view_channel=True, send_messages=False)
+                else:
+                    await ch.set_permissions(role, overwrite=None)  # remove override
+                msg += f"\n✅ Thread channel permissions updated."
+            except Exception as e:
+                msg += f"\n⚠️ Could not update thread channel permissions: {e}"
+
     await interaction.followup.send(msg, ephemeral=True)
 
 
@@ -2558,10 +2525,30 @@ async def setup_thread_channel(interaction: discord.Interaction, channel: discor
         cfg = cfg or DEFAULT_CONFIG.copy()
         cfg["thread_channel"] = str(channel.id)
         await gh_write(session, FILE_CONFIG, cfg, sha, "Setup: thread channel")
-    await interaction.followup.send(
-        f"Thread channel set to {channel.mention}. Use `/todo_thread <id>` to open a discussion.",
-        ephemeral=True,
-    )
+
+    # Set channel permissions: hide from @everyone, allow TODO roles
+    todo_role_ids = cfg.get("todo_roles", [])
+    errors = []
+    try:
+        await channel.set_permissions(
+            interaction.guild.default_role,
+            view_channel=False,
+        )
+    except Exception as e:
+        errors.append(f"Could not restrict @everyone: {e}")
+
+    for rid in todo_role_ids:
+        role = interaction.guild.get_role(int(rid))
+        if role:
+            try:
+                await channel.set_permissions(role, view_channel=True, send_messages=False)
+            except Exception as e:
+                errors.append(f"Could not set perms for {role.name}: {e}")
+
+    msg = f"Thread channel set to {channel.mention}.\n✅ Permissions set — TODO roles can view, @everyone hidden."
+    if errors:
+        msg += "\n⚠️ Some permission errors:\n" + "\n".join(errors)
+    await interaction.followup.send(msg, ephemeral=True)
 
 
 @bot.tree.command(name="config_view", description="View current bot configuration (Admin)")
