@@ -12,6 +12,7 @@ import secrets
 import asyncio
 import aiohttp
 from functools import wraps
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask import (
     Flask, render_template, redirect, request,
     session, url_for, jsonify, abort
@@ -22,6 +23,7 @@ from flask import (
 # ══════════════════════════════════════════════════════════════════════════════
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 
 # Discord OAuth2
