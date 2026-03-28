@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}AnymeX — TODO Tracker{% endblock %}
+
+{% block head %}
+<style>
+.hero {
+  text-align: center;
+  padding: 4rem 1rem 3rem;
+}
+.hero-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(88,101,242,0.1); border: 1px solid rgba(88,101,242,0.2);
+  color: var(--accent2); border-radius: 20px;
+  padding: 4px 14px; font-size: 0.78rem; font-weight: 600;
+  margin-bottom: 1.5rem; font-family: var(--mono);
+}
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 700; line-height: 1.1;
+  margin-bottom: 1rem; font-family: var(--mono);
+}
+.hero h1 span { color: var(--accent); }
+.hero p {
+  color: var(--muted); font-size: 1.05rem;
+  max-width: 480px; margin: 0 auto 2rem;
+}
+.hero-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+/* Stats row */
+.stats-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem; margin-bottom: 2.5rem;
+}
+.stat-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1.25rem;
+  text-align: center; transition: border-color 0.2s;
+}
+.stat-card:hover { border-color: var(--accent); }
+.stat-card .num {
+  font-family: var(--mono); font-size: 2rem; font-weight: 700;
+  line-height: 1;
+}
+.stat-card .lbl {
+  font-size: 0.75rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin-top: 6px;
+}
+.stat-card.s-todo     .num { color: var(--todo); }
+.stat-card.s-inprog   .num { color: var(--inprog); }
+.stat-card.s-review   .num { color: var(--review); }
+.stat-card.s-blocked  .num { color: var(--blocked); }
+.stat-card.s-done     .num { color: var(--done); }
+
+/* Progress bar */
+.prog-wrap { margin-bottom: 2.5rem; }
+.prog-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); margin-bottom: 8px; }
+.prog-bar { height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; display: flex; }
+.prog-bar span { height: 100%; transition: width 0.8s ease; }
+
+/* Recent todos */
+.todo-list { display: flex; flex-direction: column; gap: 10px; }
+.todo-item {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.25rem;
+  display: flex; align-items: center; gap: 12px;
+  transition: border-color 0.15s, transform 0.15s;
+  border-left: 3px solid transparent;
+}
+.todo-item:hover { border-color: var(--accent); transform: translateX(2px); }
+.todo-item .id { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); min-width: 32px; }
+.todo-item .title { flex: 1; font-size: 0.9rem; font-weight: 500; }
+.todo-item .meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero">
+  <div class="hero-tag">✦ AnymeX Support</div>
+  <h1>TODO <span>Dashboard</span></h1>
+  <p>Track issues, features, and tasks for the AnymeX project — powered by Discord & GitHub.</p>
+  <div class="hero-actions">
+    <a href="/board" class="btn btn-primary">View Full Board</a>
+    {% if not user %}
+      <a href="/login" class="btn btn-discord">Login with Discord</a>
+    {% else %}
+      <a href="/dashboard" class="btn btn-ghost">My Tasks</a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+  <div class="stat-card s-todo">
+    <div class="num">{{ counts.todo }}</div>
+    <div class="lbl">○ To Do</div>
+  </div>
+  <div class="stat-card s-inprog">
+    <div class="num">{{ counts.in_progress }}</div>
+    <div class="lbl">◑ In Progress</div>
+  </div>
+  <div class="stat-card s-review">
+    <div class="num">{{ counts.review_needed }}</div>
+    <div class="lbl">◇ Review</div>
+  </div>
+  <div class="stat-card s-blocked">
+    <div class="num">{{ counts.blocked }}</div>
+    <div class="lbl">✕ Blocked</div>
+  </div>
+  <div class="stat-card s-done">
+    <div class="num">{{ archive_count }}</div>
+    <div class="lbl">✓ Done</div>
+  </div>
+</div>
+
+<!-- Progress bar -->
+{% set total = counts.todo + counts.in_progress + counts.review_needed + counts.blocked + archive_count %}
+{% if total > 0 %}
+<div class="prog-wrap card">
+  <div class="prog-label">
+    <span>Overall Progress</span>
+    <span>{{ ((archive_count / total) * 100)|round|int }}% complete — {{ archive_count }} / {{ total }} tasks done</span>
+  </div>
+  <div class="prog-bar">
+    <span style="width:{{ ((counts.todo / total) * 100)|round|int }}%; background:var(--todo)"></span>
+    <span style="width:{{ ((counts.in_progress / total) * 100)|round|int }}%; background:var(--inprog)"></span>
+    <span style="width:{{ ((counts.review_needed / total) * 100)|round|int }}%; background:var(--review)"></span>
+    <span style="width:{{ ((counts.blocked / total) * 100)|round|int }}%; background:var(--blocked)"></span>
+    <span style="width:{{ ((archive_count / total) * 100)|round|int }}%; background:var(--done)"></span>
+  </div>
+  <div style="display:flex;gap:1rem;margin-top:10px;flex-wrap:wrap">
+    <span style="font-size:0.72rem;color:var(--todo)">■ To Do</span>
+    <span style="font-size:0.72rem;color:var(--inprog)">■ In Progress</span>
+    <span style="font-size:0.72rem;color:var(--review)">■ Review</span>
+    <span style="font-size:0.72rem;color:var(--blocked)">■ Blocked</span>
+    <span style="font-size:0.72rem;color:var(--done)">■ Done</span>
+  </div>
+</div>
+{% endif %}
+
+<!-- Recent TODOs -->
+<div class="section-head" style="margin-top:2rem">
+  <h2>Recent Active TODOs</h2>
+  <a href="/board" class="btn btn-ghost btn-sm">View All →</a>
+</div>
+
+{% if todos %}
+<div class="todo-list">
+  {% for t in todos[:8] %}
+  <div class="todo-item" style="border-left-color:{{ t.status_color }}">
+    <span class="id">#{{ t.id }}</span>
+    <span class="title">{{ t.title }}</span>
+    <div class="meta">
+      {% for tag in t.get('tags', [])[:2] %}
+        <span class="tag">{{ tag }}</span>
+      {% endfor %}
+      <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+      <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty card">
+  <div class="emoji">🎉</div>
+  <p>No active TODOs right now — everything's clean!</p>
+</div>
+{% endif %}
+{% endblock %}

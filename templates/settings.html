@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}Settings — AnymeX{% endblock %}
+
+{% block head %}
+<style>
+.settings-layout {
+  display: grid; grid-template-columns: 220px 1fr; gap: 1.5rem; align-items: start;
+}
+.settings-nav {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; position: sticky; top: 80px;
+}
+.settings-nav a {
+  display: block; padding: 10px 16px; text-decoration: none;
+  font-size: 0.875rem; color: var(--muted); border-left: 3px solid transparent;
+  transition: all 0.15s;
+}
+.settings-nav a:hover { color: var(--text); background: var(--surface2); }
+.settings-nav a.active { color: var(--text); border-left-color: var(--accent); background: var(--surface2); }
+.settings-nav .nav-section {
+  padding: 8px 16px 4px; font-size: 0.68rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+}
+
+.settings-panel { display: flex; flex-direction: column; gap: 1.25rem; }
+.settings-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.settings-card-head {
+  padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.settings-card-head h2 { font-size: 0.95rem; font-weight: 700; }
+.settings-card-body { padding: 1.25rem; }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid var(--border); gap: 1rem;
+}
+.settings-row:last-child { border-bottom: none; padding-bottom: 0; }
+.settings-row .info { flex: 1; }
+.settings-row .info strong { display: block; font-size: 0.9rem; }
+.settings-row .info small { color: var(--muted); font-size: 0.8rem; }
+.settings-row .control { flex-shrink: 0; }
+
+.readonly-field {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px;
+  font-family: var(--mono); font-size: 0.82rem; color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { position: static; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:1.5rem">
+  <h1 style="font-family:var(--mono);font-size:1.3rem">Settings</h1>
+  <p style="color:var(--muted);font-size:0.85rem;margin-top:4px">Bot & dashboard configuration — Admin only</p>
+</div>
+
+<div class="settings-layout">
+  <!-- Sidebar -->
+  <nav class="settings-nav">
+    <div class="nav-section">Bot</div>
+    <a href="#general" class="active">General</a>
+    <a href="#reminders">Reminders</a>
+    <div class="nav-section">Info</div>
+    <a href="#access">Access Levels</a>
+    <a href="#db">Database</a>
+  </nav>
+
+  <!-- Panels -->
+  <div class="settings-panel">
+
+    <!-- General -->
+    <div class="settings-card" id="general">
+      <div class="settings-card-head">
+        <h2>General</h2>
+        <button class="btn btn-primary btn-sm" onclick="saveGeneral()">Save Changes</button>
+      </div>
+      <div class="settings-card-body">
+        <div class="settings-row">
+          <div class="info">
+            <strong>Bot Prefix</strong>
+            <small>Command prefix for non-slash commands</small>
+          </div>
+          <div class="control">
+            <input class="form-control" type="text" id="cfg-prefix"
+              value="{{ cfg.get('prefix', 'ax!') }}" style="width:100px;text-align:center" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="info">
+            <strong>TODO Board Style</strong>
+            <small>Card display style (1–6)</small>
+          </div>
+          <div class="control">
+            <select class="form-control" id="cfg-style" style="width:160px">
+              <option value="1" {% if cfg.get('todo_style',1)==1 %}selected{% endif %}>Style 1 — Clean</option>
+              <option value="2" {% if cfg.get('todo_style',1)==2 %}selected{% endif %}>Style 2 — Sidebar</option>
+              <option value="3" {% if cfg.get('todo_style',1)==3 %}selected{% endif %}>Style 3 — Minimal</option>
+              <option value="4" {% if cfg.get('todo_style',1)==4 %}selected{% endif %}>Style 4 — Detailed</option>
+              <option value="5" {% if cfg.get('todo_style',1)==5 %}selected{% endif %}>Style 5 — FAQ</option>
+              <option value="6" {% if cfg.get('todo_style',1)==6 %}selected{% endif %}>Style 6 — Full Detail</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reminders -->
+    <div class="settings-card" id="reminders">
+      <div class="settings-card-head">
+        <h2>Reminders</h2>
+        <button class="btn btn-primary btn-sm" onclick="saveReminders()">Save Changes</button>
+      </div>
+      <div class="settings-card-body">
+        <div class="settings-row">
+          <div class="info">
+            <strong>Reminder Days</strong>
+            <small>Days before a TODO is overdue to send a reminder</small>
+          </div>
+          <div class="control">
+            <input class="form-control" type="number" id="cfg-reminder-days"
+              value="{{ cfg.get('reminder_days', 3) }}" min="1" max="30" style="width:80px;text-align:center" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="info">
+            <strong>Reminder Time</strong>
+            <small>Time of day to send reminders (UTC)</small>
+          </div>
+          <div class="control">
+            <input class="form-control" type="time" id="cfg-reminder-time"
+              value="{{ cfg.get('reminder_time', '09:00') }}" style="width:120px" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Channel info (read-only — set via bot commands) -->
+    <div class="settings-card" id="access">
+      <div class="settings-card-head">
+        <h2>Channel Configuration</h2>
+        <span style="font-size:0.75rem;color:var(--muted)">Set via bot commands</span>
+      </div>
+      <div class="settings-card-body">
+        <div class="settings-row">
+          <div class="info">
+            <strong>TODO Board Channel</strong>
+            <small>Use <code>ax!setuptodochannel #channel</code> in Discord</small>
+          </div>
+          <div class="readonly-field">
+            {{ ('#' + cfg.get('todo_channel')) if cfg.get('todo_channel') else 'Not set' }}
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="info">
+            <strong>Log Channel</strong>
+            <small>Use <code>ax!setuplogchannel #channel</code> in Discord</small>
+          </div>
+          <div class="readonly-field">
+            {{ ('#' + cfg.get('log_channel')) if cfg.get('log_channel') else 'Not set' }}
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="info">
+            <strong>TODO Manager Roles</strong>
+            <small>Use <code>ax!setuptodoroles @role</code> in Discord</small>
+          </div>
+          <div class="readonly-field">
+            {% if cfg.get('todo_roles') %}
+              {{ cfg.todo_roles|length }} role(s) configured
+            {% else %}
+              None set
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Access levels info -->
+    <div class="settings-card" id="db">
+      <div class="settings-card-head">
+        <h2>Access Levels</h2>
+      </div>
+      <div class="settings-card-body">
+        <div class="settings-row">
+          <div class="info">
+            <strong><span class="badge admin">Admin</span></strong>
+            <small>Discord server admin or owner — full access including settings</small>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="info">
+            <strong><span class="badge manager">Manager</span></strong>
+            <small>Has a configured TODO manager role — can create/edit/update TODOs</small>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="info">
+            <strong><span class="badge member">Member</span></strong>
+            <small>Logged in Discord member — can view board and their own tasks</small>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="info">
+            <strong><span class="badge public">Public</span></strong>
+            <small>Not logged in — can view the public TODO board only</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+async function saveGeneral() {
+  const prefix = document.getElementById('cfg-prefix').value.trim();
+  const style  = parseInt(document.getElementById('cfg-style').value);
+  try {
+    await api('POST', '/api/config', { prefix, todo_style: style });
+    toast('Settings saved!');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveReminders() {
+  const days = parseInt(document.getElementById('cfg-reminder-days').value);
+  const time = document.getElementById('cfg-reminder-time').value;
+  try {
+    await api('POST', '/api/config', { reminder_days: days, reminder_time: time });
+    toast('Reminder settings saved!');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// Smooth scroll for nav links
+document.querySelectorAll('.settings-nav a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    document.querySelectorAll('.settings-nav a').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}Board — AnymeX{% endblock %}
+
+{% block head %}
+<style>
+.board-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;
+}
+.board-header h1 { font-family: var(--mono); font-size: 1.3rem; }
+
+/* Filters */
+.filters {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; margin-bottom: 1.5rem;
+}
+.filter-input {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text);
+  padding: 7px 12px; font-size: 0.85rem; font-family: var(--sans);
+  outline: none; transition: border-color 0.15s; min-width: 180px;
+}
+.filter-input:focus { border-color: var(--accent); }
+.filter-select {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text);
+  padding: 7px 28px 7px 10px; font-size: 0.85rem; font-family: var(--sans);
+  outline: none; cursor: pointer; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7280'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.filter-select option { background: #1a1d27; }
+
+/* Results count */
+.results-info {
+  font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem;
+}
+
+/* TODO cards grid */
+.todo-grid {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.todo-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-left: 4px solid var(--accent);
+  padding: 1rem 1.25rem;
+  transition: box-shadow 0.15s, transform 0.15s;
+  cursor: pointer;
+}
+.todo-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  transform: translateY(-1px);
+}
+.todo-card-top {
+  display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px;
+}
+.todo-card-top .id {
+  font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
+  padding-top: 2px; min-width: 30px;
+}
+.todo-card-top .title {
+  flex: 1; font-size: 0.95rem; font-weight: 600; line-height: 1.3;
+}
+.ai-badge {
+  font-size: 0.65rem; color: var(--accent2);
+  background: rgba(88,101,242,0.1); padding: 2px 6px; border-radius: 4px;
+  font-family: var(--mono); flex-shrink: 0;
+}
+.todo-card-desc {
+  font-size: 0.82rem; color: var(--muted);
+  margin: 0 0 10px 42px; line-height: 1.5;
+}
+.todo-card-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-left: 42px; flex-wrap: wrap;
+}
+.todo-card-actions {
+  display: flex; gap: 6px; margin-left: auto;
+}
+.created-at {
+  font-size: 0.72rem; color: var(--muted);
+  font-family: var(--mono); margin-left: auto;
+}
+
+/* Detail modal */
+.detail-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;
+}
+.detail-field label {
+  display: block; font-size: 0.72rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
+}
+.detail-field .val {
+  font-size: 0.9rem;
+}
+.source-quote {
+  background: var(--surface2); border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0; padding: 10px 14px;
+  font-size: 0.82rem; color: var(--muted); margin: 10px 0;
+  font-style: italic;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="board-header">
+  <h1>TODO Board</h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span style="font-size:0.8rem;color:var(--muted)">{{ todos|length }} active</span>
+    {% if access_level in ('manager','admin','owner') %}
+    <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add TODO</button>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Filters -->
+<form class="filters" method="GET" action="/board" id="filter-form">
+  <input class="filter-input" type="text" name="q" placeholder="Search TODOs…" value="{{ search }}" />
+  <select class="filter-select" name="status" onchange="this.form.submit()">
+    <option value="all" {% if status_filter=='all' %}selected{% endif %}>All statuses</option>
+    <option value="todo"          {% if status_filter=='todo' %}selected{% endif %}>○ To Do</option>
+    <option value="in_progress"   {% if status_filter=='in_progress' %}selected{% endif %}>◑ In Progress</option>
+    <option value="review_needed" {% if status_filter=='review_needed' %}selected{% endif %}>◇ Review Needed</option>
+    <option value="blocked"       {% if status_filter=='blocked' %}selected{% endif %}>✕ Blocked</option>
+  </select>
+  <select class="filter-select" name="priority" onchange="this.form.submit()">
+    <option value="all"    {% if priority_filter=='all' %}selected{% endif %}>All priorities</option>
+    <option value="high"   {% if priority_filter=='high' %}selected{% endif %}>▲ High</option>
+    <option value="medium" {% if priority_filter=='medium' %}selected{% endif %}>◈ Medium</option>
+    <option value="low"    {% if priority_filter=='low' %}selected{% endif %}>▽ Low</option>
+  </select>
+  {% if all_tags %}
+  <select class="filter-select" name="tag" onchange="this.form.submit()">
+    <option value="all" {% if tag_filter=='all' %}selected{% endif %}>All tags</option>
+    {% for tag in all_tags %}
+    <option value="{{ tag }}" {% if tag_filter==tag %}selected{% endif %}>{{ tag }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  <button type="submit" class="btn btn-ghost btn-sm">Search</button>
+  {% if search or status_filter != 'all' or priority_filter != 'all' or tag_filter != 'all' %}
+  <a href="/board" class="btn btn-ghost btn-sm">✕ Clear</a>
+  {% endif %}
+</form>
+
+<div class="results-info">
+  Showing <strong>{{ todos|length }}</strong> TODO{{ 's' if todos|length != 1 }}
+  {% if search %} matching "<strong>{{ search }}</strong>"{% endif %}
+</div>
+
+<!-- Cards -->
+<div class="todo-grid">
+{% for t in todos %}
+<div class="todo-card" style="border-left-color:{{ t.status_color }}" onclick="viewTodo({{ t|tojson }})">
+  <div class="todo-card-top">
+    <span class="id">#{{ t.id }}</span>
+    <span class="title">{{ t.title }}</span>
+    {% if t.get('auto_generated') %}<span class="ai-badge">✦ AI</span>{% endif %}
+    <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+  </div>
+  {% if t.get('ai_description') %}
+  <div class="todo-card-desc">{{ t.ai_description[:140] }}</div>
+  {% endif %}
+  <div class="todo-card-meta">
+    <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }} {{ t.priority_label }}</span>
+    {% for tag in t.get('tags', []) %}
+      <span class="tag">{{ tag }}</span>
+    {% endfor %}
+    {% if t.get('created_at_fmt') %}
+    <span class="created-at">{{ t.created_at_fmt }}</span>
+    {% endif %}
+    {% if access_level in ('manager','admin','owner') %}
+    <div class="todo-card-actions" onclick="event.stopPropagation()">
+      <button class="btn btn-ghost btn-sm" onclick="editTodo({{ t|tojson }})">Edit</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteTodo({{ t.id }}, '{{ t.title[:30] }}')">Delete</button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="empty card">
+  <div class="emoji">🔍</div>
+  <p>No TODOs match your filters.</p>
+</div>
+{% endfor %}
+</div>
+
+<!-- ── View Modal ── -->
+<div class="modal-overlay" id="view-modal">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h3 id="vm-title">TODO #0</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('view-modal')">✕</button>
+    </div>
+    <div class="detail-grid">
+      <div class="detail-field">
+        <label>Status</label>
+        <div class="val" id="vm-status"></div>
+      </div>
+      <div class="detail-field">
+        <label>Priority</label>
+        <div class="val" id="vm-priority"></div>
+      </div>
+      <div class="detail-field">
+        <label>Assigned To</label>
+        <div class="val" id="vm-assigned"></div>
+      </div>
+      <div class="detail-field">
+        <label>Added By</label>
+        <div class="val" id="vm-added"></div>
+      </div>
+    </div>
+    <div id="vm-desc-wrap" style="display:none">
+      <label style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">AI Summary</label>
+      <div class="source-quote" id="vm-desc"></div>
+    </div>
+    <div id="vm-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"></div>
+    {% if access_level in ('manager','admin','owner') %}
+    <hr>
+    <div style="display:flex;gap:8px;flex-wrap:wrap" id="vm-actions">
+      <button class="btn btn-primary btn-sm" id="vm-edit-btn">Edit TODO</button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Edit/Add Modal ── -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h3 id="em-title">Add TODO</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('edit-modal')">✕</button>
+    </div>
+    <input type="hidden" id="em-id" value="" />
+    <div class="form-group">
+      <label>Title</label>
+      <input class="form-control" type="text" id="em-title-input" placeholder="Short actionable title…" maxlength="120" />
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea class="form-control" id="em-desc-input" rows="3" placeholder="Brief description…" style="resize:vertical"></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="form-group">
+        <label>Status</label>
+        <select class="form-control" id="em-status">
+          <option value="todo">○ To Do</option>
+          <option value="in_progress">◑ In Progress</option>
+          <option value="review_needed">◇ Review Needed</option>
+          <option value="blocked">✕ Blocked</option>
+          <option value="done">✓ Done</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Priority</label>
+        <select class="form-control" id="em-priority">
+          <option value="low">▽ Low</option>
+          <option value="medium">◈ Medium</option>
+          <option value="high">▲ High</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Tags (comma-separated)</label>
+      <input class="form-control" type="text" id="em-tags" placeholder="bug, feature, urgent…" />
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
+      <button class="btn btn-ghost" onclick="closeModal('edit-modal')">Cancel</button>
+      <button class="btn btn-primary" id="em-save-btn" onclick="saveTodo()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let _currentTodo = null;
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', () => m.classList.remove('open'));
+});
+
+function viewTodo(t) {
+  _currentTodo = t;
+  document.getElementById('vm-title').textContent = `#${t.id} — ${t.title}`;
+  document.getElementById('vm-status').innerHTML =
+    `<span class="status-pill status-${t.status}">${t.status_icon} ${t.status_label}</span>`;
+  document.getElementById('vm-priority').innerHTML =
+    `<span class="pri-icon pri-${t.priority || 'medium'}">${t.priority_icon} ${t.priority_label}</span>`;
+  document.getElementById('vm-assigned').textContent =
+    t.assigned_to_id ? `<@${t.assigned_to_id}>` : 'Unassigned';
+  document.getElementById('vm-added').textContent =
+    t.added_by ? t.added_by : (t.added_by_id ? `<@${t.added_by_id}>` : '—');
+
+  const descWrap = document.getElementById('vm-desc-wrap');
+  const desc = t.ai_description || '';
+  descWrap.style.display = desc ? 'block' : 'none';
+  document.getElementById('vm-desc').textContent = desc;
+
+  const tagsEl = document.getElementById('vm-tags');
+  tagsEl.innerHTML = (t.tags || []).map(tag =>
+    `<span class="tag">${tag}</span>`
+  ).join('');
+
+  const editBtn = document.getElementById('vm-edit-btn');
+  if (editBtn) editBtn.onclick = () => { closeModal('view-modal'); editTodo(t); };
+
+  document.getElementById('view-modal').classList.add('open');
+}
+
+function openAddModal() {
+  _currentTodo = null;
+  document.getElementById('em-title').textContent = 'Add TODO';
+  document.getElementById('em-id').value = '';
+  document.getElementById('em-title-input').value = '';
+  document.getElementById('em-desc-input').value = '';
+  document.getElementById('em-status').value = 'todo';
+  document.getElementById('em-priority').value = 'medium';
+  document.getElementById('em-tags').value = '';
+  document.getElementById('edit-modal').classList.add('open');
+}
+
+function editTodo(t) {
+  _currentTodo = t;
+  document.getElementById('em-title').textContent = `Edit TODO #${t.id}`;
+  document.getElementById('em-id').value = t.id;
+  document.getElementById('em-title-input').value = t.title;
+  document.getElementById('em-desc-input').value = t.ai_description || '';
+  document.getElementById('em-status').value = t.status || 'todo';
+  document.getElementById('em-priority').value = t.priority || 'medium';
+  document.getElementById('em-tags').value = (t.tags || []).join(', ');
+  document.getElementById('edit-modal').classList.add('open');
+}
+
+async function saveTodo() {
+  const id     = document.getElementById('em-id').value;
+  const title  = document.getElementById('em-title-input').value.trim();
+  const desc   = document.getElementById('em-desc-input').value.trim();
+  const status = document.getElementById('em-status').value;
+  const priority = document.getElementById('em-priority').value;
+  const tagsRaw  = document.getElementById('em-tags').value;
+  const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+
+  if (!title) { toast('Title is required', 'error'); return; }
+
+  const btn = document.getElementById('em-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  try {
+    const body = { title, description: desc, status, priority, tags };
+    if (id) {
+      await api('PATCH', `/api/todo/${id}`, body);
+      toast(`TODO #${id} updated!`);
+    } else {
+      await api('POST', '/api/todo', body);
+      toast('TODO created!');
+    }
+    closeModal('edit-modal');
+    setTimeout(() => location.reload(), 600);
+  } catch(e) {
+    toast(e.message, 'error');
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function deleteTodo(id, title) {
+  if (!confirm(`Delete TODO #${id} — "${title}"?`)) return;
+  try {
+    await api('DELETE', `/api/todo/${id}`);
+    toast(`TODO #${id} deleted`);
+    setTimeout(() => location.reload(), 600);
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+</script>
+{% endblock %}

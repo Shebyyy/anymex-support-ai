@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} — AnymeX{% endblock %}
+{% block content %}
+<div style="text-align:center;padding:6rem 1rem">
+  <div style="font-family:var(--mono);font-size:5rem;font-weight:700;color:var(--border)">{{ code }}</div>
+  <h1 style="font-size:1.2rem;margin:1rem 0 0.5rem">
+    {% if code == 403 %}Access Denied{% elif code == 404 %}Not Found{% else %}Error{% endif %}
+  </h1>
+  <p style="color:var(--muted);margin-bottom:2rem">{{ message }}</p>
+  <div style="display:flex;gap:12px;justify-content:center">
+    <a href="/" class="btn btn-primary">Go Home</a>
+    {% if not user and code == 403 %}
+    <a href="/login" class="btn btn-discord">Login with Discord</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

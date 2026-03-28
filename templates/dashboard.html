@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — AnymeX{% endblock %}
+
+{% block head %}
+<style>
+.dash-header {
+  display: flex; align-items: center; gap: 16px; margin-bottom: 2rem;
+}
+.dash-avatar {
+  width: 56px; height: 56px; border-radius: 50%;
+  border: 3px solid var(--accent);
+}
+.dash-header h1 { font-family: var(--mono); font-size: 1.4rem; }
+.dash-header p  { color: var(--muted); font-size: 0.85rem; margin-top: 2px; }
+
+.dash-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem; margin-bottom: 2rem;
+}
+.mini-stat {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem;
+}
+.mini-stat .num { font-family: var(--mono); font-size: 1.8rem; font-weight: 700; }
+.mini-stat .lbl { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
+
+.section-wrap { margin-bottom: 2rem; }
+
+.todo-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  margin-bottom: 8px; transition: border-color 0.15s;
+  border-left: 3px solid transparent;
+}
+.todo-row:hover { border-color: var(--accent2); }
+.todo-row .id { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.todo-row .title { flex: 1; font-size: 0.9rem; }
+
+.access-banner {
+  background: rgba(88,101,242,0.08);
+  border: 1px solid rgba(88,101,242,0.2);
+  border-radius: var(--radius); padding: 1rem 1.25rem;
+  font-size: 0.85rem; margin-bottom: 2rem;
+  display: flex; align-items: center; gap: 10px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dash-header">
+  <img class="dash-avatar"
+    src="https://cdn.discordapp.com/avatars/{{ user.id }}/{{ user.avatar }}.png?size=128"
+    onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"
+    alt="{{ user.username }}" />
+  <div>
+    <h1>{{ user.global_name or user.username }}</h1>
+    <p>@{{ user.username }} · <span class="badge {{ access_level }}" style="display:inline">{{ access_level }}</span></p>
+  </div>
+</div>
+
+<!-- Access info -->
+<div class="access-banner">
+  {% if access_level == 'admin' %}
+    🛡️ <strong>Admin</strong> — You have full access: view, create, edit, delete TODOs and manage settings.
+  {% elif access_level == 'manager' %}
+    ✅ <strong>Manager</strong> — You can create, edit, and update TODOs.
+  {% else %}
+    👀 <strong>Member</strong> — You can view the board. Contact an admin to get manager access.
+  {% endif %}
+</div>
+
+<!-- Stats -->
+<div class="dash-grid">
+  <div class="mini-stat">
+    <div class="num" style="color:var(--accent)">{{ my_todos|length }}</div>
+    <div class="lbl">Assigned to you</div>
+  </div>
+  <div class="mini-stat">
+    <div class="num" style="color:var(--inprog)">{{ added_todos|length }}</div>
+    <div class="lbl">Added by you</div>
+  </div>
+  <div class="mini-stat">
+    <div class="num" style="color:var(--todo)">{{ counts.todo }}</div>
+    <div class="lbl">Total To Do</div>
+  </div>
+  <div class="mini-stat">
+    <div class="num" style="color:var(--done)">{{ archive_count }}</div>
+    <div class="lbl">Total Done</div>
+  </div>
+</div>
+
+<!-- Assigned to me -->
+<div class="section-wrap">
+  <div class="section-head">
+    <h2>Assigned to You</h2>
+    <span class="count">{{ my_todos|length }}</span>
+  </div>
+  {% if my_todos %}
+    {% for t in my_todos %}
+    <div class="todo-row" style="border-left-color:{{ t.status_color }}">
+      <span class="id">#{{ t.id }}</span>
+      <span class="title">{{ t.title }}</span>
+      <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+      <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
+      {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty card">
+      <div class="emoji">✨</div>
+      <p>Nothing assigned to you right now.</p>
+    </div>
+  {% endif %}
+</div>
+
+<!-- Added by me -->
+<div class="section-wrap">
+  <div class="section-head">
+    <h2>Added by You</h2>
+    <span class="count">{{ added_todos|length }}</span>
+  </div>
+  {% if added_todos %}
+    {% for t in added_todos[:10] %}
+    <div class="todo-row" style="border-left-color:{{ t.status_color }}">
+      <span class="id">#{{ t.id }}</span>
+      <span class="title">{{ t.title }}</span>
+      <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+    </div>
+    {% endfor %}
+    {% if added_todos|length > 10 %}
+    <p style="font-size:0.8rem;color:var(--muted);text-align:center;margin-top:8px">
+      + {{ added_todos|length - 10 }} more — <a href="/board" style="color:var(--accent2)">View on board</a>
+    </p>
+    {% endif %}
+  {% else %}
+    <div class="empty card">
+      <div class="emoji">📝</div>
+      <p>You haven't added any TODOs yet.</p>
+      {% if access_level in ('manager','admin','owner') %}
+      <a href="/board" class="btn btn-primary btn-sm" style="margin-top:12px">Add a TODO →</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<!-- All active (for managers+) -->
+{% if access_level in ('manager','admin','owner') %}
+<div class="section-wrap">
+  <div class="section-head">
+    <h2>All Active TODOs</h2>
+    <a href="/board" class="btn btn-ghost btn-sm">Full Board →</a>
+  </div>
+  {% for t in active_todos[:5] %}
+  <div class="todo-row" style="border-left-color:{{ t.status_color }}">
+    <span class="id">#{{ t.id }}</span>
+    <span class="title">{{ t.title }}</span>
+    <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+    <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }} {{ t.priority_label }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}AnymeX Dashboard{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:        #0d0e12;
+      --surface:   #13151c;
+      --surface2:  #1a1d27;
+      --border:    #252836;
+      --accent:    #5865F2;
+      --accent2:   #7289da;
+      --text:      #e8eaf0;
+      --muted:     #6b7280;
+      --todo:      #378ADD;
+      --inprog:    #BA7517;
+      --review:    #888780;
+      --blocked:   #E24B4A;
+      --done:      #1D9E75;
+      --low:       #6b7280;
+      --medium:    #BA7517;
+      --high:      #E24B4A;
+      --radius:    10px;
+      --mono:      'Space Mono', monospace;
+      --sans:      'DM Sans', sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Navbar ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(13,14,18,0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 2rem; height: 58px; gap: 0;
+    }
+    .nav-brand {
+      font-family: var(--mono);
+      font-size: 1rem; font-weight: 700;
+      color: var(--text); text-decoration: none;
+      display: flex; align-items: center; gap: 10px;
+      margin-right: 2rem;
+    }
+    .nav-brand .logo {
+      width: 28px; height: 28px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+    .nav-links {
+      display: flex; align-items: center; gap: 4px; flex: 1;
+    }
+    .nav-links a {
+      color: var(--muted); text-decoration: none;
+      padding: 6px 12px; border-radius: 6px;
+      font-size: 0.875rem; font-weight: 500;
+      transition: all 0.15s;
+    }
+    .nav-links a:hover { color: var(--text); background: var(--surface2); }
+    .nav-links a.active { color: var(--text); background: var(--surface2); }
+    .nav-right {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 2px solid var(--border);
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    .avatar:hover { border-color: var(--accent); }
+    .user-chip {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; padding: 4px 12px 4px 6px;
+      font-size: 0.8rem; color: var(--muted);
+    }
+    .badge {
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em;
+      padding: 2px 7px; border-radius: 10px;
+      text-transform: uppercase;
+    }
+    .badge.admin   { background: rgba(88,101,242,0.15); color: var(--accent2); }
+    .badge.manager { background: rgba(29,158,117,0.15); color: var(--done); }
+    .badge.member  { background: rgba(107,114,128,0.1); color: var(--muted); }
+    .badge.public  { background: rgba(107,114,128,0.1); color: var(--muted); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px; border-radius: var(--radius);
+      font-family: var(--sans); font-size: 0.875rem; font-weight: 600;
+      cursor: pointer; border: none; text-decoration: none;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent2); transform: translateY(-1px); }
+    .btn-ghost {
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { color: var(--text); border-color: var(--muted); background: var(--surface); }
+    .btn-danger { background: rgba(226,75,74,0.1); color: var(--blocked); border: 1px solid rgba(226,75,74,0.2); }
+    .btn-danger:hover { background: rgba(226,75,74,0.2); }
+    .btn-sm { padding: 5px 10px; font-size: 0.78rem; }
+    .btn-discord {
+      background: #5865F2; color: #fff;
+    }
+    .btn-discord:hover { background: #4752c4; }
+
+    /* ── Main layout ── */
+    main { flex: 1; padding: 2rem; max-width: 1400px; margin: 0 auto; width: 100%; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+    .card-sm { padding: 1rem; }
+
+    /* ── Status pill ── */
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px;
+      font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em;
+    }
+    .status-todo     { background: rgba(55,138,221,0.12); color: var(--todo); }
+    .status-in_progress { background: rgba(186,117,23,0.12); color: var(--inprog); }
+    .status-review_needed { background: rgba(136,135,128,0.12); color: var(--review); }
+    .status-blocked  { background: rgba(226,75,74,0.12); color: var(--blocked); }
+    .status-done     { background: rgba(29,158,117,0.12); color: var(--done); }
+
+    /* ── Priority dot ── */
+    .pri-icon { font-size: 0.85em; }
+    .pri-low     { color: var(--low); }
+    .pri-medium  { color: var(--medium); }
+    .pri-high    { color: var(--high); }
+
+    /* ── Tag ── */
+    .tag {
+      display: inline-block;
+      padding: 2px 8px; border-radius: 4px;
+      font-size: 0.7rem; font-weight: 600;
+      font-family: var(--mono);
+      background: rgba(88,101,242,0.1);
+      color: var(--accent2);
+    }
+
+    /* ── Section heading ── */
+    .section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+    .section-head h2 {
+      font-size: 1rem; font-weight: 700;
+      font-family: var(--mono); color: var(--text);
+    }
+    .section-head .count {
+      font-size: 0.75rem; color: var(--muted);
+      background: var(--surface2); border: 1px solid var(--border);
+      padding: 2px 8px; border-radius: 10px;
+    }
+
+    /* ── Toasts ── */
+    #toast-container {
+      position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .toast {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 16px;
+      font-size: 0.85rem; color: var(--text);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      animation: slideIn 0.2s ease;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .toast.success { border-color: var(--done); }
+    .toast.error   { border-color: var(--blocked); }
+    @keyframes slideIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: none; } }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 500;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 2rem; width: 100%; max-width: 520px;
+      max-height: 90vh; overflow-y: auto;
+      animation: modalIn 0.2s ease;
+    }
+    @keyframes modalIn { from { opacity:0; transform: scale(0.95); } to { opacity:1; transform: none; } }
+    .modal h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem; }
+
+    /* ── Form ── */
+    .form-group { margin-bottom: 1rem; }
+    .form-group label {
+      display: block; font-size: 0.8rem; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .form-control {
+      width: 100%; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); padding: 9px 12px;
+      font-family: var(--sans); font-size: 0.9rem;
+      outline: none; transition: border-color 0.15s;
+    }
+    .form-control:focus { border-color: var(--accent); }
+    select.form-control option { background: var(--surface2); }
+
+    /* ── Divider ── */
+    hr { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center; padding: 3rem 1rem; color: var(--muted);
+    }
+    .empty .emoji { font-size: 2rem; margin-bottom: 0.5rem; }
+    .empty p { font-size: 0.9rem; }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      main { padding: 1rem; }
+      nav { padding: 0 1rem; }
+      .nav-links a span { display: none; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="/">
+    <span class="logo">✦</span>
+    AnymeX
+  </a>
+  <div class="nav-links">
+    <a href="/" class="{% if request.endpoint == 'index' %}active{% endif %}">
+      <span>Home</span>
+    </a>
+    <a href="/board" class="{% if request.endpoint == 'board' %}active{% endif %}">
+      <span>Board</span>
+    </a>
+    {% if user %}
+    <a href="/dashboard" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
+      <span>My Tasks</span>
+    </a>
+    <a href="/analytics" class="{% if request.endpoint == 'analytics' %}active{% endif %}">
+      <span>Analytics</span>
+    </a>
+    {% if access_level in ('admin', 'owner') %}
+    <a href="/settings" class="{% if request.endpoint == 'settings' %}active{% endif %}">
+      <span>Settings</span>
+    </a>
+    {% endif %}
+    {% endif %}
+  </div>
+  <div class="nav-right">
+    {% if user %}
+      <div class="user-chip">
+        <img class="avatar" src="https://cdn.discordapp.com/avatars/{{ user.id }}/{{ user.avatar }}.png?size=64" alt="{{ user.username }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+        <span>{{ user.global_name or user.username }}</span>
+        <span class="badge {{ access_level }}">{{ access_level }}</span>
+      </div>
+      <a href="/logout" class="btn btn-ghost btn-sm">Log out</a>
+    {% else %}
+      <a href="/login" class="btn btn-discord btn-sm">
+        <svg width="16" height="16" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
+        Login with Discord
+      </a>
+    {% endif %}
+  </div>
+</nav>
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<div id="toast-container"></div>
+
+<script>
+function toast(msg, type='success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${type === 'success' ? '✓' : '✕'}</span> ${msg}`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+async function api(method, path, body) {
+  const r = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>
