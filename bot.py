@@ -32,17 +32,33 @@ GITHUB_API  = "https://api.github.com"
 FILE_CONFIG        = "config.json"
 FILE_TODOS         = "todos.json"
 FILE_TODOS_ARCHIVE = "todos_archive.json"
+FILE_BOARD_IDS     = "board_ids.json"   # dedicated store for Discord message IDs
 
 TODOS_PER_PAGE = 10
 
 # Default config
 DEFAULT_CONFIG = {
-    "todo_channel":           None,
-    "todo_roles":             [],
-    "todo_stats_message_id":  None,
-    "todo_page_message_ids":  [],
-    "todo_style":             1,
-    "prefix":                 "ax!",
+    "todo_channel":  None,
+    "todo_roles":    [],
+    "todo_style":    1,
+    "prefix":        "ax!",
+}
+
+# board_ids.json schema — separate file so config.json stays clean
+# {
+#   "stats_message_id": "discord_msg_id" | null,
+#   "style": 1,          <- style used when board was last posted
+#   "pages": [           <- one entry per Discord message on the board
+#     {
+#       "message_id": "discord_msg_id",
+#       "todo_ids":   [1, 3, 7]   <- which todo IDs live in this message
+#     }                              styles 1-4: multiple per message (one page)
+#   ]                                styles 5-6: exactly one todo per message
+# }
+DEFAULT_BOARD_IDS = {
+    "stats_message_id": None,
+    "style":            None,
+    "pages":            [],
 }
 
 # ── In-memory cache ────────────────────────────────────────────────────────────
@@ -99,6 +115,7 @@ async def ensure_files():
             (FILE_CONFIG,        DEFAULT_CONFIG),
             (FILE_TODOS,         []),
             (FILE_TODOS_ARCHIVE, []),
+            (FILE_BOARD_IDS,     DEFAULT_BOARD_IDS),
         ]:
             data, sha = await gh_read(session, filepath)
             if sha is None and data is None:
@@ -682,7 +699,57 @@ async def has_todo_role(interaction: discord.Interaction) -> bool:
 # TODO BOARD UPDATER
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _build_wanted_pages(active: list, archive: list, style: int) -> list[dict]:
+    """
+    Build the list of "wanted" page slots we need on Discord right now.
+    Returns a list of dicts:
+      { "todo_ids": [1,3,7], "embed": discord.Embed }
+
+    Styles 1-4  → one message per page-of-10
+    Styles 5-6  → one message per individual TODO
+    """
+    total_todos = max(len(active), 1)
+    pages_of_todos = [active[i:i+TODOS_PER_PAGE]
+                      for i in range(0, total_todos, TODOS_PER_PAGE)]
+    total_pages = len(pages_of_todos)
+
+    wanted = []
+    for page_num, page_todos in enumerate(pages_of_todos, start=1):
+        embeds = build_page_embeds(page_todos, page_num, total_pages, style=style)
+        if style in (5, 6):
+            # one embed per todo — zip them together
+            for todo, embed in zip(page_todos, embeds):
+                wanted.append({"todo_ids": [todo["id"]], "embed": embed})
+            # if page_todos is empty build_page_embeds returns a single placeholder
+            if not page_todos:
+                wanted.append({"todo_ids": [], "embed": embeds[0]})
+        else:
+            # styles 1-4: one embed for the whole page
+            wanted.append({
+                "todo_ids": [t["id"] for t in page_todos],
+                "embed":    embeds[0],
+            })
+    return wanted
+
+
 async def update_todo_board(guild: discord.Guild, cfg: dict):
+    """
+    Smart board updater:
+    - Always fresh-reads config, todos and board_ids
+    - Compares what IS on Discord (stored page slots with todo_ids) vs what SHOULD be
+    - If style changed  → full wipe + repost
+    - If stats missing  → full wipe + repost
+    - If a page slot's todo_ids changed (todo added/deleted/reordered onto that page)
+        styles 1-4: edit that page message with fresh embed
+        styles 5-6: delete removed-todo messages, post new-todo messages, edit changed ones
+    - If extra old messages exist (from deleted todos) → delete them
+    - Never touches a message whose content hasn't changed
+    """
+    # Always fresh-read config — never trust the passed-in cfg (could be stale)
+    async with aiohttp.ClientSession() as session:
+        fresh_cfg, _ = await gh_read_fresh(session, FILE_CONFIG)
+    cfg = fresh_cfg or cfg
+
     todo_ch_id = cfg.get("todo_channel")
     if not todo_ch_id:
         return
@@ -691,69 +758,124 @@ async def update_todo_board(guild: discord.Guild, cfg: dict):
         return
 
     async with aiohttp.ClientSession() as session:
-        todos,   _ = await gh_read_fresh(session, FILE_TODOS)
-        archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
-    todos   = todos   or []
-    archive = archive or []
-    active  = [t for t in todos if t["status"] != "done"]
-    pages   = [active[i:i+TODOS_PER_PAGE] for i in range(0, max(len(active), 1), TODOS_PER_PAGE)]
-    total_pages = len(pages)
-    style       = int(cfg.get("todo_style", 1))
+        todos,     _        = await gh_read_fresh(session, FILE_TODOS)
+        archive,   _        = await gh_read(session, FILE_TODOS_ARCHIVE)
+        board_ids, bid_sha  = await gh_read_fresh(session, FILE_BOARD_IDS)
+    todos     = todos    or []
+    archive   = archive  or []
+    board_ids = board_ids or DEFAULT_BOARD_IDS.copy()
+
+    active = [t for t in todos if t["status"] != "done"]
+    style  = int(cfg.get("todo_style", 1))
 
     stats_embed = build_stats_embed(active, len(archive), style=style)
-    # build_page_embeds returns a list of embeds per page; flatten into one list
-    page_embeds = [e for i, page_todos in enumerate(pages)
-                   for e in build_page_embeds(page_todos, i + 1, total_pages, style=style)]
+    wanted      = _build_wanted_pages(active, archive, style)
 
-    # ── Try to edit existing messages ─────────────────────────────────────────
-    stats_msg_id = cfg.get("todo_stats_message_id")
-    page_ids     = list(cfg.get("todo_page_message_ids") or [])
-    need_refresh = False
+    # ── Full wipe if style changed or stats message is gone ───────────────────
+    stored_style    = board_ids.get("style")
+    stats_msg_id    = board_ids.get("stats_message_id")
+    need_full_wipe  = False
 
-    if stats_msg_id:
+    if stored_style != style:
+        need_full_wipe = True
+    elif not stats_msg_id:
+        need_full_wipe = True
+    else:
         try:
             stats_msg = await ch.fetch_message(int(stats_msg_id))
             await safe_edit(stats_msg, stats_embed)
         except Exception:
-            need_refresh = True
-    else:
-        need_refresh = True
+            need_full_wipe = True
 
-    if not need_refresh:
-        # Check all page messages exist and update them
-        if len(page_ids) != len(page_embeds):
-            need_refresh = True
-        else:
-            for pid, page_embed in zip(page_ids, page_embeds):
-                try:
-                    msg = await ch.fetch_message(int(pid))
-                    await safe_edit(msg, page_embed)
-                except Exception:
-                    need_refresh = True
-                    break
-
-    # ── If anything is missing or wrong — wipe channel and repost everything ──
-    if need_refresh:
-        await _refresh_todo_board(ch, stats_embed, page_embeds, cfg, style=style)
+    if need_full_wipe:
+        await _refresh_todo_board(ch, stats_embed, wanted, style=style)
         return
 
-    # ── Remove extra page messages if TODOs decreased ─────────────────────────
-    cfg_dirty = False
-    while len(page_ids) > total_pages:
-        old_id = page_ids.pop()
+    # ── Build lookup: todo_id → stored page slot ──────────────────────────────
+    # stored_pages is the previous snapshot saved in board_ids.json
+    stored_pages = board_ids.get("pages") or []          # [{"message_id":..,"todo_ids":[..]}]
+    stored_by_todo: dict[int, str] = {}                  # todo_id → message_id
+    all_stored_msg_ids: set[str]   = set()
+    for slot in stored_pages:
+        mid = slot.get("message_id")
+        if mid:
+            all_stored_msg_ids.add(mid)
+            for tid in slot.get("todo_ids", []):
+                stored_by_todo[int(tid)] = mid
+
+    # ── Build lookup: todo_id → wanted slot index ─────────────────────────────
+    wanted_by_todo: dict[int, int] = {}
+    for idx, slot in enumerate(wanted):
+        for tid in slot["todo_ids"]:
+            wanted_by_todo[int(tid)] = idx
+
+    # ── Figure out which stored message IDs are no longer needed ─────────────
+    wanted_todo_ids = set(wanted_by_todo.keys())
+    stale_msg_ids   = set()
+    for slot in stored_pages:
+        slot_tids = {int(t) for t in slot.get("todo_ids", [])}
+        # A slot is stale if NONE of its todos are in the current wanted list
+        if not slot_tids & wanted_todo_ids:
+            mid = slot.get("message_id")
+            if mid:
+                stale_msg_ids.add(mid)
+
+    # Delete stale messages (completed/deleted todos whose embed is now gone)
+    for mid in stale_msg_ids:
         try:
-            old_msg = await ch.fetch_message(int(old_id))
+            old_msg = await ch.fetch_message(int(mid))
             await old_msg.delete()
         except Exception:
             pass
-        cfg_dirty = True
 
-    if cfg_dirty:
+    # ── Now process each wanted slot ──────────────────────────────────────────
+    new_pages      = []
+    need_save      = bool(stale_msg_ids)   # if we deleted anything, save updated IDs
+
+    for slot in wanted:
+        slot_tids  = slot["todo_ids"]
+        slot_embed = slot["embed"]
+
+        # Find if ALL todos in this slot already share the same stored message
+        candidate_msg_ids = {stored_by_todo[tid] for tid in slot_tids if tid in stored_by_todo}
+        # Valid reuse: exactly one message covers exactly these todo_ids and nothing extra
+        reuse_mid = None
+        if len(candidate_msg_ids) == 1:
+            cid = next(iter(candidate_msg_ids))
+            # Find the stored slot for this message
+            for s in stored_pages:
+                if s.get("message_id") == cid:
+                    stored_tids = {int(t) for t in s.get("todo_ids", [])}
+                    if stored_tids == set(slot_tids):
+                        reuse_mid = cid
+                    break
+
+        if reuse_mid:
+            # Same todos, same message → just edit the embed in place
+            try:
+                existing = await ch.fetch_message(int(reuse_mid))
+                await safe_edit(existing, slot_embed)
+                new_pages.append({"message_id": reuse_mid, "todo_ids": slot_tids})
+            except Exception:
+                # Message gone — need a full wipe to be safe
+                await _refresh_todo_board(ch, stats_embed, wanted, style=style)
+                return
+        else:
+            # Todo set changed for this slot → post a new message
+            need_save = True
+            delay = _SEND_DELAY.get(style, 0.0)
+            new_msg = await safe_send(ch, slot_embed, delay=delay)
+            new_pages.append({"message_id": str(new_msg.id), "todo_ids": slot_tids})
+
+    # ── Save updated board_ids.json if anything changed ───────────────────────
+    if need_save:
         async with aiohttp.ClientSession() as session:
-            cfg2, sha = await gh_read_fresh(session, FILE_CONFIG)
-            cfg2 = cfg2 or {}
-            cfg2["todo_page_message_ids"] = page_ids
-            await gh_write(session, FILE_CONFIG, cfg2, sha, "Update todo board message IDs")
+            bid2, sha2 = await gh_read_fresh(session, FILE_BOARD_IDS)
+            bid2 = bid2 or DEFAULT_BOARD_IDS.copy()
+            bid2["stats_message_id"] = stats_msg_id
+            bid2["style"]            = style
+            bid2["pages"]            = new_pages
+            await gh_write(session, FILE_BOARD_IDS, bid2, sha2, "Update board message IDs")
 
 
 async def safe_send(ch: discord.TextChannel, embed: discord.Embed,
@@ -793,13 +915,17 @@ async def safe_edit(msg: discord.Message, embed: discord.Embed) -> None:
 _SEND_DELAY: dict[int, float] = {5: 0.55, 6: 0.55}
 
 async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embed,
-                               page_embeds: list, cfg: dict, style: int = 1):
-    """Wipe the entire todo channel and repost all bot cards cleanly."""
+                               wanted: list, style: int = 1):
+    """
+    Wipe the entire todo channel and repost all bot cards cleanly.
+    `wanted` is the list produced by _build_wanted_pages():
+      [{"todo_ids": [...], "embed": discord.Embed}, ...]
+    Saves fresh message IDs to board_ids.json afterwards.
+    """
     # Bulk-delete everything in the channel
     try:
         await ch.purge(limit=None, check=lambda m: True)
     except Exception:
-        # Fallback: delete one by one
         try:
             async for msg in ch.history(limit=200):
                 try:
@@ -811,20 +937,20 @@ async def _refresh_todo_board(ch: discord.TextChannel, stats_embed: discord.Embe
 
     delay = _SEND_DELAY.get(style, 0.0)
 
-    # Repost stats + all pages
-    stats_msg = await safe_send(ch, stats_embed)
-    page_ids  = []
-    for page_embed in page_embeds:
-        msg = await safe_send(ch, page_embed, delay=delay)
-        page_ids.append(str(msg.id))
+    stats_msg  = await safe_send(ch, stats_embed)
+    new_pages  = []
+    for slot in wanted:
+        msg = await safe_send(ch, slot["embed"], delay=delay)
+        new_pages.append({"message_id": str(msg.id), "todo_ids": slot["todo_ids"]})
 
-    # Save new message IDs to config
+    # Save everything to board_ids.json
     async with aiohttp.ClientSession() as session:
-        cfg2, sha = await gh_read_fresh(session, FILE_CONFIG)
-        cfg2 = cfg2 or {}
-        cfg2["todo_stats_message_id"] = str(stats_msg.id)
-        cfg2["todo_page_message_ids"] = page_ids
-        await gh_write(session, FILE_CONFIG, cfg2, sha, "Refreshed todo board")
+        bid, sha = await gh_read_fresh(session, FILE_BOARD_IDS)
+        bid = bid or DEFAULT_BOARD_IDS.copy()
+        bid["stats_message_id"] = str(stats_msg.id)
+        bid["style"]            = style
+        bid["pages"]            = new_pages
+        await gh_write(session, FILE_BOARD_IDS, bid, sha, "Refreshed todo board IDs")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIRM VIEW  (Yes / No buttons, only triggering user can click)
@@ -2161,7 +2287,6 @@ async def p_todorefresh(ctx):
     ch = ctx.guild.get_channel(int(todo_ch_id))
     if not ch:
         await ctx.send("TODO channel not found.", delete_after=10); return
-    # Delete command message if it's not in the todo channel (to avoid it getting wiped silently)
     if str(ctx.channel.id) != str(todo_ch_id):
         await ctx.send(f"Refreshing {ch.mention}...")
     async with aiohttp.ClientSession() as session:
@@ -2170,13 +2295,10 @@ async def p_todorefresh(ctx):
     todos   = todos   or []
     archive = archive or []
     active  = [t for t in todos if t["status"] != "done"]
-    pages   = [active[i:i+TODOS_PER_PAGE] for i in range(0, max(len(active), 1), TODOS_PER_PAGE)]
-    total_pages = len(pages)
     style   = int(cfg.get("todo_style", 1))
     stats_embed = build_stats_embed(active, len(archive), style=style)
-    page_embeds = [e for i, page_todos in enumerate(pages)
-                   for e in build_page_embeds(page_todos, i + 1, total_pages, style=style)]
-    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg, style=style)
+    wanted      = _build_wanted_pages(active, archive, style)
+    await _refresh_todo_board(ch, stats_embed, wanted, style=style)
     if str(ctx.channel.id) != str(todo_ch_id):
         await ctx.send(f"✅ {ch.mention} refreshed — all old messages wiped, board reposted.")
 
@@ -2201,13 +2323,10 @@ async def todo_refresh(interaction: discord.Interaction):
     todos   = todos   or []
     archive = archive or []
     active  = [t for t in todos if t["status"] != "done"]
-    pages   = [active[i:i+TODOS_PER_PAGE] for i in range(0, max(len(active), 1), TODOS_PER_PAGE)]
-    total_pages = len(pages)
     style   = int(cfg.get("todo_style", 1))
     stats_embed = build_stats_embed(active, len(archive), style=style)
-    page_embeds = [e for i, page_todos in enumerate(pages)
-                   for e in build_page_embeds(page_todos, i + 1, total_pages, style=style)]
-    await _refresh_todo_board(ch, stats_embed, page_embeds, cfg, style=style)
+    wanted      = _build_wanted_pages(active, archive, style)
+    await _refresh_todo_board(ch, stats_embed, wanted, style=style)
     await interaction.followup.send(f"✅ {ch.mention} refreshed — all messages wiped, board reposted.", ephemeral=True)
 
 
