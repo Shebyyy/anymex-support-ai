@@ -309,7 +309,9 @@ def callback():
     code = request.args.get("code")
     token_data = get_access_token(code)
     if not token_data or "access_token" not in token_data:
-        return redirect(url_for("index") + "?error=token_fail")
+        err = token_data.get("error", "unknown") if token_data else "no_response"
+        desc = token_data.get("error_description", "") if token_data else ""
+        return redirect(url_for("index") + f"?error=token_fail&reason={err}&desc={desc}")
 
     access_token = token_data["access_token"]
     user = discord_get("/users/@me", access_token)
