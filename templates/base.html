@@ -37,6 +37,7 @@
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+      overflow-x: hidden;
     }
 
     /* ── Scrollbar ── */
@@ -243,8 +244,27 @@
     /* ── Responsive ── */
     @media (max-width: 768px) {
       main { padding: 1rem; }
-      nav { padding: 0 1rem; }
-      .nav-links a span { display: none; }
+      nav { 
+        padding: 0.75rem 1rem; 
+        height: auto; 
+        flex-wrap: wrap;
+        gap: 0.75rem 0;
+      }
+      .nav-brand { margin-right: auto; }
+      .nav-links { 
+        flex: 1 1 100%;
+        order: 1;
+        overflow-x: auto;
+
+        a {
+          padding: 0.5rem;
+        }
+
+        span {
+          white-space: nowrap;
+        }
+      }
+      .nav-links::-webkit-scrollbar { display: none; }
     }
   </style>
   {% block head %}{% endblock %}
