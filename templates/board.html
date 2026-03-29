@@ -100,6 +100,51 @@
   font-size: 0.82rem; color: var(--muted); margin: 10px 0;
   font-style: italic;
 }
+
+/* Board — mobile */
+@media (max-width: 768px) {
+  .filters {
+    gap: 6px;
+  }
+  .filter-input {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .filter-select {
+    flex: 1 1 auto;
+  }
+  .todo-card {
+    padding: 0.85rem 1rem;
+  }
+  .todo-card-top {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .todo-card-top .id {
+    min-width: unset;
+  }
+  .todo-card-top .title {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .todo-card-desc {
+    margin-left: 0;
+    margin-top: 6px;
+  }
+  .todo-card-meta {
+    margin-left: 0;
+    margin-top: 8px;
+  }
+  .todo-card-actions {
+    flex-basis: 100%;
+    margin-left: 0;
+    margin-top: 6px;
+  }
+  .detail-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+}
 </style>
 {% endblock %}
 

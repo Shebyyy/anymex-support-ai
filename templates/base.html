@@ -265,6 +265,47 @@
         }
       }
       .nav-links::-webkit-scrollbar { display: none; }
+
+      /* Modals — near full-screen */
+      .modal {
+        max-width: 100% !important;
+        width: 100%;
+        max-height: 100vh;
+        border-radius: 10px 10px 0 0;
+        padding: 1.25rem;
+      }
+      .modal-overlay.open {
+        align-items: flex-end;
+      }
+
+      /* Section head — wrap */
+      .section-head {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      /* User chip — compact */
+      .user-chip span:not(.badge) { display: none; }
+
+      /* Progress label — stack */
+      .prog-label {
+        flex-direction: column;
+        gap: 4px;
+        text-align: left;
+      }
+
+      /* Cards — tighter padding */
+      .card { padding: 1rem; }
+
+      /* Toasts — full width */
+      #toast-container {
+        left: 1rem;
+        right: 1rem;
+        bottom: 1rem;
+      }
+      .toast {
+        width: 100%;
+      }
     }
   </style>
   {% block head %}{% endblock %}

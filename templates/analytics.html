@@ -37,7 +37,27 @@ canvas { max-height: 240px; }
   border-radius: 8px; font-size: 0.83rem;
 }
 .recent-item .id { font-family: var(--mono); color: var(--muted); font-size: 0.72rem; }
-.recent-item .title { flex: 1; }
+.recent-item .title { flex: 1; min-width: 0; }
+
+/* Analytics — mobile */
+@media (max-width: 768px) {
+  .analytics-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .chart-card {
+    padding: 1rem;
+  }
+  .recent-item {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+  .recent-item .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
 </style>
 {% endblock %}
 
