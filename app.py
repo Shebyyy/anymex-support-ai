@@ -357,7 +357,14 @@ def _fmt_discord_ts(ts_str):
 #       When a thread is opened, we call Discord once to get fresh URLs.
 # ══════════════════════════════════════════════════════════════════════════════
 
-FILE_FORUM_POSTS = "forum_posts.json"
+FILE_FORUM_POSTS_BUGS        = "forum_posts_bugs.json"
+FILE_FORUM_POSTS_SUGGESTIONS = "forum_posts_suggestions.json"
+
+def _forum_file(forum_type):
+    """Return the correct file path for a given forum type."""
+    if forum_type == "suggestions":
+        return FILE_FORUM_POSTS_SUGGESTIONS
+    return FILE_FORUM_POSTS_BUGS
 FORUM_SYNC_TTL   = 5 * 60  # only hit Discord API again after 5 minutes
 
 import threading as _threading
@@ -552,8 +559,9 @@ def _sync_forum_to_db(channel_id, forum_type):
     if not channel_id or not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
         return
 
-    # Load current DB state
-    db, db_sha = gh_read(FILE_FORUM_POSTS, force=True)
+    # Load current DB state — each forum type has its own file
+    forum_file = _forum_file(forum_type)
+    db, db_sha = gh_read(forum_file, force=True)
     db = db or {}
     section = db.get(forum_type) or {"last_synced": "", "channel_id": channel_id, "posts": []}
     stored_posts = {str(p["id"]): p for p in (section.get("posts") or [])}
@@ -663,7 +671,7 @@ def _sync_forum_to_db(channel_id, forum_type):
         # Still update last_synced timestamp even if nothing changed
         section["last_synced"] = datetime.datetime.utcnow().isoformat()
         db[forum_type] = section
-        gh_write(FILE_FORUM_POSTS, db, db_sha, f"Forum: sync {forum_type} (no changes)")
+        gh_write(forum_file, db, db_sha, f"Forum: sync {forum_type} (no changes)")
         return
 
     # Merge forum_links into posts
@@ -676,25 +684,29 @@ def _sync_forum_to_db(channel_id, forum_type):
     section["channel_id"]  = channel_id
     section["posts"]       = list(stored_posts.values())
     db[forum_type] = section
-    gh_write(FILE_FORUM_POSTS, db, db_sha, f"Forum: sync {forum_type} ({len(all_threads)} posts)")
+    gh_write(forum_file, db, db_sha, f"Forum: sync {forum_type} ({len(all_threads)} posts)")
 
 
 def fetch_forum_posts(channel_id, forum_type):
     """
     Return posts from GitHub DB (fast).
-    If DB is empty or stale (>5 min), trigger a background sync with Discord.
+
+    - First ever visit (DB empty, never synced) → blocking sync so page shows data immediately
+    - Stale (>5 min since last sync) → background sync, return existing data instantly
+    - Fresh → return DB data, no sync needed
     """
     if not channel_id:
         return [], "Channel ID not configured"
 
-    db, _ = gh_read(FILE_FORUM_POSTS)
+    db, _ = gh_read(_forum_file(forum_type))
     db = db or {}
     section = db.get(forum_type) or {}
     posts   = section.get("posts") or []
 
-    # Check if a sync is needed
     last_synced = section.get("last_synced", "")
-    needs_sync  = True
+    never_synced = not last_synced
+    needs_sync   = True
+
     if last_synced:
         try:
             age = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_synced)).total_seconds()
@@ -702,10 +714,19 @@ def fetch_forum_posts(channel_id, forum_type):
         except Exception:
             needs_sync = True
 
-    if needs_sync and DISCORD_BOT_TOKEN:
-        # Fire-and-forget background sync — page loads instantly from DB
-        t = _threading.Thread(target=_sync_forum_to_db, args=(channel_id, forum_type), daemon=True)
-        t.start()
+    if DISCORD_BOT_TOKEN:
+        if never_synced or not posts:
+            # First ever load — sync blocking so the page actually shows something
+            _sync_forum_to_db(channel_id, forum_type)
+            # Re-read DB after sync
+            db, _ = gh_read(_forum_file(forum_type), force=True)
+            db = db or {}
+            section = db.get(forum_type) or {}
+            posts   = section.get("posts") or []
+        elif needs_sync:
+            # Already have data — refresh in background, return existing instantly
+            t = _threading.Thread(target=_sync_forum_to_db, args=(channel_id, forum_type), daemon=True)
+            t.start()
 
     # Enrich linked_todo_id from forum_links
     links, _ = gh_read(FILE_FORUM_LINKS)
@@ -728,8 +749,8 @@ def fetch_forum_thread_detail(thread_id, forum_type="bugs"):
     links, _ = gh_read(FILE_FORUM_LINKS)
     links = links or {}
 
-    # Load stored post from DB
-    db, _ = gh_read(FILE_FORUM_POSTS)
+    # Load stored post from DB — from the correct split file
+    db, _ = gh_read(_forum_file(forum_type))
     db = db or {}
     stored_post = None
     for p in (db.get(forum_type, {}).get("posts") or []):
@@ -929,7 +950,7 @@ def _patch_forum_post_todo_link(thread_id, forum_type, todo_id, todo_info):
     todo_info should be: { id, title, status, priority }
     """
     try:
-        db, db_sha = gh_read(FILE_FORUM_POSTS, force=True)
+        db, db_sha = gh_read(_forum_file(forum_type), force=True)
         db = db or {}
         section = db.get(forum_type)
         if not section:
@@ -946,7 +967,7 @@ def _patch_forum_post_todo_link(thread_id, forum_type, todo_id, todo_info):
             section["posts"] = posts
             db[forum_type]   = section
             action = f"TODO #{todo_id}" if todo_id else "unlinked"
-            gh_write(FILE_FORUM_POSTS, db, db_sha,
+            gh_write(_forum_file(forum_type), db, db_sha,
                      f"Web: Patch forum post {thread_id} → {action}")
     except Exception:
         pass  # non-critical — background sync will fix it next round
