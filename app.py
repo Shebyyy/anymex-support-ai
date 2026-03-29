@@ -820,8 +820,29 @@ def fetch_forum_thread_detail(thread_id, forum_type="bugs"):
         "status_label":  status_label,
         "is_locked":     is_locked,
         "is_archived":   is_archived,
-        "linked_todo_id": links.get(str(thread_id)),
+        "linked_todo_id":   links.get(str(thread_id)),
+        "linked_todo_info": _get_todo_info(links.get(str(thread_id))),
     }, None
+
+def _get_todo_info(todo_id):
+    """Return a full todo snapshot for display, or None."""
+    if not todo_id:
+        return None
+    todos, _   = gh_read(FILE_TODOS)
+    todo = next((t for t in (todos or []) if t["id"] == int(todo_id)), None)
+    if not todo:
+        archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+        todo = next((t for t in (archive or []) if t["id"] == int(todo_id)), None)
+    if not todo:
+        return None
+    return {
+        "id":             todo["id"],
+        "title":          todo.get("title", ""),
+        "status":         todo.get("status", "todo"),
+        "priority":       todo.get("priority", "medium"),
+        "tags":           todo.get("tags", []),
+        "ai_description": todo.get("ai_description", ""),
+    }
 
 def get_access_token(code):
     data = {
@@ -1192,8 +1213,13 @@ def settings():
 
 @app.route("/api/todos")
 def api_todos():
-    todos, _ = gh_read(FILE_TODOS)
-    todos = [enrich_todo(t) for t in (todos or []) if t.get("status") != "done"]
+    include_archive = request.args.get("include_archive", "0") == "1"
+    todos, _   = gh_read(FILE_TODOS)
+    todos      = [enrich_todo(t) for t in (todos or []) if t.get("status") != "done"]
+    if include_archive:
+        archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+        archived   = [enrich_todo(t) for t in (archive or [])]
+        todos      = todos + archived
     return jsonify(todos)
 
 @app.route("/api/todo/<int:todo_id>", methods=["GET"])
@@ -1505,12 +1531,14 @@ def bugs_page():
     syncing = False
     if channel_id_configured:
         posts, error = fetch_forum_posts(DISCORD_BUGS_CHANNEL_ID, "bugs")
-        syncing = (not posts and not error)  # empty + no error = first-time sync in progress
+        syncing = (not posts and not error)
+    all_tags = sorted(set(tag for p in posts for tag in (p.get("tags") or [])))
     return render_template("bugs.html",
         posts=posts, error=error,
         channel_name=channel_name,
         channel_id_configured=channel_id_configured,
         syncing=syncing,
+        all_tags=all_tags,
         user=get_session().get("user"),
         access_level=get_session().get("access_level", "public"),
     )
@@ -1524,11 +1552,13 @@ def suggestions_page():
     if channel_id_configured:
         posts, error = fetch_forum_posts(DISCORD_SUGGESTIONS_CHANNEL_ID, "suggestions")
         syncing = (not posts and not error)
+    all_tags = sorted(set(tag for p in posts for tag in (p.get("tags") or [])))
     return render_template("suggestions.html",
         posts=posts, error=error,
         channel_name=channel_name,
         channel_id_configured=channel_id_configured,
         syncing=syncing,
+        all_tags=all_tags,
         user=get_session().get("user"),
         access_level=get_session().get("access_level", "public"),
     )

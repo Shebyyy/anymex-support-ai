@@ -5,6 +5,7 @@ from aiohttp import web
 import aiohttp
 import asyncio
 import os
+import re
 import base64
 import json
 import datetime
@@ -1627,19 +1628,52 @@ async def reminder_task():
 # THREAD MESSAGE SYNC  (saves thread conversations to DB every 30 min)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _strip_mentions(text: str, guild=None) -> str:
+    """
+    Replace Discord mention formats with readable plain text. Never pings anyone.
+    If a guild is supplied, IDs are resolved to actual display names.
+
+      <@123> / <@!123> -> @DisplayName  (or @123 if not in cache)
+      <@&123>          -> @RoleName     (or @role:123 if not found)
+      @everyone / @here -> [@everyone] / [@here]
+    """
+    def resolve_user(m):
+        uid = m.group(1)
+        if guild:
+            member = guild.get_member(int(uid))
+            if member:
+                return f"@{member.display_name}"
+        return f"@{uid}"
+
+    def resolve_role(m):
+        rid = m.group(1)
+        if guild:
+            role = guild.get_role(int(rid))
+            if role:
+                return f"@{role.name}"
+        return f"@role:{rid}"
+
+    text = re.sub(r"<@!?(\d+)>",      resolve_user, text)
+    text = re.sub(r"<@&(\d+)>",       resolve_role, text)
+    text = re.sub(r"@(everyone|here)", r"[@\1]",     text)
+    return text
+
+
 async def _read_thread_messages(thread: discord.Thread) -> list[dict]:
-    """Read all non-bot messages from a thread, oldest first."""
+    """Read all non-bot messages from a thread, oldest first.
+    Mentions are resolved to names and stripped so restoring never pings anyone."""
+    guild    = thread.guild
     messages = []
     try:
         async for msg in thread.history(limit=500, oldest_first=True):
             if msg.author.bot:
                 continue
             messages.append({
-                "author":     msg.author.display_name,
-                "author_id":  str(msg.author.id),
-                "content":    msg.content[:1000],
-                "at":         msg.created_at.isoformat(),
-                "msg_id":     str(msg.id),
+                "author":    msg.author.display_name,
+                "author_id": str(msg.author.id),
+                "content":   _strip_mentions(msg.content[:1000], guild=guild),
+                "at":        msg.created_at.isoformat(),
+                "msg_id":    str(msg.id),
             })
     except Exception:
         pass
@@ -1647,33 +1681,95 @@ async def _read_thread_messages(thread: discord.Thread) -> list[dict]:
 
 
 async def _restore_thread_history(thread: discord.Thread, todo_id: int):
-    """Post saved history into a freshly created thread."""
+    """
+    Post saved conversation history into a freshly created/restored thread.
+
+    Design:
+    - One embed per chunk of 8 messages (stays under Discord field limits)
+    - Each message is a field: author + relative timestamp as name, content as value
+    - Mentions are stripped so nobody gets pinged by old messages
+    - A header embed introduces the log, footer shows total count
+    """
     async with aiohttp.ClientSession() as session:
         history, _ = await gh_read(session, FILE_THREAD_MESSAGES)
-    history = history or {}
+    history  = history or {}
     messages = history.get(str(todo_id), [])
     if not messages:
         return
 
-    # Split into chunks of 10 messages per embed to stay under Discord limits
-    chunk_size = 10
-    chunks = [messages[i:i+chunk_size] for i in range(0, len(messages), chunk_size)]
-    for idx, chunk in enumerate(chunks):
-        lines = [f"📜 **Previous discussion** {'(continued)' if idx > 0 else ''}", "─" * 30]
-        for m in chunk:
+    total = len(messages)
+
+    # ── Header embed ─────────────────────────────────────────────────────────
+    header = discord.Embed(
+        title="📜  Previous Discussion",
+        description=(
+            f"This thread was restored with **{total}** saved message{'s' if total != 1 else ''}.\n"
+            f"-# Messages are read-only history — reply below to continue the conversation."
+        ),
+        color=0x2B2D31,   # dark neutral — clearly different from todo card colour
+    )
+    header.set_footer(text=f"TODO #{todo_id}  ·  Restored from archive")
+    try:
+        await thread.send(embed=header)
+        await asyncio.sleep(0.4)
+    except Exception:
+        pass
+
+    # ── Message chunks as embeds ─────────────────────────────────────────────
+    chunk_size = 8  # 8 fields per embed — safe margin under Discord's 25-field limit
+    chunks     = [messages[i:i + chunk_size] for i in range(0, len(messages), chunk_size)]
+    total_chunks = len(chunks)
+
+    for chunk_idx, chunk in enumerate(chunks):
+        e = discord.Embed(color=0x36393F)  # Discord dark background colour
+
+        for msg_idx, m in enumerate(chunk):
+            # Timestamp
             try:
-                ts = datetime.datetime.fromisoformat(m["at"])
-                time_str = f"<t:{int(ts.timestamp())}:R>"
+                ts       = datetime.datetime.fromisoformat(m["at"])
+                time_str = f"<t:{int(ts.timestamp())}:d> <t:{int(ts.timestamp())}:t>"
             except Exception:
-                time_str = m.get("at", "")[:10]
-            lines.append(f"**{m['author']}** {time_str}")
-            lines.append(m["content"])
-            lines.append("")
+                time_str = m.get("at", "")[:16]
+
+            # Author line — never a mention, just display name
+            author_display = m.get("author", "Unknown")
+            field_name = f"🗨  {author_display}  ·  {time_str}"
+
+            # Content — strip any mentions so nobody gets pinged
+            raw_content = m.get("content", "").strip()
+            safe_content = _strip_mentions(raw_content, guild=thread.guild)
+
+            # Truncate to Discord field value limit (1024) with indicator
+            if len(safe_content) > 980:
+                safe_content = safe_content[:980] + "\n*[truncated]*"
+            if not safe_content:
+                safe_content = "*[no text content]*"
+
+            e.add_field(name=field_name, value=safe_content, inline=False)
+
+            # Visual separator between messages (blank field trick)
+            if msg_idx < len(chunk) - 1:
+                e.add_field(name="", value="", inline=False)
+
+        part_str = f"Part {chunk_idx + 1}/{total_chunks}  ·  " if total_chunks > 1 else ""
+        e.set_footer(text=f"{part_str}Messages {chunk_idx * chunk_size + 1}–{min((chunk_idx + 1) * chunk_size, total)} of {total}")
+
         try:
-            await thread.send("\n".join(lines))
+            await thread.send(embed=e)
             await asyncio.sleep(0.5)
-        except Exception:
+        except Exception as ex:
+            print(f"[thread restore] Failed to send chunk {chunk_idx + 1}: {ex}")
             pass
+
+    # ── Divider so new replies are clearly separated ──────────────────────────
+    try:
+        divider = discord.Embed(
+            description="──────────────────────────\n**Continue the conversation below ↓**",
+            color=0x5865F2,
+        )
+        await thread.send(embed=divider)
+    except Exception:
+        pass
 
 
 @tasks.loop(minutes=30)
