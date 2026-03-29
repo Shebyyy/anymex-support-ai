@@ -5,29 +5,41 @@
 <style>
 .page-header {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;
+  margin-bottom: 1.25rem; flex-wrap: wrap; gap: 12px;
 }
 .page-header h1 { font-family: var(--mono); font-size: 1.3rem; }
 .page-header p   { color: var(--muted); font-size: 0.82rem; margin-top: 4px; }
 
-/* Tab bar (Bugs / Suggestions) */
 .channel-tabs {
-  display: flex; gap: 4px; margin-bottom: 1.5rem;
+  display: flex; gap: 4px; margin-bottom: 1.25rem;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 10px; padding: 4px; width: fit-content;
 }
 .channel-tab {
-  padding: 7px 18px; border-radius: 7px;
-  font-size: 0.85rem; font-weight: 600; text-decoration: none;
-  color: var(--muted); transition: all 0.15s;
+  padding: 7px 18px; border-radius: 7px; font-size: 0.85rem; font-weight: 600;
+  text-decoration: none; color: var(--muted); transition: all 0.15s;
 }
 .channel-tab:hover { color: var(--text); background: var(--surface2); }
 .channel-tab.active { background: var(--accent); color: #fff; }
 
-/* Forum post cards */
-.forum-grid {
-  display: flex; flex-direction: column; gap: 10px;
+.filters-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
+.filter-input {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 7px 12px; font-size: 0.85rem; font-family: var(--sans);
+  outline: none; transition: border-color 0.15s; min-width: 200px; flex: 1;
 }
+.filter-input:focus { border-color: var(--accent); }
+.filter-select {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 7px 28px 7px 10px; font-size: 0.85rem; font-family: var(--sans);
+  outline: none; cursor: pointer; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7280'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.filter-select option { background: #1a1d27; }
+.results-info { font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; }
+
+.forum-grid { display: flex; flex-direction: column; gap: 10px; }
 .forum-post {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 1rem 1.25rem;
@@ -35,18 +47,14 @@
   cursor: pointer; transition: box-shadow 0.15s, transform 0.15s;
   border-left: 4px solid var(--blocked);
 }
-.forum-post:hover {
-  box-shadow: 0 4px 20px rgba(0,0,0,0.3); transform: translateY(-1px);
-}
+.forum-post:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.3); transform: translateY(-1px); }
+.forum-post.is-linked { border-left-color: var(--accent); }
 .forum-post .author-avatar {
   width: 38px; height: 38px; border-radius: 50%;
-  border: 2px solid var(--border); flex-shrink: 0;
-  background: var(--surface2);
+  border: 2px solid var(--border); flex-shrink: 0; background: var(--surface2);
 }
 .forum-post-body { flex: 1; min-width: 0; }
-.forum-post-top {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap;
-}
+.forum-post-top { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
 .forum-post-top .post-title {
   font-size: 0.95rem; font-weight: 600; flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -55,80 +63,64 @@
   font-size: 0.82rem; color: var(--muted); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.forum-post-meta {
-  display: flex; align-items: center; gap: 10px; margin-top: 8px;
-  font-size: 0.75rem; color: var(--muted);
-}
+.forum-post-meta { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 0.75rem; color: var(--muted); flex-wrap: wrap; }
 .forum-post-meta .author-name { color: var(--text); font-weight: 500; }
 .reply-count {
   display: inline-flex; align-items: center; gap: 4px;
-  background: var(--surface2); border-radius: 10px; padding: 2px 8px;
-  font-size: 0.72rem;
+  background: var(--surface2); border-radius: 10px; padding: 2px 8px; font-size: 0.72rem;
 }
 .linked-todo-badge {
   display: inline-flex; align-items: center; gap: 4px;
   background: rgba(88,101,242,0.12); color: var(--accent2);
   border-radius: 10px; padding: 2px 8px; font-size: 0.72rem; font-family: var(--mono);
 }
-
-/* Thread detail modal */
-.thread-modal .modal {
-  max-width: 680px;
-}
-.thread-header {
-  padding-bottom: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem;
-}
-.thread-header .post-title-lg {
-  font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; line-height: 1.3;
-}
-.thread-op {
-  background: var(--surface2); border-radius: 10px; padding: 1rem;
-  margin-bottom: 1rem; font-size: 0.88rem; line-height: 1.6;
-  border-left: 3px solid var(--blocked);
-}
-.thread-messages {
-  display: flex; flex-direction: column; gap: 10px;
-  max-height: 340px; overflow-y: auto;
-  padding-right: 4px;
-}
-.thread-msg {
-  display: flex; gap: 10px; align-items: flex-start;
-}
-.thread-msg .msg-avatar {
-  width: 30px; height: 30px; border-radius: 50%;
-  border: 1px solid var(--border); flex-shrink: 0;
-  background: var(--surface2);
-}
-.thread-msg .msg-body { flex: 1; }
-.thread-msg .msg-author {
-  font-size: 0.78rem; font-weight: 600; color: var(--accent2); margin-bottom: 2px;
-}
-.thread-msg .msg-text {
-  font-size: 0.84rem; line-height: 1.5; color: var(--text);
-  background: var(--surface2); border-radius: 0 8px 8px 8px;
-  padding: 8px 12px;
-}
-.thread-msg .msg-time {
-  font-size: 0.68rem; color: var(--muted); margin-top: 3px;
-}
-.create-todo-section {
-  border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;
-}
-
-/* Loading / empty states */
-.loading-state {
-  text-align: center; padding: 3rem 1rem; color: var(--muted);
-}
-.loading-dots::after {
-  content: ''; animation: dots 1.2s steps(3, end) infinite;
-}
-@keyframes dots {
-  0%,20%  { content: '.'; }
-  40%     { content: '..'; }
-  60%,100%{ content: '...'; }
-}
-
 .tags-wrap { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.thread-modal .modal { max-width: 700px; }
+.thread-header { padding-bottom: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+.thread-header .post-title-lg { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; line-height: 1.3; }
+.thread-op {
+  background: var(--surface2); border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+  font-size: 0.88rem; line-height: 1.6; border-left: 3px solid var(--blocked);
+  white-space: pre-wrap; word-break: break-word;
+}
+.thread-messages { display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; padding-right: 4px; }
+.thread-msg { display: flex; gap: 10px; align-items: flex-start; }
+.thread-msg .msg-avatar { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); flex-shrink: 0; }
+.thread-msg .msg-body { flex: 1; }
+.thread-msg .msg-author { font-size: 0.78rem; font-weight: 600; color: var(--accent2); margin-bottom: 2px; }
+.thread-msg .msg-text { font-size: 0.84rem; line-height: 1.5; background: var(--surface2); border-radius: 0 8px 8px 8px; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
+.thread-msg .msg-time { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
+.create-todo-section { border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem; }
+
+.linked-todo-card {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 10px; border-left: 3px solid var(--accent);
+}
+.linked-todo-card .ltc-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 6px; }
+.linked-todo-card .ltc-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.todo-search-results { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; margin-top: 10px; }
+.todo-search-item {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 14px; cursor: pointer; transition: border-color 0.15s; border-left: 3px solid var(--border);
+}
+.todo-search-item:hover { border-color: var(--accent2); }
+.todo-search-item.selected { border-color: var(--accent); background: rgba(88,101,242,0.08); }
+.todo-search-item .tsi-title { font-size: 0.88rem; font-weight: 600; margin-bottom: 4px; }
+.todo-search-item .tsi-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.75rem; }
+
+.todo-confirm-card {
+  background: var(--surface2); border: 1px solid var(--accent); border-radius: 10px;
+  padding: 14px; margin: 12px 0; border-left: 4px solid var(--accent);
+}
+.todo-confirm-card .tcc-id { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; }
+.todo-confirm-card .tcc-title { font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
+.todo-confirm-card .tcc-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+.todo-confirm-card .tcc-desc { font-size: 0.82rem; color: var(--muted); line-height: 1.5; font-style: italic; margin-top: 6px; }
+
+.loading-dots::after { content: ''; animation: dots 1.2s steps(3,end) infinite; }
+@keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
 </style>
 {% endblock %}
 
@@ -138,36 +130,72 @@
     <h1>🐛 Bug Reports</h1>
     <p>From the <strong>#{{ channel_name or 'bugs' }}</strong> forum channel</p>
   </div>
-  <span style="font-size:0.8rem;color:var(--muted)">{{ posts|length }} report{{ 's' if posts|length != 1 }}</span>
+  <span style="font-size:0.8rem;color:var(--muted)" id="results-count">{{ posts|length }} report{{ 's' if posts|length != 1 }}</span>
 </div>
 
-<!-- Tab switch -->
 <div class="channel-tabs">
   <a class="channel-tab active" href="/bugs">🐛 Bug Reports</a>
   <a class="channel-tab" href="/suggestions">💡 Suggestions</a>
 </div>
 
-<!-- Error banner -->
 {% if error %}
-<div style="background:rgba(226,75,74,0.08);border:1px solid rgba(226,75,74,0.2);border-radius:var(--radius);padding:1rem 1.25rem;margin-bottom:1.5rem;font-size:0.85rem;color:var(--blocked)">
+<div style="background:rgba(226,75,74,0.08);border:1px solid rgba(226,75,74,0.2);border-radius:var(--radius);padding:1rem 1.25rem;margin-bottom:1.25rem;font-size:0.85rem;color:var(--blocked)">
   ⚠️ {{ error }}
 </div>
 {% endif %}
 
 {% if not channel_id_configured %}
-<div style="background:rgba(88,101,242,0.08);border:1px solid rgba(88,101,242,0.2);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem">
+<div style="background:rgba(88,101,242,0.08);border:1px solid rgba(88,101,242,0.2);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.25rem">
   <strong style="font-size:0.9rem">Bug forum channel not configured</strong>
-  <p style="font-size:0.82rem;color:var(--muted);margin-top:4px">
-    Set <code>DISCORD_BUGS_CHANNEL_ID</code> in your environment variables to connect the bugs forum.
-  </p>
+  <p style="font-size:0.82rem;color:var(--muted);margin-top:4px">Set <code>DISCORD_BUGS_CHANNEL_ID</code> in your environment variables.</p>
 </div>
 {% endif %}
 
-<!-- Posts list -->
-<div class="forum-grid">
+{% if posts %}
+<div class="filters-bar">
+  <input class="filter-input" type="text" id="search-input" placeholder="Search bug reports…" oninput="applyFilters()" />
+  <select class="filter-select" id="status-filter" onchange="applyFilters()">
+    <option value="all">All statuses</option>
+    <option value="Open">● Open</option>
+    <option value="Locked">🔒 Locked</option>
+    <option value="Archived">📦 Archived</option>
+  </select>
+  <select class="filter-select" id="linked-filter" onchange="applyFilters()">
+    <option value="all">All posts</option>
+    <option value="linked">✦ Linked to TODO</option>
+    <option value="unlinked">○ Not linked</option>
+  </select>
+  <select class="filter-select" id="sort-select" onchange="applyFilters()">
+    <option value="newest">Newest first</option>
+    <option value="oldest">Oldest first</option>
+    <option value="most-replies">Most replies</option>
+    <option value="least-replies">Least replies</option>
+  </select>
+  {% if all_tags %}
+  <select class="filter-select" id="tag-filter" onchange="applyFilters()">
+    <option value="all">All tags</option>
+    {% for tag in all_tags %}
+    <option value="{{ tag | lower }}">{{ tag }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  <button class="btn btn-ghost btn-sm" onclick="clearFilters()">✕ Clear</button>
+</div>
+<div class="results-info" id="filter-info">Showing all {{ posts|length }} reports</div>
+{% endif %}
+
+<div class="forum-grid" id="forum-grid">
 {% if posts %}
   {% for post in posts %}
-  <div class="forum-post" onclick="openThread('{{ post.id }}')">
+  <div class="forum-post {% if post.linked_todo_id %}is-linked{% endif %}"
+       data-id="{{ post.id }}"
+       data-title="{{ post.title | lower }}"
+       data-status="{{ post.status_label }}"
+       data-linked="{{ 'linked' if post.linked_todo_id else 'unlinked' }}"
+       data-replies="{{ post.message_count }}"
+       data-created="{{ post.created_at or '' }}"
+       data-tags="{{ post.tags | join(',') | lower if post.tags else '' }}"
+       onclick="openThread('{{ post.id }}')">
     <img class="author-avatar"
       src="{{ post.author_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}"
       alt="{{ post.author_name }}"
@@ -175,20 +203,10 @@
     <div class="forum-post-body">
       <div class="forum-post-top">
         <span class="post-title">{{ post.title }}</span>
-        {% if post.linked_todo_id %}
-        <span class="linked-todo-badge">✦ TODO #{{ post.linked_todo_id }}</span>
-        {% endif %}
-        {% if post.tags %}
-          <div class="tags-wrap">
-            {% for tag in post.tags[:3] %}
-            <span class="tag">{{ tag }}</span>
-            {% endfor %}
-          </div>
-        {% endif %}
+        {% if post.linked_todo_id %}<span class="linked-todo-badge">✦ TODO #{{ post.linked_todo_id }}</span>{% endif %}
+        {% if post.tags %}<div class="tags-wrap">{% for tag in post.tags[:3] %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
       </div>
-      {% if post.preview %}
-      <div class="forum-post-preview">{{ post.preview }}</div>
-      {% endif %}
+      {% if post.preview %}<div class="forum-post-preview">{{ post.preview }}</div>{% endif %}
       <div class="forum-post-meta">
         <span class="author-name">{{ post.author_name }}</span>
         <span>·</span>
@@ -206,26 +224,23 @@
   </div>
   {% endfor %}
 {% elif not error and channel_id_configured %}
-  <div class="empty card">
-    <div class="emoji">🎉</div>
-    <p>No bug reports yet — all clear!</p>
-  </div>
+  <div class="empty card"><div class="emoji">🎉</div><p>No bug reports yet — all clear!</p></div>
 {% endif %}
 </div>
+<div class="empty" id="no-results" style="display:none">
+  <div class="emoji">🔍</div><p>No bug reports match your filters.</p>
+</div>
 
-<!-- ── Thread Detail Modal ── -->
+<!-- Thread Detail Modal -->
 <div class="modal-overlay thread-modal" id="thread-modal">
-  <div class="modal" onclick="event.stopPropagation()" style="max-width:680px">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:700px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
       <h3 id="tm-title">Bug Report</h3>
       <button class="btn btn-ghost btn-sm" onclick="closeModal('thread-modal')">✕</button>
     </div>
-
-    <!-- Thread content area -->
-    <div id="thread-loading" class="loading-state" style="display:none">
-      <p>Loading thread<span class="loading-dots"></span></p>
+    <div id="thread-loading" style="text-align:center;padding:2rem;color:var(--muted);display:none">
+      Loading thread<span class="loading-dots"></span>
     </div>
-
     <div id="thread-content" style="display:none">
       <div class="thread-header">
         <div class="post-title-lg" id="tm-post-title"></div>
@@ -237,27 +252,28 @@
           <div id="tm-tags" style="display:flex;gap:4px;flex-wrap:wrap"></div>
         </div>
       </div>
-
-      <!-- Original post -->
       <div class="thread-op" id="tm-op-text"></div>
-
-      <!-- Thread messages -->
       <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">
         Replies <span id="tm-reply-count" style="color:var(--accent2)"></span>
       </div>
       <div class="thread-messages" id="tm-messages"></div>
 
-      <!-- Create TODO section (manager+) -->
       {% if access_level in ('manager','admin','owner') %}
       <div class="create-todo-section">
-        <div id="tm-linked-todo-info" style="display:none;margin-bottom:12px"></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" id="tm-create-todo-btn" onclick="createTodoFromThread()">
-            ✦ Create TODO from this Bug
-          </button>
-          <a id="tm-view-todo-link" href="#" class="btn btn-ghost btn-sm" style="display:none">
-            View Linked TODO →
-          </a>
+        <!-- Linked -->
+        <div id="tm-linked-block" style="display:none;margin-bottom:4px">
+          <div class="linked-todo-card" id="tm-linked-card"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a id="tm-view-todo-link" href="/board" class="btn btn-ghost btn-sm">View on Board →</a>
+            <button class="btn btn-danger btn-sm" onclick="unlinkTodo()">Unlink</button>
+          </div>
+        </div>
+        <!-- Not linked -->
+        <div id="tm-unlinked-block" style="display:none">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" onclick="createTodoFromThread()">✦ Create TODO from this Bug</button>
+            <button class="btn btn-ghost btn-sm" onclick="openLinkModal()">🔗 Link existing TODO</button>
+          </div>
         </div>
       </div>
       {% endif %}
@@ -265,8 +281,8 @@
   </div>
 </div>
 
-<!-- ── Create TODO from Bug modal ── -->
 {% if access_level in ('manager','admin','owner') %}
+<!-- Create TODO modal -->
 <div class="modal-overlay" id="create-todo-modal">
   <div class="modal" onclick="event.stopPropagation()">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
@@ -274,27 +290,14 @@
       <button class="btn btn-ghost btn-sm" onclick="closeModal('create-todo-modal')">✕</button>
     </div>
     <input type="hidden" id="ct-thread-id" />
-    <div class="form-group">
-      <label>Title</label>
-      <input class="form-control" type="text" id="ct-title" maxlength="120" />
-    </div>
-    <div class="form-group">
-      <label>Description</label>
-      <textarea class="form-control" id="ct-desc" rows="3" style="resize:vertical"></textarea>
-    </div>
+    <div class="form-group"><label>Title</label><input class="form-control" type="text" id="ct-title" maxlength="120" /></div>
+    <div class="form-group"><label>Description</label><textarea class="form-control" id="ct-desc" rows="3" style="resize:vertical"></textarea></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
-      <div class="form-group">
-        <label>Priority</label>
+      <div class="form-group"><label>Priority</label>
         <select class="form-control" id="ct-priority">
-          <option value="low">▽ Low</option>
-          <option value="medium" selected>◈ Medium</option>
-          <option value="high">▲ High</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Tags</label>
-        <input class="form-control" type="text" id="ct-tags" value="bug" />
-      </div>
+          <option value="low">▽ Low</option><option value="medium" selected>◈ Medium</option><option value="high">▲ High</option>
+        </select></div>
+      <div class="form-group"><label>Tags</label><input class="form-control" type="text" id="ct-tags" value="bug" /></div>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
       <button class="btn btn-ghost" onclick="closeModal('create-todo-modal')">Cancel</button>
@@ -302,117 +305,191 @@
     </div>
   </div>
 </div>
+
+<!-- Link existing TODO modal -->
+<div class="modal-overlay" id="link-todo-modal">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:560px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h3>Link Existing TODO</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('link-todo-modal')">✕</button>
+    </div>
+    <!-- Step 1: search -->
+    <div id="link-step-search">
+      <div class="form-group">
+        <label>Search by title or ID</label>
+        <input class="form-control" type="text" id="link-search-input"
+          placeholder="e.g. login crash, or #12…" oninput="searchTodos(this.value)" />
+      </div>
+      <div id="link-search-results" class="todo-search-results">
+        <p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1.5rem">Start typing to search TODOs…</p>
+      </div>
+    </div>
+    <!-- Step 2: confirm -->
+    <div id="link-step-confirm" style="display:none">
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:4px">Link this bug report to:</p>
+      <div class="todo-confirm-card" id="link-confirm-card"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
+        <button class="btn btn-ghost" onclick="backToSearch()">← Back</button>
+        <button class="btn btn-primary" id="link-confirm-btn" onclick="confirmLink()">Confirm Link</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endif %}
 
-<!-- Embed posts data -->
 <script id="posts-data" type="application/json">{{ posts | tojson }}</script>
-
 <script>
-const _POSTS = JSON.parse(document.getElementById('posts-data').textContent);
+const _POSTS     = JSON.parse(document.getElementById('posts-data').textContent);
 const _POSTS_MAP = Object.fromEntries(_POSTS.map(p => [String(p.id), p]));
 let _currentThread = null;
+let _selectedTodo  = null;
+let _allTodos      = null;
 
-document.querySelectorAll('.modal-overlay').forEach(m => {
-  m.addEventListener('click', () => m.classList.remove('open'));
-});
+const STATUS_ICONS_MAP  = { todo:'○', in_progress:'◑', review_needed:'◇', blocked:'✕', done:'✓' };
+const STATUS_LABELS_MAP = { todo:'To Do', in_progress:'In Progress', review_needed:'Review Needed', blocked:'Blocked', done:'Done' };
+const STATUS_COLOR_MAP  = { todo:'var(--todo)', in_progress:'var(--inprog)', review_needed:'var(--review)', blocked:'var(--blocked)', done:'var(--done)' };
+const PRI_ICONS_MAP     = { low:'▽', medium:'◈', high:'▲' };
+const PRI_LABELS_MAP    = { low:'Low', medium:'Medium', high:'High' };
+
+document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', () => m.classList.remove('open')));
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 function fmtTime(iso) {
   if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
-  } catch { return iso; }
+  try { return new Date(iso).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
+  catch { return iso; }
 }
 
+// ── Filters + Sort ────────────────────────────────────────────────────────────
+function applyFilters() {
+  const q      = (document.getElementById('search-input')?.value || '').toLowerCase();
+  const status = document.getElementById('status-filter')?.value || 'all';
+  const linked = document.getElementById('linked-filter')?.value || 'all';
+  const tag    = document.getElementById('tag-filter')?.value    || 'all';
+  const sort   = document.getElementById('sort-select')?.value   || 'newest';
+  const grid   = document.getElementById('forum-grid');
+  const cards  = [...grid.querySelectorAll('.forum-post')];
+  let visible  = 0;
+
+  cards.forEach(card => {
+    const cardTags = (card.dataset.tags||'').split(',').filter(Boolean);
+    const show = (!q || (card.dataset.title||'').includes(q))
+              && (status === 'all' || card.dataset.status === status)
+              && (linked === 'all' || card.dataset.linked === linked)
+              && (tag === 'all' || cardTags.includes(tag));
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  // Sort visible
+  cards.filter(c => c.style.display !== 'none').sort((a, b) => {
+    if (sort === 'newest')        return (b.dataset.created||'') > (a.dataset.created||'') ? 1 : -1;
+    if (sort === 'oldest')        return (a.dataset.created||'') > (b.dataset.created||'') ? 1 : -1;
+    if (sort === 'most-replies')  return parseInt(b.dataset.replies||0) - parseInt(a.dataset.replies||0);
+    if (sort === 'least-replies') return parseInt(a.dataset.replies||0) - parseInt(b.dataset.replies||0);
+    return 0;
+  }).forEach(c => grid.appendChild(c));
+
+  const total = cards.length;
+  const fi = document.getElementById('filter-info');
+  if (fi) fi.textContent = visible === total ? `Showing all ${total} reports` : `Showing ${visible} of ${total} reports`;
+  document.getElementById('no-results').style.display = visible === 0 ? 'block' : 'none';
+  document.getElementById('results-count').textContent = `${visible} report${visible !== 1 ? 's' : ''}`;
+}
+
+function clearFilters() {
+  ['search-input','status-filter','linked-filter','tag-filter','sort-select'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = el.tagName === 'SELECT' ? el.options[0].value : '';
+  });
+  applyFilters();
+}
+
+// ── Thread open / render ──────────────────────────────────────────────────────
 async function openThread(postId) {
   _currentThread = _POSTS_MAP[String(postId)] || null;
-  const modal = document.getElementById('thread-modal');
-  modal.classList.add('open');
+  document.getElementById('thread-modal').classList.add('open');
   document.getElementById('thread-loading').style.display = 'block';
   document.getElementById('thread-content').style.display = 'none';
   document.getElementById('tm-title').textContent = 'Loading…';
-
   try {
-    const r = await fetch(`/api/forum/bugs/${postId}`);
+    const r    = await fetch(`/api/forum/bugs/${postId}`);
     const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Failed to load thread');
+    if (!r.ok) throw new Error(data.error || 'Failed to load');
     renderThread(data);
   } catch(e) {
     document.getElementById('thread-loading').innerHTML = `<p style="color:var(--blocked)">⚠️ ${e.message}</p>`;
+    document.getElementById('thread-loading').style.display = 'block';
   }
 }
 
 function renderThread(data) {
   document.getElementById('thread-loading').style.display = 'none';
   document.getElementById('thread-content').style.display = 'block';
-
-  document.getElementById('tm-title').textContent = `🐛 ${data.title}`;
-  document.getElementById('tm-post-title').textContent = data.title;
-  document.getElementById('tm-author-avatar').src = data.author_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  document.getElementById('tm-title').textContent       = `🐛 ${data.title}`;
+  document.getElementById('tm-post-title').textContent  = data.title;
+  document.getElementById('tm-author-avatar').src       = data.author_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
   document.getElementById('tm-author-name').textContent = data.author_name;
-  document.getElementById('tm-created-at').textContent = fmtTime(data.created_at);
-  // Status badge
-  const statusBadge = document.getElementById('tm-status-badge');
-  if (statusBadge) {
-    const sl = data.status_label || 'Open';
-    const color = sl === 'Locked' ? 'var(--blocked)' : sl === 'Archived' ? 'var(--muted)' : 'var(--done)';
-    const icon  = sl === 'Locked' ? '🔒' : sl === 'Archived' ? '📦' : '●';
-    statusBadge.innerHTML = `<span style="font-size:0.72rem;color:${color}">${icon} ${sl}</span>`;
+  document.getElementById('tm-created-at').textContent  = fmtTime(data.created_at);
+  document.getElementById('tm-op-text').textContent     = data.content || '(no content)';
+
+  const sl = data.status_label || 'Open';
+  const sb = document.getElementById('tm-status-badge');
+  if (sb) {
+    const color = sl==='Locked'?'var(--blocked)':sl==='Archived'?'var(--muted)':'var(--done)';
+    sb.innerHTML = `<span style="font-size:0.72rem;color:${color}">${sl==='Locked'?'🔒':sl==='Archived'?'📦':'●'} ${sl}</span>`;
   }
-  document.getElementById('tm-op-text').textContent = data.content || '(no content)';
+  document.getElementById('tm-tags').innerHTML = (data.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('');
 
-  // Tags
-  const tagsEl = document.getElementById('tm-tags');
-  tagsEl.innerHTML = (data.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
-
-  // Replies
   const msgs = data.messages || [];
   document.getElementById('tm-reply-count').textContent = msgs.length;
-  const msgsEl = document.getElementById('tm-messages');
-  if (msgs.length === 0) {
-    msgsEl.innerHTML = '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">No replies yet.</p>';
-  } else {
-    msgsEl.innerHTML = msgs.map(m => `
-      <div class="thread-msg">
-        <img class="msg-avatar" src="${m.author_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}"
-          onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
-        <div class="msg-body">
-          <div class="msg-author">${m.author_name}</div>
-          <div class="msg-text">${m.content || ''}</div>
-          <div class="msg-time">${fmtTime(m.created_at)}</div>
-        </div>
-      </div>
-    `).join('');
-  }
-
-  // Linked TODO
-  const linkedInfo = document.getElementById('tm-linked-todo-info');
-  const viewLink   = document.getElementById('tm-view-todo-link');
-  const createBtn  = document.getElementById('tm-create-todo-btn');
-  if (data.linked_todo_id) {
-    if (linkedInfo) {
-      linkedInfo.style.display = 'block';
-      linkedInfo.innerHTML = `<span class="linked-todo-badge">✦ Linked to TODO #${data.linked_todo_id}</span>`;
-    }
-    if (viewLink) { viewLink.href = `/board`; viewLink.style.display = 'inline-flex'; }
-    if (createBtn) createBtn.style.display = 'none';
-  } else {
-    if (linkedInfo) linkedInfo.style.display = 'none';
-    if (viewLink)   viewLink.style.display = 'none';
-    if (createBtn)  createBtn.style.display = 'inline-flex';
-  }
+  document.getElementById('tm-messages').innerHTML = msgs.length === 0
+    ? '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">No replies yet.</p>'
+    : msgs.map(m=>`
+        <div class="thread-msg">
+          <img class="msg-avatar" src="${m.author_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"/>
+          <div class="msg-body">
+            <div class="msg-author">${m.author_name}</div>
+            <div class="msg-text">${m.content||''}</div>
+            <div class="msg-time">${fmtTime(m.created_at)}</div>
+          </div>
+        </div>`).join('');
 
   _currentThread = data;
+  renderLinkedState(data.linked_todo_id, data.linked_todo_info);
 }
 
+function renderLinkedState(linkedId, todoInfo) {
+  const lb = document.getElementById('tm-linked-block');
+  const ub = document.getElementById('tm-unlinked-block');
+  if (!lb || !ub) return;
+  if (linkedId) {
+    lb.style.display = 'block'; ub.style.display = 'none';
+    const ti = todoInfo || {};
+    const s  = ti.status || 'todo';
+    const p  = ti.priority || 'medium';
+    document.getElementById('tm-linked-card').innerHTML = `
+      <div class="ltc-title">TODO #${linkedId} — ${ti.title||'…'}</div>
+      <div class="ltc-meta">
+        <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
+        <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+        ${(ti.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}
+      </div>
+      ${ti.ai_description?`<div style="font-size:0.8rem;color:var(--muted);margin-top:6px;font-style:italic">${ti.ai_description}</div>`:''}`;
+  } else {
+    lb.style.display = 'none'; ub.style.display = 'block';
+  }
+}
+
+// ── Create TODO ───────────────────────────────────────────────────────────────
 function createTodoFromThread() {
   if (!_currentThread) return;
   document.getElementById('ct-thread-id').value = _currentThread.id || '';
-  document.getElementById('ct-title').value = _currentThread.title || '';
-  document.getElementById('ct-desc').value  = (_currentThread.content || '').slice(0, 300);
-  document.getElementById('ct-priority').value = 'medium';
-  document.getElementById('ct-tags').value = 'bug';
+  document.getElementById('ct-title').value     = _currentThread.title || '';
+  document.getElementById('ct-desc').value      = (_currentThread.content||'').slice(0,300);
+  document.getElementById('ct-priority').value  = 'medium';
+  document.getElementById('ct-tags').value      = 'bug';
   document.getElementById('create-todo-modal').classList.add('open');
 }
 
@@ -421,24 +498,123 @@ async function saveThreadTodo() {
   const title    = document.getElementById('ct-title').value.trim();
   const desc     = document.getElementById('ct-desc').value.trim();
   const priority = document.getElementById('ct-priority').value;
-  const tags     = document.getElementById('ct-tags').value.split(',').map(t => t.trim()).filter(Boolean);
-
-  if (!title) { toast('Title required', 'error'); return; }
-
+  const tags     = document.getElementById('ct-tags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  if (!title) { toast('Title required','error'); return; }
   const btn = document.getElementById('ct-save-btn');
   btn.disabled = true; btn.textContent = 'Creating…';
-
   try {
-    await api('POST', '/api/todo', { title, description: desc, priority, tags,
-      linked_forum_thread_id: threadId, linked_forum_type: 'bug' });
-    toast('TODO created and linked to bug report!');
-    closeModal('create-todo-modal');
-    closeModal('thread-modal');
+    await api('POST', '/api/todo', { title, description:desc, priority, tags, linked_forum_thread_id:threadId, linked_forum_type:'bug' });
+    toast('TODO created and linked!');
+    closeModal('create-todo-modal'); closeModal('thread-modal');
     setTimeout(() => location.reload(), 700);
-  } catch(e) {
-    toast(e.message, 'error');
-    btn.disabled = false; btn.textContent = 'Create TODO';
+  } catch(e) { toast(e.message,'error'); btn.disabled=false; btn.textContent='Create TODO'; }
+}
+
+// ── Link existing TODO ────────────────────────────────────────────────────────
+async function openLinkModal() {
+  _selectedTodo = null;
+  document.getElementById('link-step-search').style.display  = 'block';
+  document.getElementById('link-step-confirm').style.display = 'none';
+  document.getElementById('link-search-input').value = '';
+  document.getElementById('link-search-results').innerHTML =
+    '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1.5rem">Start typing to search TODOs…</p>';
+  document.getElementById('link-todo-modal').classList.add('open');
+  if (!_allTodos) {
+    try {
+      const r = await fetch('/api/todos?include_archive=1');
+      _allTodos = await r.json();
+    } catch { _allTodos = []; }
   }
+}
+
+function searchTodos(q) {
+  q = q.trim().toLowerCase();
+  const container = document.getElementById('link-search-results');
+  if (!_allTodos) { container.innerHTML = '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">Loading…</p>'; return; }
+  let results = q
+    ? _allTodos.filter(t => t.title.toLowerCase().includes(q) || String(t.id).includes(q.replace('#','')))
+    : _allTodos;
+  results = results.slice(0, 20);
+  if (!results.length) {
+    container.innerHTML = '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">No TODOs found.</p>';
+    return;
+  }
+  container.innerHTML = results.map(t => {
+    const s = t.status||'todo'; const p = t.priority||'medium';
+    return `<div class="todo-search-item" style="border-left-color:${STATUS_COLOR_MAP[s]||'var(--accent)'}" onclick="selectTodo(${t.id}, this)">
+      <div class="tsi-title">#${t.id} — ${t.title}</div>
+      <div class="tsi-meta">
+        <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
+        <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+        ${(t.tags||[]).slice(0,3).map(tg=>`<span class="tag">${tg}</span>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectTodo(todoId, el) {
+  _selectedTodo = (_allTodos||[]).find(t => t.id === todoId);
+  if (!_selectedTodo) return;
+  document.querySelectorAll('.todo-search-item').forEach(x => x.classList.remove('selected'));
+  el.classList.add('selected');
+  const t = _selectedTodo; const s = t.status||'todo'; const p = t.priority||'medium';
+  document.getElementById('link-confirm-card').innerHTML = `
+    <div class="tcc-id">TODO #${t.id}</div>
+    <div class="tcc-title">${t.title}</div>
+    <div class="tcc-meta">
+      <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
+      <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+      ${(t.tags||[]).map(tg=>`<span class="tag">${tg}</span>`).join('')}
+    </div>
+    ${t.ai_description?`<div class="tcc-desc">${t.ai_description}</div>`:''}`;
+  document.getElementById('link-step-search').style.display  = 'none';
+  document.getElementById('link-step-confirm').style.display = 'block';
+}
+
+function backToSearch() {
+  _selectedTodo = null;
+  document.getElementById('link-step-search').style.display  = 'block';
+  document.getElementById('link-step-confirm').style.display = 'none';
+}
+
+async function confirmLink() {
+  if (!_selectedTodo || !_currentThread) return;
+  const btn = document.getElementById('link-confirm-btn');
+  btn.disabled = true; btn.textContent = 'Linking…';
+  try {
+    await api('POST', '/api/forum/bugs/link', { thread_id: String(_currentThread.id), todo_id: _selectedTodo.id });
+    toast(`Linked to TODO #${_selectedTodo.id}!`);
+    closeModal('link-todo-modal');
+    _currentThread.linked_todo_id   = _selectedTodo.id;
+    _currentThread.linked_todo_info = _selectedTodo;
+    renderLinkedState(_selectedTodo.id, _selectedTodo);
+    // Update list card live
+    const card = document.querySelector(`.forum-post[data-id="${_currentThread.id}"]`);
+    if (card) {
+      card.classList.add('is-linked'); card.dataset.linked = 'linked';
+      const top = card.querySelector('.forum-post-top');
+      if (top && !top.querySelector('.linked-todo-badge')) {
+        const badge = document.createElement('span');
+        badge.className = 'linked-todo-badge';
+        badge.textContent = `✦ TODO #${_selectedTodo.id}`;
+        top.insertBefore(badge, top.children[1]);
+      }
+    }
+  } catch(e) { toast(e.message,'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Confirm Link'; }
+}
+
+// ── Unlink ────────────────────────────────────────────────────────────────────
+async function unlinkTodo() {
+  if (!_currentThread || !confirm('Remove the link between this bug report and its TODO?')) return;
+  try {
+    await api('POST', '/api/forum/bugs/link', { thread_id: String(_currentThread.id), todo_id: null });
+    toast('Unlinked.');
+    _currentThread.linked_todo_id = null; _currentThread.linked_todo_info = null;
+    renderLinkedState(null, null);
+    const card = document.querySelector(`.forum-post[data-id="${_currentThread.id}"]`);
+    if (card) { card.classList.remove('is-linked'); card.dataset.linked='unlinked'; card.querySelector('.linked-todo-badge')?.remove(); }
+  } catch(e) { toast(e.message,'error'); }
 }
 </script>
 {% endblock %}
