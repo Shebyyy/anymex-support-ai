@@ -69,8 +69,32 @@
 }
 .todo-item:hover { border-color: var(--accent); transform: translateX(2px); }
 .todo-item .id { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); min-width: 32px; }
-.todo-item .title { flex: 1; font-size: 0.9rem; font-weight: 500; }
-.todo-item .meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.todo-item .title { flex: 1; font-size: 0.9rem; font-weight: 500; min-width: 0; }
+.todo-item .meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+
+/* Todo cards — mobile */
+@media (max-width: 768px) {
+  .todo-item {
+    flex-wrap: wrap;
+    padding: 0.85rem 1rem;
+    gap: 6px 10px;
+  }
+  .todo-item .id {
+    min-width: unset;
+  }
+  .todo-item .title {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .todo-item .meta {
+    flex-basis: 100%;
+    padding-top: 4px;
+    gap: 6px;
+  }
+}
 </style>
 {% endblock %}
 

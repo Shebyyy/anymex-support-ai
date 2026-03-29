@@ -121,6 +121,47 @@
 
 .loading-dots::after { content: ''; animation: dots 1.2s steps(3,end) infinite; }
 @keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
+
+/* Suggestions — mobile */
+@media (max-width: 768px) {
+  .channel-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .channel-tab {
+    padding: 7px 14px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+  .filters-bar {
+    gap: 6px;
+  }
+  .filter-input {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .filter-select {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .forum-post {
+    padding: 0.85rem 1rem;
+    gap: 10px;
+  }
+  .forum-post .author-avatar {
+    width: 30px;
+    height: 30px;
+  }
+  .forum-post-top .post-title {
+    font-size: 0.88rem;
+  }
+  .forum-post-meta {
+    gap: 6px;
+  }
+  .thread-messages {
+    max-height: 200px;
+  }
+}
 </style>
 {% endblock %}
 

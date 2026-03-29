@@ -37,6 +37,7 @@
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+      overflow-x: hidden;
     }
 
     /* ── Scrollbar ── */
@@ -243,8 +244,68 @@
     /* ── Responsive ── */
     @media (max-width: 768px) {
       main { padding: 1rem; }
-      nav { padding: 0 1rem; }
-      .nav-links a span { display: none; }
+      nav { 
+        padding: 0.75rem 1rem; 
+        height: auto; 
+        flex-wrap: wrap;
+        gap: 0.75rem 0;
+      }
+      .nav-brand { margin-right: auto; }
+      .nav-links { 
+        flex: 1 1 100%;
+        order: 1;
+        overflow-x: auto;
+
+        a {
+          padding: 0.5rem;
+        }
+
+        span {
+          white-space: nowrap;
+        }
+      }
+      .nav-links::-webkit-scrollbar { display: none; }
+
+      /* Modals — near full-screen */
+      .modal {
+        max-width: 100% !important;
+        width: 100%;
+        max-height: 100vh;
+        border-radius: 10px 10px 0 0;
+        padding: 1.25rem;
+      }
+      .modal-overlay.open {
+        align-items: flex-end;
+      }
+
+      /* Section head — wrap */
+      .section-head {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      /* User chip — compact */
+      .user-chip span:not(.badge) { display: none; }
+
+      /* Progress label — stack */
+      .prog-label {
+        flex-direction: column;
+        gap: 4px;
+        text-align: left;
+      }
+
+      /* Cards — tighter padding */
+      .card { padding: 1rem; }
+
+      /* Toasts — full width */
+      #toast-container {
+        left: 1rem;
+        right: 1rem;
+        bottom: 1rem;
+      }
+      .toast {
+        width: 100%;
+      }
     }
   </style>
   {% block head %}{% endblock %}
