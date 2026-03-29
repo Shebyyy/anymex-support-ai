@@ -549,13 +549,21 @@ def _fetch_thread_messages(thread_id, include_urls=False, extra_channel_map=None
 
 def _sync_forum_to_db(channel_id, forum_type):
     """
-    Sync a Discord forum channel into forum_posts.json on GitHub.
+    Sync a Discord forum channel into its own JSON file on GitHub.
     - New posts → fully fetched (messages + attachments metadata stored, no URLs)
     - Existing posts with changed message_count → messages re-fetched
     - Unchanged posts → untouched
     - Only writes to GitHub if something actually changed
     Called in a background thread so page loads don't block.
+    Always wrapped in try/except so a Discord API error never crashes the page.
     """
+    try:
+        _sync_forum_to_db_inner(channel_id, forum_type)
+    except Exception as e:
+        print(f"[forum_sync] Error syncing {forum_type}: {e}")
+
+
+def _sync_forum_to_db_inner(channel_id, forum_type):
     if not channel_id or not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
         return
 
@@ -716,13 +724,17 @@ def fetch_forum_posts(channel_id, forum_type):
 
     if DISCORD_BOT_TOKEN:
         if never_synced or not posts:
-            # First ever load — sync blocking so the page actually shows something
-            _sync_forum_to_db(channel_id, forum_type)
-            # Re-read DB after sync
-            db, _ = gh_read(_forum_file(forum_type), force=True)
-            db = db or {}
-            section = db.get(forum_type) or {}
-            posts   = section.get("posts") or []
+            # First ever load — sync blocking so page actually shows something
+            try:
+                _sync_forum_to_db(channel_id, forum_type)
+                # Re-read DB after sync
+                db, _ = gh_read(_forum_file(forum_type), force=True)
+                db = db or {}
+                section = db.get(forum_type) or {}
+                posts   = section.get("posts") or []
+            except Exception as e:
+                print(f"[forum] Blocking sync failed for {forum_type}: {e}")
+                # Return empty list rather than 500 — page shows "no posts" gracefully
         elif needs_sync:
             # Already have data — refresh in background, return existing instantly
             t = _threading.Thread(target=_sync_forum_to_db, args=(channel_id, forum_type), daemon=True)
