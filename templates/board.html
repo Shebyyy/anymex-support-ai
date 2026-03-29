@@ -149,10 +149,13 @@
   {% if search %} matching "<strong>{{ search }}</strong>"{% endif %}
 </div>
 
+<!-- ── Embed all todo data safely as JSON in a script tag (fixes onclick encoding bugs) ── -->
+<script id="todos-data" type="application/json">{{ todos | tojson }}</script>
+
 <!-- Cards -->
 <div class="todo-grid">
 {% for t in todos %}
-<div class="todo-card" style="border-left-color:{{ t.status_color }}" onclick="viewTodo({{ t|tojson }})">
+<div class="todo-card" style="border-left-color:{{ t.status_color }}" data-id="{{ t.id }}" onclick="viewTodoById({{ t.id }})">
   <div class="todo-card-top">
     <span class="id">#{{ t.id }}</span>
     <span class="title">{{ t.title }}</span>
@@ -172,8 +175,8 @@
     {% endif %}
     {% if access_level in ('manager','admin','owner') %}
     <div class="todo-card-actions" onclick="event.stopPropagation()">
-      <button class="btn btn-ghost btn-sm" onclick="editTodo({{ t|tojson }})">Edit</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteTodo({{ t.id }}, '{{ t.title[:30] }}')">Delete</button>
+      <button class="btn btn-ghost btn-sm" onclick="editTodoById({{ t.id }})">Edit</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteTodo({{ t.id }}, this)">Delete</button>
     </div>
     {% endif %}
   </div>
@@ -273,7 +276,14 @@
 </div>
 
 <script>
-let _currentTodo = null;
+// ── Load todo data from the safe JSON script tag (no inline onclick encoding issues) ──
+const _TODOS = JSON.parse(document.getElementById('todos-data').textContent);
+const _TODOS_MAP = Object.fromEntries(_TODOS.map(t => [t.id, t]));
+
+const STATUS_ICONS  = { todo:'○', in_progress:'◑', review_needed:'◇', blocked:'✕', done:'✓' };
+const STATUS_LABELS = { todo:'To Do', in_progress:'In Progress', review_needed:'Review Needed', blocked:'Blocked', done:'Done' };
+const PRI_ICONS     = { low:'▽', medium:'◈', high:'▲' };
+const PRI_LABELS    = { low:'Low', medium:'Medium', high:'High' };
 
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
@@ -282,17 +292,24 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
   m.addEventListener('click', () => m.classList.remove('open'));
 });
 
+function viewTodoById(id) {
+  const t = _TODOS_MAP[id];
+  if (!t) return;
+  viewTodo(t);
+}
+
 function viewTodo(t) {
-  _currentTodo = t;
+  const status = t.status || 'todo';
+  const pri    = t.priority || 'medium';
   document.getElementById('vm-title').textContent = `#${t.id} — ${t.title}`;
   document.getElementById('vm-status').innerHTML =
-    `<span class="status-pill status-${t.status}">${t.status_icon} ${t.status_label}</span>`;
+    `<span class="status-pill status-${status}">${STATUS_ICONS[status] || '○'} ${STATUS_LABELS[status] || status}</span>`;
   document.getElementById('vm-priority').innerHTML =
-    `<span class="pri-icon pri-${t.priority || 'medium'}">${t.priority_icon} ${t.priority_label}</span>`;
+    `<span class="pri-icon pri-${pri}">${PRI_ICONS[pri] || '◈'} ${PRI_LABELS[pri] || pri}</span>`;
   document.getElementById('vm-assigned').textContent =
     t.assigned_to_id ? `<@${t.assigned_to_id}>` : 'Unassigned';
   document.getElementById('vm-added').textContent =
-    t.added_by ? t.added_by : (t.added_by_id ? `<@${t.added_by_id}>` : '—');
+    t.added_by || (t.added_by_id ? `<@${t.added_by_id}>` : '—');
 
   const descWrap = document.getElementById('vm-desc-wrap');
   const desc = t.ai_description || '';
@@ -311,7 +328,6 @@ function viewTodo(t) {
 }
 
 function openAddModal() {
-  _currentTodo = null;
   document.getElementById('em-title').textContent = 'Add TODO';
   document.getElementById('em-id').value = '';
   document.getElementById('em-title-input').value = '';
@@ -322,11 +338,16 @@ function openAddModal() {
   document.getElementById('edit-modal').classList.add('open');
 }
 
+function editTodoById(id) {
+  const t = _TODOS_MAP[id];
+  if (!t) return;
+  editTodo(t);
+}
+
 function editTodo(t) {
-  _currentTodo = t;
   document.getElementById('em-title').textContent = `Edit TODO #${t.id}`;
   document.getElementById('em-id').value = t.id;
-  document.getElementById('em-title-input').value = t.title;
+  document.getElementById('em-title-input').value = t.title || '';
   document.getElementById('em-desc-input').value = t.ai_description || '';
   document.getElementById('em-status').value = t.status || 'todo';
   document.getElementById('em-priority').value = t.priority || 'medium';
@@ -335,13 +356,13 @@ function editTodo(t) {
 }
 
 async function saveTodo() {
-  const id     = document.getElementById('em-id').value;
-  const title  = document.getElementById('em-title-input').value.trim();
-  const desc   = document.getElementById('em-desc-input').value.trim();
-  const status = document.getElementById('em-status').value;
+  const id       = document.getElementById('em-id').value;
+  const title    = document.getElementById('em-title-input').value.trim();
+  const desc     = document.getElementById('em-desc-input').value.trim();
+  const status   = document.getElementById('em-status').value;
   const priority = document.getElementById('em-priority').value;
   const tagsRaw  = document.getElementById('em-tags').value;
-  const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+  const tags     = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
   if (!title) { toast('Title is required', 'error'); return; }
 
@@ -365,7 +386,9 @@ async function saveTodo() {
   }
 }
 
-async function deleteTodo(id, title) {
+async function deleteTodo(id, btn) {
+  const card  = btn.closest('.todo-card');
+  const title = card ? card.querySelector('.title')?.textContent?.trim() : `#${id}`;
   if (!confirm(`Delete TODO #${id} — "${title}"?`)) return;
   try {
     await api('DELETE', `/api/todo/${id}`);

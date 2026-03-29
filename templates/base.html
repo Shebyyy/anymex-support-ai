@@ -263,6 +263,12 @@
     <a href="/board" class="{% if request.endpoint == 'board' %}active{% endif %}">
       <span>Board</span>
     </a>
+    <a href="/bugs" class="{% if request.endpoint == 'bugs_page' %}active{% endif %}">
+      <span>🐛 Bugs</span>
+    </a>
+    <a href="/suggestions" class="{% if request.endpoint == 'suggestions_page' %}active{% endif %}">
+      <span>💡 Suggestions</span>
+    </a>
     {% if user %}
     <a href="/dashboard" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
       <span>My Tasks</span>

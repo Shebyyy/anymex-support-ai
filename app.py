@@ -37,6 +37,11 @@ DISCORD_OAUTH = "https://discord.com/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
 DISCORD_SCOPE = "identify guilds.members.read"
 
+# Discord Bot Token (for reading forum channels — reuse the same token from bot.py)
+DISCORD_BOT_TOKEN          = os.environ.get("DISCORD_TOKEN")
+DISCORD_BUGS_CHANNEL_ID    = os.environ.get("DISCORD_BUGS_CHANNEL_ID")
+DISCORD_SUGGESTIONS_CHANNEL_ID = os.environ.get("DISCORD_SUGGESTIONS_CHANNEL_ID")
+
 # GitHub DB (same as bot)
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN")
 DATA_OWNER    = os.environ.get("DATA_OWNER", "Shebyyy")
@@ -47,6 +52,7 @@ GITHUB_API    = "https://api.github.com"
 FILE_CONFIG        = "config.json"
 FILE_TODOS         = "todos.json"
 FILE_TODOS_ARCHIVE = "todos_archive.json"
+FILE_FORUM_LINKS   = "forum_links.json"   # maps forum thread id → todo id
 
 DEFAULT_CONFIG = {
     "todo_channel": None, "todo_roles": [], "todo_style": 1,
@@ -173,6 +179,218 @@ def session_delete(sid):
 def discord_get(endpoint, token):
     r = req.get(f"{DISCORD_API}{endpoint}", headers={"Authorization": f"Bearer {token}"}, proxies=get_proxies())
     return r.json() if r.ok else None
+
+# ── Discord Bot API helpers (for forum channel access) ──────────────────────
+
+def bot_get(endpoint):
+    """Call Discord API using the Bot Token (not user OAuth)."""
+    if not DISCORD_BOT_TOKEN:
+        return None
+    r = req.get(
+        f"{DISCORD_API}{endpoint}",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        proxies=get_proxies(),
+        timeout=10,
+    )
+    return r.json() if r.ok else None
+
+def _avatar_url(user_obj):
+    """Build a Discord CDN avatar URL from a user object."""
+    if not user_obj:
+        return "https://cdn.discordapp.com/embed/avatars/0.png"
+    uid = user_obj.get("id", "0")
+    av  = user_obj.get("avatar")
+    if av:
+        return f"https://cdn.discordapp.com/avatars/{uid}/{av}.png?size=64"
+    # Default avatar index based on discriminator or user id
+    disc = int(user_obj.get("discriminator", "0") or "0")
+    idx  = (disc % 5) if disc else (int(uid) >> 22) % 6
+    return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
+
+def _fmt_discord_ts(ts_str):
+    """Format a Discord ISO timestamp to a readable string."""
+    if not ts_str:
+        return ""
+    try:
+        dt = datetime.datetime.fromisoformat(ts_str.rstrip("Z").split("+")[0])
+        return dt.strftime("%b %d, %Y")
+    except Exception:
+        return ts_str
+
+def fetch_forum_posts(channel_id):
+    """
+    Fetch active threads from a Discord forum channel.
+    Returns a list of enriched post dicts.
+    """
+    if not channel_id or not DISCORD_BOT_TOKEN:
+        return [], "Bot token or channel ID not configured"
+
+    # Load forum link map (thread_id → todo_id)
+    links, _ = gh_read(FILE_FORUM_LINKS)
+    links = links or {}
+
+    # Step 1: Fetch the forum channel itself to get available_tags definition
+    forum_channel = bot_get(f"/channels/{channel_id}")
+    if forum_channel is None:
+        return [], "Could not reach Discord API — check DISCORD_TOKEN and channel ID"
+
+    # Build tag ID → tag info map from the forum channel definition
+    available_tags = {
+        t["id"]: {
+            "name":   t.get("name", t["id"]),
+            "emoji":  (t.get("emoji_name") or ""),
+            "moderated": t.get("moderated", False),
+        }
+        for t in (forum_channel.get("available_tags") or [])
+    }
+
+    # Step 2: Fetch active threads (Discord forum posts = threads in that channel)
+    # /threads/search returns both active and archived depending on params
+    data = bot_get(f"/channels/{channel_id}/threads/search?limit=100&sort_by=creation_time&sort_order=desc")
+    if data is None:
+        return [], "Could not fetch threads from Discord API"
+
+    threads = data.get("threads", [])
+
+    posts = []
+    for t in threads:
+        thread_meta = t.get("thread_metadata") or {}
+
+        # Resolve applied tag IDs → real tag names
+        applied_tag_ids = t.get("applied_tags") or []
+        resolved_tags = []
+        for tid in applied_tag_ids:
+            tag_info = available_tags.get(str(tid)) or available_tags.get(tid)
+            if tag_info:
+                emoji = tag_info["emoji"]
+                name  = tag_info["name"]
+                resolved_tags.append(f"{emoji} {name}".strip() if emoji else name)
+            else:
+                resolved_tags.append(str(tid))  # fallback to raw ID if not found
+
+        # Thread status
+        is_locked   = thread_meta.get("locked", False)
+        is_archived = thread_meta.get("archived", False)
+
+        if is_archived and not is_locked:
+            status_label = "Archived"
+        elif is_locked:
+            status_label = "Locked"
+        else:
+            status_label = "Open"
+
+        ts_raw = thread_meta.get("create_timestamp", "")
+
+        posts.append({
+            "id":             t.get("id"),
+            "title":          t.get("name", "Untitled"),
+            "preview":        "",              # fetched lazily on thread open
+            "author_id":      t.get("owner_id"),
+            "author_name":    "Member",        # Discord doesn't return author info here
+            "author_avatar":  "https://cdn.discordapp.com/embed/avatars/0.png",
+            "created_at":     ts_raw,
+            "created_at_fmt": _fmt_discord_ts(ts_raw),
+            "message_count":  t.get("message_count", 0),
+            "is_locked":      is_locked,
+            "is_archived":    is_archived,
+            "status_label":   status_label,
+            "tags":           resolved_tags,
+            "linked_todo_id": links.get(str(t.get("id"))),
+        })
+
+    return posts, None
+
+def fetch_forum_thread_detail(thread_id):
+    """
+    Fetch full detail for a single forum thread — OP + all messages.
+    """
+    if not DISCORD_BOT_TOKEN:
+        return None, "Bot token not configured"
+
+    links, _ = gh_read(FILE_FORUM_LINKS)
+    links = links or {}
+
+    # Get thread channel info
+    thread = bot_get(f"/channels/{thread_id}")
+    if not thread:
+        return None, "Thread not found"
+
+    thread_meta = thread.get("thread_metadata") or {}
+    is_locked   = thread_meta.get("locked", False)
+    is_archived = thread_meta.get("archived", False)
+    if is_archived and not is_locked:
+        status_label = "Archived"
+    elif is_locked:
+        status_label = "Locked"
+    else:
+        status_label = "Open"
+
+    # Get messages (up to 100, Discord returns newest-first so reverse)
+    msgs_raw = bot_get(f"/channels/{thread_id}/messages?limit=100")
+    if msgs_raw is None:
+        msgs_raw = []
+    msgs_raw = list(reversed(msgs_raw))
+
+    op_content = ""
+    op_author  = {}
+    messages   = []
+
+    for i, m in enumerate(msgs_raw):
+        author      = m.get("author", {})
+        author_name = author.get("global_name") or author.get("username") or "Unknown"
+        avatar_url  = _avatar_url(author)
+        content     = m.get("content", "")
+        ts          = m.get("timestamp", "")
+
+        if i == 0:
+            op_content = content
+            op_author  = {"name": author_name, "avatar": avatar_url, "id": author.get("id")}
+        else:
+            messages.append({
+                "author_name":   author_name,
+                "author_avatar": avatar_url,
+                "content":       content,
+                "created_at":    ts,
+            })
+
+    # Resolve tag IDs → names using the parent forum channel's available_tags
+    parent_id = thread.get("parent_id")
+    tag_names = []
+    if parent_id:
+        parent = bot_get(f"/channels/{parent_id}")
+        if parent:
+            available_tags = {
+                t["id"]: {
+                    "name":  t.get("name", t["id"]),
+                    "emoji": t.get("emoji_name") or "",
+                }
+                for t in (parent.get("available_tags") or [])
+            }
+            for tid in (thread.get("applied_tags") or []):
+                tag_info = available_tags.get(str(tid)) or available_tags.get(tid)
+                if tag_info:
+                    emoji = tag_info["emoji"]
+                    name  = tag_info["name"]
+                    tag_names.append(f"{emoji} {name}".strip() if emoji else name)
+                else:
+                    tag_names.append(str(tid))
+
+    ts_raw = thread_meta.get("create_timestamp", "")
+
+    return {
+        "id":            thread_id,
+        "title":         thread.get("name", "Untitled"),
+        "content":       op_content,
+        "author_name":   op_author.get("name", "Member"),
+        "author_avatar": op_author.get("avatar", "https://cdn.discordapp.com/embed/avatars/0.png"),
+        "created_at":    ts_raw,
+        "messages":      messages,
+        "tags":          tag_names,
+        "status_label":  status_label,
+        "is_locked":     is_locked,
+        "is_archived":   is_archived,
+        "linked_todo_id": links.get(str(thread_id)),
+    }, None
 
 def get_access_token(code):
     data = {
@@ -552,6 +770,19 @@ def api_todo_create():
         "auto_generated": False,
         "source": "web_dashboard",
     }
+
+    # If created from a forum thread, record the link
+    linked_thread_id = data.get("linked_forum_thread_id")
+    linked_type      = data.get("linked_forum_type")    # 'bug' or 'suggestion'
+    if linked_thread_id:
+        new_todo["linked_forum_thread_id"] = str(linked_thread_id)
+        new_todo["linked_forum_type"]      = linked_type or "unknown"
+        # Persist the thread → todo mapping
+        links, links_sha = gh_read(FILE_FORUM_LINKS, force=True)
+        links = links or {}
+        links[str(linked_thread_id)] = next_id
+        gh_write(FILE_FORUM_LINKS, links, links_sha,
+                 f"Web: Link forum thread {linked_thread_id} → TODO #{next_id}")
     todos.append(new_todo)
     ok = gh_write(FILE_TODOS, todos, sha, f"Web: Add TODO #{next_id} by {user.get('username','?')}")
     if ok:
@@ -622,6 +853,54 @@ def api_me():
         "access_level": get_session().get("access_level", "public"),
         "member": get_session().get("member"),
     })
+
+# ── Forum pages ──────────────────────────────────────────────────────────────
+
+@app.route("/bugs")
+def bugs_page():
+    posts, error = [], None
+    channel_id_configured = bool(DISCORD_BUGS_CHANNEL_ID)
+    channel_name = "bugs"
+    if channel_id_configured:
+        posts, error = fetch_forum_posts(DISCORD_BUGS_CHANNEL_ID)
+    return render_template("bugs.html",
+        posts=posts, error=error,
+        channel_name=channel_name,
+        channel_id_configured=channel_id_configured,
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+@app.route("/suggestions")
+def suggestions_page():
+    posts, error = [], None
+    channel_id_configured = bool(DISCORD_SUGGESTIONS_CHANNEL_ID)
+    channel_name = "suggestions"
+    if channel_id_configured:
+        posts, error = fetch_forum_posts(DISCORD_SUGGESTIONS_CHANNEL_ID)
+    return render_template("suggestions.html",
+        posts=posts, error=error,
+        channel_name=channel_name,
+        channel_id_configured=channel_id_configured,
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+# ── Forum API endpoints ───────────────────────────────────────────────────────
+
+@app.route("/api/forum/bugs/<thread_id>")
+def api_forum_bug_thread(thread_id):
+    detail, error = fetch_forum_thread_detail(thread_id)
+    if error:
+        return jsonify({"error": error}), 500
+    return jsonify(detail)
+
+@app.route("/api/forum/suggestions/<thread_id>")
+def api_forum_suggestion_thread(thread_id):
+    detail, error = fetch_forum_thread_detail(thread_id)
+    if error:
+        return jsonify({"error": error}), 500
+    return jsonify(detail)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ERROR HANDLERS
