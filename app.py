@@ -697,11 +697,11 @@ def _sync_forum_to_db_inner(channel_id, forum_type):
 
 def fetch_forum_posts(channel_id, forum_type):
     """
-    Return posts from GitHub DB (fast).
+    Return posts from GitHub DB (always fast — never blocks).
 
-    - First ever visit (DB empty, never synced) → blocking sync so page shows data immediately
-    - Stale (>5 min since last sync) → background sync, return existing data instantly
-    - Fresh → return DB data, no sync needed
+    - Fresh DB data (< 5 min old) → return immediately, no sync
+    - Stale or never synced → kick off background sync, return whatever we have now
+      (first-ever load returns [] instantly; page reloads after a few seconds to pick up data)
     """
     if not channel_id:
         return [], "Channel ID not configured"
@@ -711,8 +711,7 @@ def fetch_forum_posts(channel_id, forum_type):
     section = db.get(forum_type) or {}
     posts   = section.get("posts") or []
 
-    last_synced = section.get("last_synced", "")
-    never_synced = not last_synced
+    last_synced  = section.get("last_synced", "")
     needs_sync   = True
 
     if last_synced:
@@ -722,23 +721,10 @@ def fetch_forum_posts(channel_id, forum_type):
         except Exception:
             needs_sync = True
 
-    if DISCORD_BOT_TOKEN:
-        if never_synced or not posts:
-            # First ever load — sync blocking so page actually shows something
-            try:
-                _sync_forum_to_db(channel_id, forum_type)
-                # Re-read DB after sync
-                db, _ = gh_read(_forum_file(forum_type), force=True)
-                db = db or {}
-                section = db.get(forum_type) or {}
-                posts   = section.get("posts") or []
-            except Exception as e:
-                print(f"[forum] Blocking sync failed for {forum_type}: {e}")
-                # Return empty list rather than 500 — page shows "no posts" gracefully
-        elif needs_sync:
-            # Already have data — refresh in background, return existing instantly
-            t = _threading.Thread(target=_sync_forum_to_db, args=(channel_id, forum_type), daemon=True)
-            t.start()
+    # Always non-blocking — sync runs in background regardless of whether posts exist
+    if DISCORD_BOT_TOKEN and needs_sync:
+        t = _threading.Thread(target=_sync_forum_to_db, args=(channel_id, forum_type), daemon=True)
+        t.start()
 
     # Enrich linked_todo_id from forum_links
     links, _ = gh_read(FILE_FORUM_LINKS)
@@ -1466,6 +1452,8 @@ def api_forum_link_todo(forum_type):
         web_user = get_session().get("user", {})
         _web_log_activity(f"Unlinked from {forum_type} forum post #{thread_id}", {"id": "?", "title": "Unknown", "status": "todo"}, web_user)
     return jsonify({"ok": True, "linked_todo_id": todo_id, "linked_todo_info": todo_info})
+
+@app.route("/api/config", methods=["POST"])
 def api_config_save():
     if get_session().get("access_level") not in ("admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
@@ -1514,12 +1502,15 @@ def bugs_page():
     posts, error = [], None
     channel_id_configured = bool(DISCORD_BUGS_CHANNEL_ID)
     channel_name = "bugs"
+    syncing = False
     if channel_id_configured:
         posts, error = fetch_forum_posts(DISCORD_BUGS_CHANNEL_ID, "bugs")
+        syncing = (not posts and not error)  # empty + no error = first-time sync in progress
     return render_template("bugs.html",
         posts=posts, error=error,
         channel_name=channel_name,
         channel_id_configured=channel_id_configured,
+        syncing=syncing,
         user=get_session().get("user"),
         access_level=get_session().get("access_level", "public"),
     )
@@ -1529,12 +1520,15 @@ def suggestions_page():
     posts, error = [], None
     channel_id_configured = bool(DISCORD_SUGGESTIONS_CHANNEL_ID)
     channel_name = "suggestions"
+    syncing = False
     if channel_id_configured:
         posts, error = fetch_forum_posts(DISCORD_SUGGESTIONS_CHANNEL_ID, "suggestions")
+        syncing = (not posts and not error)
     return render_template("suggestions.html",
         posts=posts, error=error,
         channel_name=channel_name,
         channel_id_configured=channel_id_configured,
+        syncing=syncing,
         user=get_session().get("user"),
         access_level=get_session().get("access_level", "public"),
     )
@@ -1570,6 +1564,12 @@ def not_found(e):
     return render_template("error.html", code=404,
         message="Page not found.",
         user=get_session().get("user"), access_level=get_session().get("access_level", "public")), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return render_template("error.html", code=500,
+        message="Something went wrong on our end. Please try again in a moment.",
+        user=get_session().get("user"), access_level=get_session().get("access_level", "public")), 500
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
