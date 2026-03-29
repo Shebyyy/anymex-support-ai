@@ -54,6 +54,10 @@ FILE_TODOS         = "todos.json"
 FILE_TODOS_ARCHIVE = "todos_archive.json"
 FILE_FORUM_LINKS   = "forum_links.json"   # maps forum thread id → todo id
 
+# Bot notification (triggers Discord board refresh after site changes)
+BOT_NOTIFY_URL  = os.environ.get("BOT_NOTIFY_URL")   # e.g. http://localhost:8081/notify
+INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")  # same value set in bot.py
+
 DEFAULT_CONFIG = {
     "todo_channel": None, "todo_roles": [], "todo_style": 1,
     "prefix": "ax!", "log_channel": None,
@@ -194,6 +198,94 @@ def bot_get(endpoint):
     )
     return r.json() if r.ok else None
 
+def notify_bot_board():
+    """
+    Fire-and-forget POST to the bot's /notify endpoint so the Discord
+    TODO board refreshes immediately after any site change.
+    Silently fails if BOT_NOTIFY_URL is not configured.
+    """
+    if not BOT_NOTIFY_URL:
+        return
+    try:
+        req.post(
+            BOT_NOTIFY_URL,
+            headers={"X-Internal-Secret": INTERNAL_SECRET},
+            timeout=3,
+        )
+    except Exception:
+        pass  # non-critical — board will self-correct on next bot action
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ACTIVITY LOG — mirrors bot.py log_activity but called from web dashboard
+# Posts an embed to the configured log_channel for every action on the site
+# ══════════════════════════════════════════════════════════════════════════════
+
+STATUS_COLORS_INT = {
+    "todo":          0x378ADD,
+    "in_progress":   0xBA7517,
+    "review_needed": 0x888780,
+    "blocked":       0xE24B4A,
+    "done":          0x1D9E75,
+}
+
+def _web_log_activity(action: str, todo: dict, user: dict, extra: str = ""):
+    """
+    Post an activity embed to the Discord log channel via the bot token.
+    Runs in a background thread so it never blocks the API response.
+
+    action  — human label e.g. "TODO Created", "Status → In Progress"
+    todo    — the todo dict (must have at least id, title, status)
+    user    — the session user dict (Discord user object)
+    extra   — optional extra line shown below the action
+    """
+    if not DISCORD_BOT_TOKEN:
+        return
+
+    cfg, _ = gh_read(FILE_CONFIG)
+    cfg = cfg or {}
+    log_ch_id = cfg.get("log_channel")
+    if not log_ch_id:
+        return
+
+    status    = todo.get("status", "todo")
+    color     = STATUS_COLORS_INT.get(status, 0x5865F2)
+    title_str = todo.get("title", "")[:60]
+    user_name = (user.get("global_name") or user.get("username") or "Web User") if user else "Web Dashboard"
+    user_id   = str(user.get("id", "")) if user else ""
+    user_str  = f"<@{user_id}>" if user_id else user_name
+
+    desc = f"**{action}**"
+    if extra:
+        desc += "\n" + extra
+
+    embed = {
+        "title":       f"📋 TODO #{todo.get('id', '?')} — {title_str}",
+        "description": desc,
+        "color":       color,
+        "footer":      {"text": f"By {user_name} (web dashboard)"},
+        "timestamp":   datetime.datetime.utcnow().isoformat() + "Z",
+    }
+
+    payload = {"embeds": [embed]}
+
+    def _post():
+        try:
+            req.post(
+                f"https://discord.com/api/v10/channels/{log_ch_id}/messages",
+                headers={
+                    "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=5,
+                proxies=get_proxies(),
+            )
+        except Exception as e:
+            print(f"[web_log] Failed to post activity: {e}")
+
+    _threading.Thread(target=_post, daemon=True).start()
+
 def _avatar_url(user_obj):
     """Build a Discord CDN avatar URL from a user object."""
     if not user_obj:
@@ -217,101 +309,418 @@ def _fmt_discord_ts(ts_str):
     except Exception:
         return ts_str
 
-def fetch_forum_posts(channel_id):
+# ══════════════════════════════════════════════════════════════════════════════
+# FORUM — GitHub DB storage + smart Discord sync
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Storage layout in forum_posts.json:
+# {
+#   "bugs": {
+#     "last_synced": "2026-03-29T10:00:00",
+#     "channel_id": "123456",
+#     "posts": [
+#       {
+#         "id": "111",
+#         "title": "App crashes on login",
+#         "content": "OP description text",
+#         "author_id": "999",
+#         "author_name": "sheby",
+#         "author_avatar": "https://cdn.discordapp.com/...",
+#         "created_at": "2026-03-01T10:00:00",
+#         "created_at_fmt": "Mar 01, 2026",
+#         "message_count": 5,
+#         "is_locked": false,
+#         "is_archived": false,
+#         "status_label": "Open",
+#         "tags": ["bug", "urgent"],
+#         "linked_todo_id": null,
+#         "messages": [
+#           {
+#             "author_name": "john",
+#             "author_avatar": "https://...",
+#             "content": "I have this too",
+#             "created_at": "2026-03-01T11:00:00",
+#             "attachments": [
+#               { "filename": "screen.png", "content_type": "image/png",
+#                 "width": 1280, "height": 720 }
+#             ]
+#           }
+#         ],
+#         "attachments": [...]   ← OP attachments (no URLs — refreshed on open)
+#       }
+#     ]
+#   },
+#   "suggestions": { ... }
+# }
+#
+# NOTE: Attachment URLs are NOT stored — Discord CDN links expire.
+#       When a thread is opened, we call Discord once to get fresh URLs.
+# ══════════════════════════════════════════════════════════════════════════════
+
+FILE_FORUM_POSTS = "forum_posts.json"
+FORUM_SYNC_TTL   = 5 * 60  # only hit Discord API again after 5 minutes
+
+import threading as _threading
+
+def _resolve_tags(applied_tag_ids, available_tags):
+    """Turn a list of tag IDs into human-readable tag name strings."""
+    out = []
+    for tid in (applied_tag_ids or []):
+        info = available_tags.get(str(tid)) or available_tags.get(tid)
+        if info:
+            emoji = info.get("emoji") or ""
+            name  = info.get("name", str(tid))
+            out.append(f"{emoji} {name}".strip() if emoji else name)
+        else:
+            out.append(str(tid))
+    return out
+
+def _thread_status(thread_meta):
+    is_locked   = thread_meta.get("locked", False)
+    is_archived = thread_meta.get("archived", False)
+    if is_locked:
+        label = "Locked"
+    elif is_archived:
+        label = "Archived"
+    else:
+        label = "Open"
+    return is_locked, is_archived, label
+
+def _parse_attachments(raw_attachments, include_url=False):
     """
-    Fetch active threads from a Discord forum channel.
-    Returns a list of enriched post dicts.
+    Parse Discord attachment objects.
+    include_url=False  → strip the URL (for storage, since CDN links expire)
+    include_url=True   → keep the URL (for live thread detail responses)
     """
-    if not channel_id or not DISCORD_BOT_TOKEN:
-        return [], "Bot token or channel ID not configured"
-
-    # Load forum link map (thread_id → todo_id)
-    links, _ = gh_read(FILE_FORUM_LINKS)
-    links = links or {}
-
-    # Step 1: Fetch the forum channel itself to get available_tags definition
-    forum_channel = bot_get(f"/channels/{channel_id}")
-    if forum_channel is None:
-        return [], "Could not reach Discord API — check DISCORD_TOKEN and channel ID"
-
-    # Build tag ID → tag info map from the forum channel definition
-    available_tags = {
-        t["id"]: {
-            "name":   t.get("name", t["id"]),
-            "emoji":  (t.get("emoji_name") or ""),
-            "moderated": t.get("moderated", False),
+    out = []
+    for a in (raw_attachments or []):
+        entry = {
+            "filename":     a.get("filename", "file"),
+            "content_type": a.get("content_type", ""),
+            "width":        a.get("width"),
+            "height":       a.get("height"),
+            "size":         a.get("size"),
         }
+        if include_url:
+            entry["url"] = a.get("url", "")
+            entry["proxy_url"] = a.get("proxy_url", "")
+        out.append(entry)
+    return out
+
+import re as _re
+import html as _html
+
+def _render_discord_content(raw_content, msg_obj, extra_channel_map=None):
+    """
+    Convert raw Discord markdown into rendered HTML.
+
+    Resolves (using data already present in the message object — zero extra API calls):
+      <@id> / <@!id>   -> @DisplayName  (from msg mentions array)
+      <#id>            -> #channel-name (from mention_channels + extra_channel_map)
+      <@&id>           -> @role
+      <:name:id>       -> PNG emoji img
+      <a:name:id>      -> GIF emoji img (animated — detected via separate regex)
+
+    extra_channel_map: optional dict {channel_id: name} built once per sync run
+    so channel mentions always resolve correctly even if not in mention_channels.
+    """
+    if not raw_content:
+        return ""
+
+    content = raw_content
+
+    # Build user lookup from mentions array (free — part of every message)
+    user_map = {}
+    for u in (msg_obj.get("mentions") or []):
+        uid  = str(u.get("id", ""))
+        name = u.get("global_name") or u.get("username") or uid
+        if uid:
+            user_map[uid] = name
+
+    # Build channel lookup — mention_channels from message + extra from sync
+    channel_map = dict(extra_channel_map or {})
+    for ch in (msg_obj.get("mention_channels") or []):
+        cid  = str(ch.get("id", ""))
+        name = ch.get("name") or cid
+        if cid:
+            channel_map[cid] = name
+
+    # 1. User mentions  <@id>  <@!id>
+    def _user(m):
+        uid  = m.group(1)
+        name = user_map.get(uid, uid)
+        return f'<span class="discord-mention discord-mention-user">@{_html.escape(name)}</span>'
+    content = _re.sub(r"<@!?(\d+)>", _user, content)
+
+    # 2. Channel mentions  <#id>
+    def _channel(m):
+        cid  = m.group(1)
+        name = channel_map.get(cid, cid)
+        return f'<span class="discord-mention discord-mention-channel">#{_html.escape(name)}</span>'
+    content = _re.sub(r"<#(\d+)>", _channel, content)
+
+    # 3. Role mentions  <@&id>  — role names not in message payload
+    content = _re.sub(
+        r"<@&(\d+)>",
+        lambda m: '<span class="discord-mention discord-mention-role">@role</span>',
+        content,
+    )
+
+    # 4. Animated custom emoji  <a:name:id>  — must match BEFORE static emoji
+    def _anim_emoji(m):
+        name = m.group(1)
+        eid  = m.group(2)
+        url  = f"https://cdn.discordapp.com/emojis/{eid}.gif?size=24"
+        return (
+            f'<img class="discord-emoji" src="{url}" '
+            f'alt=":{_html.escape(name)}:" title=":{_html.escape(name)}:" '
+            f'style="width:22px;height:22px;vertical-align:middle;display:inline;">'
+        )
+    content = _re.sub(r"<a:([^:]+):(\d+)>", _anim_emoji, content)
+
+    # 5. Static custom emoji  <:name:id>
+    def _static_emoji(m):
+        name = m.group(1)
+        eid  = m.group(2)
+        url  = f"https://cdn.discordapp.com/emojis/{eid}.png?size=24"
+        return (
+            f'<img class="discord-emoji" src="{url}" '
+            f'alt=":{_html.escape(name)}:" title=":{_html.escape(name)}:" '
+            f'style="width:22px;height:22px;vertical-align:middle;display:inline;">'
+        )
+    content = _re.sub(r"<:([^:]+):(\d+)>", _static_emoji, content)
+
+    return content
+
+
+def _fetch_thread_messages(thread_id, include_urls=False, extra_channel_map=None):
+    """
+    Fetch all messages for a thread from Discord.
+    Returns (op_content_raw, op_content_html, op_author, op_attachments, messages_list).
+
+    Stores BOTH raw (content_raw) and rendered HTML (content) so:
+    - DB keeps original text — clean, re-renderable
+    - Templates get ready-to-display HTML with | safe
+    - If renderer is fixed later, just re-sync to get updated HTML
+    """
+    msgs_raw = bot_get(f"/channels/{thread_id}/messages?limit=100")
+    if not msgs_raw:
+        return "", "", {}, [], []
+    msgs_raw = list(reversed(msgs_raw))  # Discord returns newest-first
+
+    op_content_raw  = ""
+    op_content_html = ""
+    op_author       = {}
+    op_attachments  = []
+    messages        = []
+
+    for i, m in enumerate(msgs_raw):
+        author      = m.get("author") or {}
+        author_name = author.get("global_name") or author.get("username") or "Unknown"
+        avatar_url  = _avatar_url(author)
+        raw         = m.get("content", "")
+        rendered    = _render_discord_content(raw, m, extra_channel_map=extra_channel_map)
+        ts          = m.get("timestamp", "")
+        attachments = _parse_attachments(m.get("attachments"), include_url=include_urls)
+
+        if i == 0:
+            op_content_raw  = raw
+            op_content_html = rendered
+            op_author       = {"name": author_name, "avatar": avatar_url, "id": author.get("id")}
+            op_attachments  = attachments
+        else:
+            messages.append({
+                "author_name":   author_name,
+                "author_avatar": avatar_url,
+                "content":       rendered,   # HTML — use | safe in template
+                "content_raw":   raw,        # original Discord markdown — kept for reference
+                "created_at":    ts,
+                "attachments":   attachments,
+            })
+
+    return op_content_raw, op_content_html, op_author, op_attachments, messages
+
+def _sync_forum_to_db(channel_id, forum_type):
+    """
+    Sync a Discord forum channel into forum_posts.json on GitHub.
+    - New posts → fully fetched (messages + attachments metadata stored, no URLs)
+    - Existing posts with changed message_count → messages re-fetched
+    - Unchanged posts → untouched
+    - Only writes to GitHub if something actually changed
+    Called in a background thread so page loads don't block.
+    """
+    if not channel_id or not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
+        return
+
+    # Load current DB state
+    db, db_sha = gh_read(FILE_FORUM_POSTS, force=True)
+    db = db or {}
+    section = db.get(forum_type) or {"last_synced": "", "channel_id": channel_id, "posts": []}
+    stored_posts = {str(p["id"]): p for p in (section.get("posts") or [])}
+
+    # Fetch forum channel for tag definitions
+    forum_channel = bot_get(f"/channels/{channel_id}")
+    if not forum_channel:
+        return
+    available_tags = {
+        t["id"]: {"name": t.get("name", t["id"]), "emoji": t.get("emoji_name") or ""}
         for t in (forum_channel.get("available_tags") or [])
     }
 
-    # Step 2: Fetch threads — active first, then recent archived (forum posts = threads)
-    # Active threads are guild-scoped; we filter by parent_id to get only this forum's threads
-    active_data = bot_get(f"/guilds/{DISCORD_GUILD_ID}/threads/active")
-    if active_data is None:
-        return [], "Could not fetch threads from Discord API — check DISCORD_TOKEN and DISCORD_GUILD_ID"
+    # Build channel name map ONCE per sync run so <#channel_id> always resolves correctly
+    # This is 1 extra API call per sync, not per message
+    extra_channel_map = {}
+    guild_channels = bot_get(f"/guilds/{DISCORD_GUILD_ID}/channels") or []
+    for ch in guild_channels:
+        cid  = str(ch.get("id", ""))
+        name = ch.get("name", cid)
+        if cid:
+            extra_channel_map[cid] = name
 
+    # Fetch active threads (guild-scoped, filter to this channel)
+    active_data = bot_get(f"/guilds/{DISCORD_GUILD_ID}/threads/active")
     active_threads = [
-        t for t in (active_data.get("threads") or [])
+        t for t in ((active_data or {}).get("threads") or [])
         if str(t.get("parent_id")) == str(channel_id)
     ]
-
-    # Also grab recently archived/closed threads from this forum channel
+    # Fetch archived threads
     archived_data = bot_get(f"/channels/{channel_id}/threads/archived/public?limit=50")
-    archived_threads = (archived_data or {}).get("threads", []) if archived_data else []
+    archived_threads = ((archived_data or {}).get("threads") or [])
 
-    threads = active_threads + archived_threads
+    all_threads = active_threads + archived_threads
+    changed = False
 
-    posts = []
-    for t in threads:
-        thread_meta = t.get("thread_metadata") or {}
+    for t in all_threads:
+        tid          = str(t.get("id"))
+        thread_meta  = t.get("thread_metadata") or {}
+        is_locked, is_archived, status_label = _thread_status(thread_meta)
+        ts_raw       = thread_meta.get("create_timestamp", "")
+        new_msg_count = t.get("message_count", 0)
+        resolved_tags = _resolve_tags(t.get("applied_tags"), available_tags)
 
-        # Resolve applied tag IDs → real tag names
-        applied_tag_ids = t.get("applied_tags") or []
-        resolved_tags = []
-        for tid in applied_tag_ids:
-            tag_info = available_tags.get(str(tid)) or available_tags.get(tid)
-            if tag_info:
-                emoji = tag_info["emoji"]
-                name  = tag_info["name"]
-                resolved_tags.append(f"{emoji} {name}".strip() if emoji else name)
-            else:
-                resolved_tags.append(str(tid))  # fallback to raw ID if not found
+        existing = stored_posts.get(tid)
 
-        # Thread status
-        is_locked   = thread_meta.get("locked", False)
-        is_archived = thread_meta.get("archived", False)
+        if existing is None:
+            # Brand new post — fetch full messages
+            raw, html_content, op_author, op_attach, messages = _fetch_thread_messages(tid, include_urls=False, extra_channel_map=extra_channel_map)
+            stored_posts[tid] = {
+                "id":             tid,
+                "title":          t.get("name", "Untitled"),
+                "content":        html_content,
+                "content_raw":    raw,
+                "preview":        raw[:120] if raw else "",
+                "author_id":      t.get("owner_id"),
+                "author_name":    op_author.get("name", "Member"),
+                "author_avatar":  op_author.get("avatar", "https://cdn.discordapp.com/embed/avatars/0.png"),
+                "created_at":     ts_raw,
+                "created_at_fmt": _fmt_discord_ts(ts_raw),
+                "message_count":  new_msg_count,
+                "is_locked":      is_locked,
+                "is_archived":    is_archived,
+                "status_label":   status_label,
+                "tags":           resolved_tags,
+                "linked_todo_id": None,
+                "attachments":    op_attach,
+                "messages":       messages,
+            }
+            changed = True
 
-        if is_archived and not is_locked:
-            status_label = "Archived"
-        elif is_locked:
-            status_label = "Locked"
         else:
-            status_label = "Open"
+            # Existing post — check what changed
+            post_changed = False
 
-        ts_raw = thread_meta.get("create_timestamp", "")
+            # New replies came in
+            if new_msg_count != existing.get("message_count", 0):
+                raw, html_content, op_author, op_attach, messages = _fetch_thread_messages(tid, include_urls=False, extra_channel_map=extra_channel_map)
+                existing["content"]       = html_content
+                existing["content_raw"]   = raw
+                existing["preview"]       = raw[:120] if raw else ""
+                existing["author_name"]   = op_author.get("name", existing["author_name"])
+                existing["author_avatar"] = op_author.get("avatar", existing["author_avatar"])
+                existing["message_count"] = new_msg_count
+                existing["attachments"]   = op_attach
+                existing["messages"]      = messages
+                post_changed = True
 
-        posts.append({
-            "id":             t.get("id"),
-            "title":          t.get("name", "Untitled"),
-            "preview":        "",              # fetched lazily on thread open
-            "author_id":      t.get("owner_id"),
-            "author_name":    "Member",        # Discord doesn't return author info here
-            "author_avatar":  "https://cdn.discordapp.com/embed/avatars/0.png",
-            "created_at":     ts_raw,
-            "created_at_fmt": _fmt_discord_ts(ts_raw),
-            "message_count":  t.get("message_count", 0),
-            "is_locked":      is_locked,
-            "is_archived":    is_archived,
-            "status_label":   status_label,
-            "tags":           resolved_tags,
-            "linked_todo_id": links.get(str(t.get("id"))),
-        })
+            # Metadata updates (title rename, tag change, lock/archive)
+            if existing.get("title") != t.get("name", "Untitled"):
+                existing["title"] = t.get("name", "Untitled")
+                post_changed = True
+            if existing.get("status_label") != status_label:
+                existing["status_label"] = status_label
+                existing["is_locked"]    = is_locked
+                existing["is_archived"]  = is_archived
+                post_changed = True
+            if existing.get("tags") != resolved_tags:
+                existing["tags"] = resolved_tags
+                post_changed = True
+
+            if post_changed:
+                stored_posts[tid] = existing
+                changed = True
+
+    if not changed:
+        # Still update last_synced timestamp even if nothing changed
+        section["last_synced"] = datetime.datetime.utcnow().isoformat()
+        db[forum_type] = section
+        gh_write(FILE_FORUM_POSTS, db, db_sha, f"Forum: sync {forum_type} (no changes)")
+        return
+
+    # Merge forum_links into posts
+    links, _ = gh_read(FILE_FORUM_LINKS)
+    links = links or {}
+    for tid, post in stored_posts.items():
+        post["linked_todo_id"] = links.get(tid)
+
+    section["last_synced"] = datetime.datetime.utcnow().isoformat()
+    section["channel_id"]  = channel_id
+    section["posts"]       = list(stored_posts.values())
+    db[forum_type] = section
+    gh_write(FILE_FORUM_POSTS, db, db_sha, f"Forum: sync {forum_type} ({len(all_threads)} posts)")
+
+
+def fetch_forum_posts(channel_id, forum_type):
+    """
+    Return posts from GitHub DB (fast).
+    If DB is empty or stale (>5 min), trigger a background sync with Discord.
+    """
+    if not channel_id:
+        return [], "Channel ID not configured"
+
+    db, _ = gh_read(FILE_FORUM_POSTS)
+    db = db or {}
+    section = db.get(forum_type) or {}
+    posts   = section.get("posts") or []
+
+    # Check if a sync is needed
+    last_synced = section.get("last_synced", "")
+    needs_sync  = True
+    if last_synced:
+        try:
+            age = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_synced)).total_seconds()
+            needs_sync = age > FORUM_SYNC_TTL
+        except Exception:
+            needs_sync = True
+
+    if needs_sync and DISCORD_BOT_TOKEN:
+        # Fire-and-forget background sync — page loads instantly from DB
+        t = _threading.Thread(target=_sync_forum_to_db, args=(channel_id, forum_type), daemon=True)
+        t.start()
+
+    # Enrich linked_todo_id from forum_links
+    links, _ = gh_read(FILE_FORUM_LINKS)
+    links = links or {}
+    for p in posts:
+        p["linked_todo_id"] = links.get(str(p["id"]), p.get("linked_todo_id"))
 
     return posts, None
 
-def fetch_forum_thread_detail(thread_id):
+
+def fetch_forum_thread_detail(thread_id, forum_type="bugs"):
     """
-    Fetch full detail for a single forum thread — OP + all messages.
+    Return full thread detail.
+    - Metadata + stored messages come from GitHub DB (instant).
+    - Attachment URLs are refreshed live from Discord (CDN links expire).
     """
     if not DISCORD_BOT_TOKEN:
         return None, "Bot token not configured"
@@ -319,81 +728,75 @@ def fetch_forum_thread_detail(thread_id):
     links, _ = gh_read(FILE_FORUM_LINKS)
     links = links or {}
 
-    # Get thread channel info
+    # Load stored post from DB
+    db, _ = gh_read(FILE_FORUM_POSTS)
+    db = db or {}
+    stored_post = None
+    for p in (db.get(forum_type, {}).get("posts") or []):
+        if str(p["id"]) == str(thread_id):
+            stored_post = dict(p)
+            break
+
+    # Build channel map for mention resolution
+    extra_channel_map = {}
+    if DISCORD_GUILD_ID:
+        guild_channels = bot_get(f"/guilds/{DISCORD_GUILD_ID}/channels") or []
+        for ch in guild_channels:
+            cid  = str(ch.get("id", ""))
+            name = ch.get("name", cid)
+            if cid:
+                extra_channel_map[cid] = name
+
+    # Refresh attachment URLs from Discord (CDN links expire, so we always fetch fresh)
+    fresh_raw, fresh_content, fresh_op_author, fresh_op_attach, fresh_messages = _fetch_thread_messages(
+        thread_id, include_urls=True, extra_channel_map=extra_channel_map
+    )
+
+    if stored_post:
+        # Use stored metadata, but inject fresh attachment URLs + any new messages
+        stored_msgs = stored_post.get("messages") or []
+        for i, msg in enumerate(fresh_messages):
+            if i < len(stored_msgs):
+                stored_msgs[i]["attachments"] = msg["attachments"]  # refresh URLs only
+            else:
+                stored_msgs.append(msg)  # new message since last sync
+        stored_post["messages"]    = stored_msgs
+        stored_post["attachments"] = fresh_op_attach  # refresh OP attachment URLs
+        stored_post["linked_todo_id"] = links.get(str(thread_id), stored_post.get("linked_todo_id"))
+        return stored_post, None
+
+    # Post not in DB yet (first open before sync ran) — build from live data
     thread = bot_get(f"/channels/{thread_id}")
     if not thread:
         return None, "Thread not found"
 
     thread_meta = thread.get("thread_metadata") or {}
-    is_locked   = thread_meta.get("locked", False)
-    is_archived = thread_meta.get("archived", False)
-    if is_archived and not is_locked:
-        status_label = "Archived"
-    elif is_locked:
-        status_label = "Locked"
-    else:
-        status_label = "Open"
+    is_locked, is_archived, status_label = _thread_status(thread_meta)
+    ts_raw = thread_meta.get("create_timestamp", "")
 
-    # Get messages (up to 100, Discord returns newest-first so reverse)
-    msgs_raw = bot_get(f"/channels/{thread_id}/messages?limit=100")
-    if msgs_raw is None:
-        msgs_raw = []
-    msgs_raw = list(reversed(msgs_raw))
-
-    op_content = ""
-    op_author  = {}
-    messages   = []
-
-    for i, m in enumerate(msgs_raw):
-        author      = m.get("author", {})
-        author_name = author.get("global_name") or author.get("username") or "Unknown"
-        avatar_url  = _avatar_url(author)
-        content     = m.get("content", "")
-        ts          = m.get("timestamp", "")
-
-        if i == 0:
-            op_content = content
-            op_author  = {"name": author_name, "avatar": avatar_url, "id": author.get("id")}
-        else:
-            messages.append({
-                "author_name":   author_name,
-                "author_avatar": avatar_url,
-                "content":       content,
-                "created_at":    ts,
-            })
-
-    # Resolve tag IDs → names using the parent forum channel's available_tags
+    # Resolve tags
     parent_id = thread.get("parent_id")
     tag_names = []
     if parent_id:
         parent = bot_get(f"/channels/{parent_id}")
         if parent:
             available_tags = {
-                t["id"]: {
-                    "name":  t.get("name", t["id"]),
-                    "emoji": t.get("emoji_name") or "",
-                }
+                t["id"]: {"name": t.get("name", t["id"]), "emoji": t.get("emoji_name") or ""}
                 for t in (parent.get("available_tags") or [])
             }
-            for tid in (thread.get("applied_tags") or []):
-                tag_info = available_tags.get(str(tid)) or available_tags.get(tid)
-                if tag_info:
-                    emoji = tag_info["emoji"]
-                    name  = tag_info["name"]
-                    tag_names.append(f"{emoji} {name}".strip() if emoji else name)
-                else:
-                    tag_names.append(str(tid))
-
-    ts_raw = thread_meta.get("create_timestamp", "")
+            tag_names = _resolve_tags(thread.get("applied_tags"), available_tags)
 
     return {
-        "id":            thread_id,
+        "id":            str(thread_id),
         "title":         thread.get("name", "Untitled"),
-        "content":       op_content,
-        "author_name":   op_author.get("name", "Member"),
-        "author_avatar": op_author.get("avatar", "https://cdn.discordapp.com/embed/avatars/0.png"),
+        "content":       fresh_content,
+        "content_raw":   fresh_raw,
+        "author_name":   fresh_op_author.get("name", "Member"),
+        "author_avatar": fresh_op_author.get("avatar", "https://cdn.discordapp.com/embed/avatars/0.png"),
         "created_at":    ts_raw,
-        "messages":      messages,
+        "created_at_fmt": _fmt_discord_ts(ts_raw),
+        "messages":      fresh_messages,
+        "attachments":   fresh_op_attach,
         "tags":          tag_names,
         "status_label":  status_label,
         "is_locked":     is_locked,
@@ -516,6 +919,38 @@ app.jinja_env.globals.update(
     now=datetime.datetime.utcnow,
     enumerate=enumerate,
 )
+
+def _patch_forum_post_todo_link(thread_id, forum_type, todo_id, todo_info):
+    """
+    Immediately update a single post's linked_todo_id and linked_todo snapshot
+    in forum_posts.json — no full sync needed.
+
+    todo_id=None / todo_info=None → clears the link (used on TODO delete).
+    todo_info should be: { id, title, status, priority }
+    """
+    try:
+        db, db_sha = gh_read(FILE_FORUM_POSTS, force=True)
+        db = db or {}
+        section = db.get(forum_type)
+        if not section:
+            return  # forum not synced yet, nothing to patch
+        posts = section.get("posts") or []
+        patched = False
+        for post in posts:
+            if str(post.get("id")) == str(thread_id):
+                post["linked_todo_id"]   = todo_id
+                post["linked_todo_info"] = todo_info  # full snapshot for UI display
+                patched = True
+                break
+        if patched:
+            section["posts"] = posts
+            db[forum_type]   = section
+            action = f"TODO #{todo_id}" if todo_id else "unlinked"
+            gh_write(FILE_FORUM_POSTS, db, db_sha,
+                     f"Web: Patch forum post {thread_id} → {action}")
+    except Exception:
+        pass  # non-critical — background sync will fix it next round
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ROUTES — AUTH
@@ -786,15 +1221,31 @@ def api_todo_create():
     if linked_thread_id:
         new_todo["linked_forum_thread_id"] = str(linked_thread_id)
         new_todo["linked_forum_type"]      = linked_type or "unknown"
-        # Persist the thread → todo mapping
+        # 1. Persist thread → todo ID mapping in forum_links.json
         links, links_sha = gh_read(FILE_FORUM_LINKS, force=True)
         links = links or {}
         links[str(linked_thread_id)] = next_id
         gh_write(FILE_FORUM_LINKS, links, links_sha,
                  f"Web: Link forum thread {linked_thread_id} → TODO #{next_id}")
+        # 2. Immediately patch forum_posts.json so the badge shows up right away
+        #    without waiting for the next background sync
+        _patch_forum_post_todo_link(
+            thread_id  = str(linked_thread_id),
+            forum_type = linked_type or "bugs",
+            todo_id    = next_id,
+            todo_info  = {
+                "id":       next_id,
+                "title":    new_todo["title"],
+                "status":   new_todo["status"],
+                "priority": new_todo["priority"],
+            },
+        )
     todos.append(new_todo)
     ok = gh_write(FILE_TODOS, todos, sha, f"Web: Add TODO #{next_id} by {user.get('username','?')}")
     if ok:
+        notify_bot_board()
+        extra = f"Linked to {linked_type} forum post" if linked_thread_id else ""
+        _web_log_activity("TODO Created", new_todo, user, extra=extra)
         return jsonify(enrich_todo(new_todo)), 201
     return jsonify({"error": "GitHub write failed"}), 500
 
@@ -810,10 +1261,29 @@ def api_todo_update(todo_id):
         return jsonify({"error": "Not found"}), 404
 
     data = request.json or {}
-    allowed = ("status", "priority", "tags", "assigned_to_id", "title", "ai_description")
+    allowed = ("status", "priority", "tags", "assigned_to_id", "assigned_to_name", "title", "ai_description")
+
+    # Build a human-readable action label from what actually changed
+    changes = []
     for field in allowed:
+        if field in data and data[field] != todo.get(field):
+            if field == "status":
+                changes.append(f"Status → {STATUS_LABELS.get(data[field], data[field])}")
+            elif field == "priority":
+                changes.append(f"Priority → {PRIORITY_LABELS.get(data[field], data[field])}")
+            elif field == "assigned_to_id":
+                name = data.get("assigned_to_name") or data[field] or "Unassigned"
+                changes.append(f"Assigned → {name}")
+            elif field == "title":
+                changes.append("Title updated")
+            elif field == "tags":
+                changes.append("Tags updated")
+            elif field == "ai_description":
+                changes.append("Description updated")
         if field in data:
             todo[field] = data[field]
+
+    action_label = "  ·  ".join(changes) if changes else "TODO Updated"
     todo["updated_at"] = datetime.datetime.utcnow().isoformat()
 
     # Archive if done
@@ -825,6 +1295,26 @@ def api_todo_update(todo_id):
         gh_write(FILE_TODOS_ARCHIVE, archive, arch_sha, f"Web: Archive TODO #{todo_id}")
 
     gh_write(FILE_TODOS, todos, sha, f"Web: Update TODO #{todo_id}")
+
+    # If this todo is linked to a forum post, push updated info back immediately
+    linked_thread_id = todo.get("linked_forum_thread_id")
+    linked_type      = todo.get("linked_forum_type", "bugs")
+    if linked_thread_id:
+        _patch_forum_post_todo_link(
+            thread_id  = str(linked_thread_id),
+            forum_type = linked_type,
+            todo_id    = todo_id,
+            todo_info  = {
+                "id":       todo_id,
+                "title":    todo.get("title", ""),
+                "status":   todo.get("status", "todo"),
+                "priority": todo.get("priority", "medium"),
+            },
+        )
+
+    notify_bot_board()
+    web_user = get_session().get("user", {})
+    _web_log_activity(action_label, todo, web_user)
     return jsonify(enrich_todo(todo))
 
 @app.route("/api/todo/<int:todo_id>", methods=["DELETE"])
@@ -834,14 +1324,115 @@ def api_todo_delete(todo_id):
 
     todos, sha = gh_read(FILE_TODOS, force=True)
     todos = todos or []
+    # Grab todo before deleting so we can unlink from forum post
+    todo = next((t for t in todos if t["id"] == todo_id), None)
     original = len(todos)
     todos = [t for t in todos if t["id"] != todo_id]
     if len(todos) == original:
         return jsonify({"error": "Not found"}), 404
     gh_write(FILE_TODOS, todos, sha, f"Web: Delete TODO #{todo_id}")
+
+    # Clear the link from the forum post if one existed
+    if todo:
+        linked_thread_id = todo.get("linked_forum_thread_id")
+        linked_type      = todo.get("linked_forum_type", "bugs")
+        if linked_thread_id:
+            # Remove from forum_links.json
+            links, links_sha = gh_read(FILE_FORUM_LINKS, force=True)
+            links = links or {}
+            links.pop(str(linked_thread_id), None)
+            gh_write(FILE_FORUM_LINKS, links, links_sha,
+                     f"Web: Unlink forum thread {linked_thread_id} (TODO #{todo_id} deleted)")
+            # Clear from forum_posts.json
+            _patch_forum_post_todo_link(
+                thread_id  = str(linked_thread_id),
+                forum_type = linked_type,
+                todo_id    = None,   # None = clear the link
+                todo_info  = None,
+            )
+
+    notify_bot_board()
+    if todo:
+        web_user = get_session().get("user", {})
+        _web_log_activity("TODO Deleted", todo, web_user)
     return jsonify({"ok": True})
 
-@app.route("/api/config", methods=["POST"])
+@app.route("/api/forum/<forum_type>/link", methods=["POST"])
+def api_forum_link_todo(forum_type):
+    """
+    Link an existing TODO to a forum post (or unlink by passing todo_id=null).
+    Body: { thread_id, todo_id }   (todo_id can be null to unlink)
+    """
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data      = request.json or {}
+    thread_id = str(data.get("thread_id", "")).strip()
+    todo_id   = data.get("todo_id")  # int or null
+
+    if not thread_id:
+        return jsonify({"error": "thread_id required"}), 400
+
+    # Validate the todo exists if linking (not unlinking)
+    todo_info = None
+    if todo_id is not None:
+        todos, _ = gh_read(FILE_TODOS)
+        todos    = todos or []
+        todo     = next((t for t in todos if t["id"] == int(todo_id)), None)
+        if not todo:
+            # Check archive too
+            archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+            todo = next((t for t in (archive or []) if t["id"] == int(todo_id)), None)
+        if not todo:
+            return jsonify({"error": f"TODO #{todo_id} not found"}), 404
+        todo_id   = int(todo_id)
+        todo_info = {
+            "id":       todo_id,
+            "title":    todo.get("title", ""),
+            "status":   todo.get("status", "todo"),
+            "priority": todo.get("priority", "medium"),
+        }
+        # Also write back linked_forum_thread_id onto the todo itself
+        todos_rw, todos_sha = gh_read(FILE_TODOS, force=True)
+        todos_rw = todos_rw or []
+        for t in todos_rw:
+            if t["id"] == todo_id:
+                t["linked_forum_thread_id"] = thread_id
+                t["linked_forum_type"]      = forum_type
+                t["updated_at"]             = datetime.datetime.utcnow().isoformat()
+                break
+        gh_write(FILE_TODOS, todos_rw, todos_sha,
+                 f"Web: Link TODO #{todo_id} → forum {forum_type} thread {thread_id}")
+
+    # Update forum_links.json
+    links, links_sha = gh_read(FILE_FORUM_LINKS, force=True)
+    links = links or {}
+    if todo_id is not None:
+        links[thread_id] = todo_id
+    else:
+        links.pop(thread_id, None)
+    gh_write(FILE_FORUM_LINKS, links, links_sha,
+             f"Web: {'Link' if todo_id else 'Unlink'} forum thread {thread_id}")
+
+    # Patch forum_posts.json immediately
+    _patch_forum_post_todo_link(
+        thread_id  = thread_id,
+        forum_type = forum_type,
+        todo_id    = todo_id,
+        todo_info  = todo_info,
+    )
+
+    notify_bot_board()
+    # Log the link/unlink action
+    if todo_info:
+        web_user = get_session().get("user", {})
+        link_todo_obj = {"id": todo_id, "title": todo_info.get("title",""), "status": todo_info.get("status","todo")}
+        action = f"Linked to {forum_type} forum post #{thread_id}"
+        _web_log_activity(action, link_todo_obj, web_user)
+    elif todo_id is None:
+        web_user = get_session().get("user", {})
+        _web_log_activity(f"Unlinked from {forum_type} forum post #{thread_id}", {"id": "?", "title": "Unknown", "status": "todo"}, web_user)
+    return jsonify({"ok": True, "linked_todo_id": todo_id, "linked_todo_info": todo_info})
 def api_config_save():
     if get_session().get("access_level") not in ("admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
@@ -849,10 +1440,17 @@ def api_config_save():
     cfg, sha = gh_read(FILE_CONFIG, force=True)
     cfg = cfg or DEFAULT_CONFIG.copy()
     allowed = ("prefix", "reminder_days", "reminder_time", "todo_style")
+    changes = []
     for k in allowed:
         if k in data:
+            if data[k] != cfg.get(k):
+                changes.append(f"{k} → {data[k]}")
             cfg[k] = data[k]
     ok = gh_write(FILE_CONFIG, cfg, sha, "Web: Config updated")
+    if ok and changes:
+        web_user = get_session().get("user", {})
+        fake_todo = {"id": "—", "title": "Bot Config", "status": "todo"}
+        _web_log_activity("⚙️ Settings Updated", fake_todo, web_user, extra="  ·  ".join(changes))
     return jsonify({"ok": ok})
 
 @app.route("/api/me")
@@ -863,6 +1461,19 @@ def api_me():
         "member": get_session().get("member"),
     })
 
+@app.route("/api/forum/sync", methods=["POST"])
+def api_forum_sync():
+    """Force an immediate sync of both forum channels. Admin only."""
+    if get_session().get("access_level") not in ("admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    if DISCORD_BUGS_CHANNEL_ID:
+        t1 = _threading.Thread(target=_sync_forum_to_db, args=(DISCORD_BUGS_CHANNEL_ID, "bugs"), daemon=True)
+        t1.start()
+    if DISCORD_SUGGESTIONS_CHANNEL_ID:
+        t2 = _threading.Thread(target=_sync_forum_to_db, args=(DISCORD_SUGGESTIONS_CHANNEL_ID, "suggestions"), daemon=True)
+        t2.start()
+    return jsonify({"ok": True, "message": "Sync started in background"})
+
 # ── Forum pages ──────────────────────────────────────────────────────────────
 
 @app.route("/bugs")
@@ -871,7 +1482,7 @@ def bugs_page():
     channel_id_configured = bool(DISCORD_BUGS_CHANNEL_ID)
     channel_name = "bugs"
     if channel_id_configured:
-        posts, error = fetch_forum_posts(DISCORD_BUGS_CHANNEL_ID)
+        posts, error = fetch_forum_posts(DISCORD_BUGS_CHANNEL_ID, "bugs")
     return render_template("bugs.html",
         posts=posts, error=error,
         channel_name=channel_name,
@@ -886,7 +1497,7 @@ def suggestions_page():
     channel_id_configured = bool(DISCORD_SUGGESTIONS_CHANNEL_ID)
     channel_name = "suggestions"
     if channel_id_configured:
-        posts, error = fetch_forum_posts(DISCORD_SUGGESTIONS_CHANNEL_ID)
+        posts, error = fetch_forum_posts(DISCORD_SUGGESTIONS_CHANNEL_ID, "suggestions")
     return render_template("suggestions.html",
         posts=posts, error=error,
         channel_name=channel_name,
@@ -899,14 +1510,14 @@ def suggestions_page():
 
 @app.route("/api/forum/bugs/<thread_id>")
 def api_forum_bug_thread(thread_id):
-    detail, error = fetch_forum_thread_detail(thread_id)
+    detail, error = fetch_forum_thread_detail(thread_id, forum_type="bugs")
     if error:
         return jsonify({"error": error}), 500
     return jsonify(detail)
 
 @app.route("/api/forum/suggestions/<thread_id>")
 def api_forum_suggestion_thread(thread_id):
-    detail, error = fetch_forum_thread_detail(thread_id)
+    detail, error = fetch_forum_thread_detail(thread_id, forum_type="suggestions")
     if error:
         return jsonify({"error": error}), 500
     return jsonify(detail)

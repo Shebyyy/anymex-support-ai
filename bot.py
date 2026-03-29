@@ -664,13 +664,41 @@ async def send_todo_embeds(send_fn, todos: list, style: int, title: str = "", ma
 # HEALTH SERVER
 # ══════════════════════════════════════════════════════════════════════════════
 
+INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")  # shared secret between app.py and bot.py
+
 async def health(request):
     return web.Response(text="AnymeX TODO Bot is running.")
+
+async def notify_board(request):
+    """
+    Called by the web dashboard after any TODO create/update/delete.
+    Triggers an immediate board refresh on Discord so the channel stays in sync.
+    Protected by INTERNAL_SECRET so only the dashboard can call it.
+    """
+    auth = request.headers.get("X-Internal-Secret", "")
+    if INTERNAL_SECRET and auth != INTERNAL_SECRET:
+        return web.Response(status=403, text="Forbidden")
+
+    guild_id = request.match_info.get("guild_id")
+    guild = bot.get_guild(int(guild_id)) if guild_id else None
+    if not guild:
+        guild = next(iter(bot.guilds), None)
+    if not guild:
+        return web.Response(status=503, text="Bot not in any guild")
+
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read_fresh(session, FILE_CONFIG)
+    cfg = cfg or {}
+
+    asyncio.create_task(update_todo_board(guild, cfg))
+    return web.Response(text="ok")
 
 async def start_health_server():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
+    app.router.add_post("/notify", notify_board)
+    app.router.add_post("/notify/{guild_id}", notify_board)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
