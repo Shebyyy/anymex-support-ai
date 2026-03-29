@@ -244,13 +244,22 @@ def fetch_forum_posts(channel_id):
         for t in (forum_channel.get("available_tags") or [])
     }
 
-    # Step 2: Fetch active threads (Discord forum posts = threads in that channel)
-    # /threads/search returns both active and archived depending on params
-    data = bot_get(f"/channels/{channel_id}/threads/search?limit=100&sort_by=creation_time&sort_order=desc")
-    if data is None:
-        return [], "Could not fetch threads from Discord API"
+    # Step 2: Fetch threads — active first, then recent archived (forum posts = threads)
+    # Active threads are guild-scoped; we filter by parent_id to get only this forum's threads
+    active_data = bot_get(f"/guilds/{DISCORD_GUILD_ID}/threads/active")
+    if active_data is None:
+        return [], "Could not fetch threads from Discord API — check DISCORD_TOKEN and DISCORD_GUILD_ID"
 
-    threads = data.get("threads", [])
+    active_threads = [
+        t for t in (active_data.get("threads") or [])
+        if str(t.get("parent_id")) == str(channel_id)
+    ]
+
+    # Also grab recently archived/closed threads from this forum channel
+    archived_data = bot_get(f"/channels/{channel_id}/threads/archived/public?limit=50")
+    archived_threads = (archived_data or {}).get("threads", []) if archived_data else []
+
+    threads = active_threads + archived_threads
 
     posts = []
     for t in threads:
