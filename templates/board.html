@@ -334,6 +334,15 @@
       {{ t.due_label }}
     </span>
     {% endif %}
+    {% if t.get('watcher_count') %}
+    <span style="font-size:0.72rem;color:var(--muted)">👁 {{ t.watcher_count }}</span>
+    {% endif %}
+    {% if t.get('total_minutes') %}
+    <span style="font-size:0.72rem;color:var(--muted)">⏱ {{ (t.total_minutes / 60)|round(1) }}h</span>
+    {% endif %}
+    {% if t.get('is_blocked') %}
+    <span style="font-size:0.72rem;background:rgba(226,75,74,0.1);color:var(--blocked);padding:2px 6px;border-radius:4px">⛔ Blocked by {{ t.blocked_by_count }}</span>
+    {% endif %}
     {% if t.get('created_at_fmt') %}
     <span class="created-at">{{ t.created_at_fmt }}</span>
     {% endif %}
@@ -404,6 +413,16 @@
     <hr>
     <div style="display:flex;gap:8px;flex-wrap:wrap" id="vm-actions">
       <button class="btn btn-primary btn-sm" id="vm-edit-btn">Edit TODO</button>
+      <button class="btn btn-ghost btn-sm" id="vm-watch-btn" onclick="toggleWatch()">👁 Watch</button>
+      <button class="btn btn-ghost btn-sm" onclick="openTimeLog()">⏱ Log Time</button>
+    </div>
+    <div id="vm-comments-section" style="margin-top:1rem">
+      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Comments</div>
+      <div id="vm-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <input class="form-control" type="text" id="vm-comment-input" placeholder="Add a comment…" style="flex:1" onkeydown="if(event.key==='Enter')postComment()" />
+        <button class="btn btn-primary btn-sm" onclick="postComment()">Send</button>
+      </div>
     </div>
     {% endif %}
   </div>
@@ -839,5 +858,74 @@ document.addEventListener('click', e => {
     document.getElementById('em-member-results').style.display = 'none';
   }
 });
+
+// ── Watch / Comments / Time ────────────────────────────────────────────────────
+let _currentViewId = null;
+
+// Hook into viewTodoById to load extra data
+const _origViewTodoById = viewTodoById;
+function viewTodoById(id) {
+  _origViewTodoById(id);
+  _currentViewId = id;
+  const t = _TODOS_MAP[id];
+  loadComments(id);
+  const watchBtn = document.getElementById('vm-watch-btn');
+  if (watchBtn && t) {
+    const watchers = t.watchers || [];
+    watchBtn.textContent = watchers.length > 0 ? `👁 Watching (${watchers.length})` : '👁 Watch';
+  }
+}
+
+async function loadComments(todoId) {
+  const list = document.getElementById('vm-comments-list');
+  if (!list) return;
+  try {
+    const comments = await (await fetch(`/api/todo/${todoId}/comments`)).json();
+    if (!comments.length) {
+      list.innerHTML = '<p style="font-size:0.8rem;color:var(--muted)">No comments yet.</p>';
+    } else {
+      list.innerHTML = comments.map(c => `
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:24px;height:24px;border-radius:50%;flex-shrink:0;border:1px solid var(--border)" />
+          <div style="flex:1;background:var(--surface2);border-radius:0 8px 8px 8px;padding:7px 10px">
+            <div style="font-size:0.75rem;font-weight:700;color:var(--accent2);margin-bottom:3px">${c.user_name}</div>
+            <div style="font-size:0.83rem;line-height:1.5">${c.text}</div>
+          </div>
+        </div>`).join('');
+    }
+  } catch(e) { if(list) list.innerHTML = ''; }
+}
+
+async function postComment() {
+  const input = document.getElementById('vm-comment-input');
+  const text = (input?.value || '').trim();
+  if (!text || !_currentViewId) return;
+  try {
+    await api('POST', `/api/todo/${_currentViewId}/comments`, { text });
+    input.value = '';
+    loadComments(_currentViewId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleWatch() {
+  if (!_currentViewId) return;
+  const btn = document.getElementById('vm-watch-btn');
+  const isWatching = btn && btn.textContent.includes('Watching');
+  try {
+    const res = await api('POST', `/api/todo/${_currentViewId}/watch`, { action: isWatching ? 'unwatch' : 'watch' });
+    toast(res.action === 'watching' ? '👁 Now watching this TODO' : 'Unwatched');
+    const count = (res.watchers || []).length;
+    if (btn) btn.textContent = count > 0 ? `👁 Watching (${count})` : '👁 Watch';
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function openTimeLog() {
+  if (!_currentViewId) return;
+  const mins = prompt('Log time (minutes):');
+  if (!mins || isNaN(parseInt(mins))) return;
+  api('POST', `/api/todo/${_currentViewId}/time`, { minutes: parseInt(mins) })
+    .then(res => { toast(`Logged ${mins} mins! Total: ${res.total_minutes} mins`); })
+    .catch(e => toast(e.message, 'error'));
+}
 </script>
 {% endblock %}

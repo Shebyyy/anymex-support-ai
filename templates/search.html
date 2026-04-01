@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Search — AnymeX{% endblock %}
+{% block head %}
+<style>
+.search-hero {
+  text-align:center; padding:2.5rem 1rem 1.5rem;
+}
+.search-hero h1 { font-family:var(--mono); font-size:1.6rem; margin-bottom:1rem; }
+.search-bar {
+  display:flex; max-width:600px; margin:0 auto; gap:8px;
+}
+.search-bar input {
+  flex:1; background:var(--surface); border:1px solid var(--border);
+  border-radius:8px; color:var(--text); padding:10px 16px;
+  font-size:.95rem; font-family:var(--sans); outline:none;
+  transition:border-color .15s;
+}
+.search-bar input:focus { border-color:var(--accent); }
+.result-section { margin-bottom:1.75rem; }
+.result-section-head {
+  display:flex; align-items:center; gap:8px; margin-bottom:.75rem;
+  padding-bottom:.5rem; border-bottom:1px solid var(--border);
+}
+.result-section-head h2 { font-size:.85rem; font-weight:700; font-family:var(--mono); color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+.result-item {
+  display:flex; align-items:center; gap:10px; padding:10px 14px;
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  margin-bottom:6px; cursor:default; transition:border-color .15s;
+  border-left:3px solid var(--border);
+}
+.result-item:hover { border-color:var(--accent); }
+.result-item .id { font-family:var(--mono); font-size:.72rem; color:var(--muted); }
+.result-item .title { flex:1; font-size:.88rem; }
+.result-item a { color:var(--accent2); text-decoration:none; font-size:.78rem; }
+.result-item a:hover { text-decoration:underline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="search-hero">
+  <h1>🔍 Search</h1>
+  <div class="search-bar">
+    <input type="text" id="search-input" placeholder="Search TODOs, bugs, suggestions, issues…"
+      value="{{ q }}" onkeydown="if(event.key==='Enter')doSearch()" autofocus />
+    <button class="btn btn-primary" onclick="doSearch()">Search</button>
+  </div>
+  {% if q %}<p style="font-size:.82rem;color:var(--muted);margin-top:.75rem">{{ total }} result{{ 's' if total != 1 }} for "<strong>{{ q }}</strong>"</p>{% endif %}
+</div>
+
+{% if q %}
+  {% if total == 0 %}
+  <div class="empty card">
+    <div class="emoji">🔍</div>
+    <p>No results found for "<strong>{{ q }}</strong>".</p>
+  </div>
+  {% else %}
+
+  {% if results.todos %}
+  <div class="result-section">
+    <div class="result-section-head">
+      <h2>Active TODOs</h2>
+      <span class="count">{{ results.todos|length }}</span>
+    </div>
+    {% for t in results.todos[:10] %}
+    <div class="result-item" style="border-left-color:{{ t.status_color }}">
+      <span class="id">#{{ t.id }}</span>
+      <span class="title">{{ t.title }}</span>
+      <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+      {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if results.archive %}
+  <div class="result-section">
+    <div class="result-section-head">
+      <h2>Archived TODOs</h2>
+      <span class="count">{{ results.archive|length }}</span>
+    </div>
+    {% for t in results.archive[:5] %}
+    <div class="result-item" style="border-left-color:var(--done)">
+      <span class="id">#{{ t.id }}</span>
+      <span class="title">{{ t.title }}</span>
+      <span class="status-pill status-done">✓ Done</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if results.bugs %}
+  <div class="result-section">
+    <div class="result-section-head">
+      <h2>Bug Reports</h2>
+      <span class="count">{{ results.bugs|length }}</span>
+    </div>
+    {% for p in results.bugs[:5] %}
+    <div class="result-item" style="border-left-color:var(--blocked)">
+      <span class="title">🐛 {{ p.title }}</span>
+      <a href="/bugs">View on Bugs →</a>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if results.suggestions %}
+  <div class="result-section">
+    <div class="result-section-head">
+      <h2>Suggestions</h2>
+      <span class="count">{{ results.suggestions|length }}</span>
+    </div>
+    {% for p in results.suggestions[:5] %}
+    <div class="result-item" style="border-left-color:var(--done)">
+      <span class="title">💡 {{ p.title }}</span>
+      <a href="/suggestions">View on Suggestions →</a>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% endif %}
+{% else %}
+<div class="empty" style="padding:4rem 1rem">
+  <div class="emoji">🔍</div>
+  <p>Type something to search across TODOs, bug reports, suggestions, and GitHub issues.</p>
+</div>
+{% endif %}
+
+<script>
+function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (q) window.location = '/search?q=' + encodeURIComponent(q);
+}
+</script>
+{% endblock %}

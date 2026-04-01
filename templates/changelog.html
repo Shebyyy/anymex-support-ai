@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Changelog — AnymeX{% endblock %}
+{% block head %}
+<style>
+.cl-hero { text-align:center; padding:3rem 1rem 2rem; }
+.cl-hero h1 { font-family:var(--mono); font-size:2rem; font-weight:700; margin-bottom:0.5rem; }
+.cl-hero p { color:var(--muted); font-size:0.9rem; }
+.release-block {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); margin-bottom:1.5rem; overflow:hidden;
+}
+.release-head {
+  padding:1rem 1.25rem; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+}
+.release-version { font-family:var(--mono); font-size:1.1rem; font-weight:700; color:var(--accent); }
+.release-date { font-size:0.8rem; color:var(--muted); font-family:var(--mono); }
+.release-body { padding:1.25rem; }
+.release-notes { font-size:0.9rem; line-height:1.6; color:var(--text); margin-bottom:1rem; white-space:pre-wrap; }
+.release-todos { display:flex; flex-direction:column; gap:6px; }
+.release-todo-item {
+  display:flex; align-items:center; gap:8px; padding:7px 10px;
+  background:var(--surface2); border-radius:6px; font-size:0.83rem;
+}
+.release-todo-item .id { font-family:var(--mono); font-size:0.72rem; color:var(--muted); }
+.week-divider {
+  display:flex; align-items:center; gap:12px; margin:1.5rem 0 1rem;
+}
+.week-divider .line { flex:1; height:1px; background:var(--border); }
+.week-divider .label { font-size:0.75rem; color:var(--muted); font-family:var(--mono); white-space:nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cl-hero">
+  <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(29,158,117,0.1);border:1px solid rgba(29,158,117,0.2);color:var(--done);border-radius:20px;padding:4px 14px;font-size:0.78rem;font-weight:600;margin-bottom:1rem;font-family:var(--mono)">✓ Changelog</div>
+  <h1>What's New</h1>
+  <p>Release notes and recently completed features for the AnymeX project.</p>
+</div>
+
+{% if releases %}
+  <h2 style="font-family:var(--mono);font-size:0.9rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:1rem">Releases</h2>
+  {% for r in releases %}
+  <div class="release-block">
+    <div class="release-head">
+      <span class="release-version">{{ r.version }}</span>
+      <span class="release-date">{{ r.date }}</span>
+      <span style="font-size:0.72rem;background:rgba(29,158,117,0.12);color:var(--done);padding:2px 8px;border-radius:8px">✓ Published</span>
+    </div>
+    <div class="release-body">
+      {% if r.notes %}<div class="release-notes">{{ r.notes }}</div>{% endif %}
+      {% if r.todos %}
+      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Included TODOs</div>
+      <div class="release-todos">
+        {% for t in r.todos %}
+        <div class="release-todo-item">
+          <span class="id">#{{ t.id }}</span>
+          <span style="flex:1">{{ t.title }}</span>
+          <span class="status-pill status-done">✓ Done</span>
+          {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
+
+{% if weeks %}
+  <h2 style="font-family:var(--mono);font-size:0.9rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:2rem 0 1rem">Completed by Week</h2>
+  {% for week_key, todos in weeks %}
+  <div class="week-divider">
+    <div class="line"></div>
+    <div class="label">Week of {{ week_key }}</div>
+    <div class="line"></div>
+  </div>
+  {% for t in todos %}
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;border-left:3px solid var(--done)">
+    <span style="font-family:var(--mono);font-size:0.72rem;color:var(--muted)">#{{ t.id }}</span>
+    <span style="flex:1;font-size:0.88rem">{{ t.title }}</span>
+    {% for tag in t.get('tags',[])[:3] %}<span class="tag">{{ tag }}</span>{% endfor %}
+  </div>
+  {% endfor %}
+  {% endfor %}
+{% endif %}
+
+{% if not releases and not weeks %}
+<div class="empty card">
+  <div class="emoji">📋</div>
+  <p>No changelog entries yet. Admins can mark completed TODOs as public and create releases from the Settings page.</p>
+</div>
+{% endif %}
+{% endblock %}

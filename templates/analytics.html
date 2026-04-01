@@ -126,6 +126,70 @@ canvas { max-height: 240px; }
   </div>
 </div>
 
+<!-- Extra stat row — velocity + time + recurring -->
+<div class="analytics-grid" style="margin-bottom:1.5rem">
+  <div class="chart-card" style="border-left:4px solid var(--inprog)">
+    <h3>Recurring TODOs</h3>
+    <div style="font-family:var(--mono);font-size:2.5rem;font-weight:700;color:var(--inprog)">{{ recurring_count }}</div>
+    <div style="font-size:0.8rem;color:var(--muted);margin-top:6px">Auto-spawning tasks</div>
+  </div>
+  {% if velocity %}
+  <div class="chart-card" style="border-left:4px solid var(--done)">
+    <h3>This Week Completed</h3>
+    <div style="font-family:var(--mono);font-size:2.5rem;font-weight:700;color:var(--done)">{{ velocity[-1].count if velocity else 0 }}</div>
+    <div style="font-size:0.8rem;color:var(--muted);margin-top:6px">TODOs done this week</div>
+  </div>
+  {% endif %}
+  {% if time_by_user %}
+  <div class="chart-card" style="border-left:4px solid var(--accent2)">
+    <h3>Time Tracked</h3>
+    {% set total_mins = time_by_user.values()|sum %}
+    <div style="font-family:var(--mono);font-size:2.5rem;font-weight:700;color:var(--accent2)">{{ (total_mins / 60)|round|int }}h</div>
+    <div style="font-size:0.8rem;color:var(--muted);margin-top:6px">{{ total_mins }} minutes logged total</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Velocity chart -->
+{% if velocity %}
+<div class="chart-card" style="margin-bottom:1.5rem">
+  <h3>Completion Velocity — Last 8 Weeks</h3>
+  <canvas id="velocityChart"></canvas>
+</div>
+{% endif %}
+
+<!-- Top contributors -->
+{% if added_by or assigned %}
+<div class="analytics-grid" style="margin-bottom:1.5rem">
+  {% if added_by %}
+  <div class="chart-card">
+    <h3>Top Contributors (Added)</h3>
+    {% set max_v = added_by.values()|max %}
+    {% for uid, count in added_by.items() %}
+    <div class="stat-row">
+      <span style="font-family:var(--mono);font-size:0.75rem;color:var(--muted)">{{ uid[:8] }}…</span>
+      <div class="bar-wrap"><div class="bar-fill" style="width:{{ (count/max_v*100)|int }}%;background:var(--accent)"></div></div>
+      <span style="font-family:var(--mono);font-size:0.8rem;color:var(--muted)">{{ count }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if time_by_user %}
+  <div class="chart-card">
+    <h3>Top Time Loggers</h3>
+    {% set max_t = time_by_user.values()|max %}
+    {% for uid, mins in time_by_user.items() %}
+    <div class="stat-row">
+      <span style="font-family:var(--mono);font-size:0.75rem;color:var(--muted)">{{ uid[:8] }}…</span>
+      <div class="bar-wrap"><div class="bar-fill" style="width:{{ (mins/max_t*100)|int }}%;background:var(--accent2)"></div></div>
+      <span style="font-family:var(--mono);font-size:0.8rem;color:var(--muted)">{{ (mins/60)|round|int }}h</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
 <!-- Recently completed -->
 <div class="chart-card" style="margin-bottom:1.5rem">
   <h3>Recently Completed</h3>
@@ -172,7 +236,30 @@ new Chart(document.getElementById('statusChart'), {
   }
 });
 
-// Priority bar
+// Velocity chart
+{% if velocity %}
+new Chart(document.getElementById('velocityChart'), {
+  type: 'bar',
+  data: {
+    labels: [{% for v in velocity %}'{{ v.week }}'{% if not loop.last %},{% endif %}{% endfor %}],
+    datasets: [{
+      label: 'Completed',
+      data: [{% for v in velocity %}{{ v.count }}{% if not loop.last %},{% endif %}{% endfor %}],
+      backgroundColor: 'rgba(29,158,117,0.5)',
+      borderColor: '#1D9E75',
+      borderWidth: 2,
+      borderRadius: 4,
+    }]
+  },
+  options: {
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { display: false } },
+      y: { beginAtZero: true, ticks: { stepSize: 1 } }
+    }
+  }
+});
+{% endif %}
 new Chart(document.getElementById('priChart'), {
   type: 'bar',
   data: {

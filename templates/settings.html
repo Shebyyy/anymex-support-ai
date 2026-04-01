@@ -92,6 +92,10 @@
     <div class="nav-section">Bot</div>
     <a href="#general" class="active">General</a>
     <a href="#reminders">Reminders</a>
+    <div class="nav-section">Features</div>
+    <a href="#bot-health">Bot Health</a>
+    <a href="#releases">Releases</a>
+    <a href="#tag-perms">Tag Permissions</a>
     <div class="nav-section">Info</div>
     <a href="#access">Access Levels</a>
     <a href="#members">Member DB</a>
@@ -205,6 +209,96 @@
             {% endif %}
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Bot Health Monitor -->
+    <div class="settings-card" id="bot-health">
+      <div class="settings-card-head">
+        <h2>Bot Health</h2>
+        <span id="bot-status-badge" style="font-size:0.75rem;padding:3px 10px;border-radius:10px;font-weight:700;
+          background:{% if bot_online %}rgba(29,158,117,0.15){% else %}rgba(226,75,74,0.12){% endif %};
+          color:{% if bot_online %}var(--done){% else %}var(--blocked){% endif %}">
+          {% if bot_online %}● Online{% else %}○ Offline{% endif %}
+        </span>
+      </div>
+      <div class="settings-card-body">
+        {% if health %}
+        <div class="settings-row">
+          <div class="info"><strong>Last Heartbeat</strong><small>Bot reports health every 5 minutes</small></div>
+          <div class="readonly-field">{{ health.get('last_heartbeat','—')[:19] if health.get('last_heartbeat') else 'Never' }}</div>
+        </div>
+        {% if health.get('todo_count') is not none %}
+        <div class="settings-row">
+          <div class="info"><strong>Active TODOs</strong><small>Count at last heartbeat</small></div>
+          <div class="readonly-field">{{ health.get('todo_count','—') }}</div>
+        </div>
+        {% endif %}
+        {% if health.get('github_rate_remaining') is not none %}
+        <div class="settings-row">
+          <div class="info"><strong>GitHub API Rate</strong><small>Remaining calls this hour</small></div>
+          <div class="readonly-field">{{ health.get('github_rate_remaining','—') }} remaining</div>
+        </div>
+        {% endif %}
+        {% else %}
+        <p style="font-size:0.85rem;color:var(--muted);padding:8px 0">No health data yet — bot hasn't reported in.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Releases -->
+    <div class="settings-card" id="releases">
+      <div class="settings-card-head">
+        <h2>Release Notes</h2>
+        <div style="display:flex;gap:8px">
+          <a href="/releases" class="btn btn-ghost btn-sm">View Public →</a>
+          <button class="btn btn-primary btn-sm" onclick="openReleaseModal()">+ New Release</button>
+        </div>
+      </div>
+      <div class="settings-card-body">
+        {% if releases %}
+        <div style="display:flex;flex-direction:column;gap:8px">
+          {% for r in releases[:5] %}
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">
+            <span style="font-family:var(--mono);font-size:0.85rem;font-weight:700;color:var(--accent)">{{ r.version }}</span>
+            <span style="font-size:0.78rem;color:var(--muted)">{{ r.date }}</span>
+            <span style="font-size:0.72rem;color:var(--muted)">{{ r.get('todo_ids',[])|length }} TODOs</span>
+            {% if r.get('published') %}
+            <span style="font-size:0.65rem;background:rgba(29,158,117,0.15);color:var(--done);padding:2px 8px;border-radius:8px;font-weight:700">Published</span>
+            {% else %}
+            <span style="font-size:0.65rem;background:rgba(186,117,23,0.12);color:var(--inprog);padding:2px 8px;border-radius:8px;font-weight:700">Draft</span>
+            {% endif %}
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn btn-ghost btn-sm" onclick="togglePublish('{{ r.id }}', {{ 'false' if r.get('published') else 'true' }}, this)">
+                {{ 'Unpublish' if r.get('published') else 'Publish' }}
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="deleteRelease('{{ r.id }}', this)">Delete</button>
+            </div>
+          </div>
+          {% endfor %}
+          {% if releases|length > 5 %}
+          <p style="font-size:0.8rem;color:var(--muted);text-align:center">+ {{ releases|length - 5 }} more — <a href="/releases" style="color:var(--accent2)">view all</a></p>
+          {% endif %}
+        </div>
+        {% else %}
+        <p style="font-size:0.85rem;color:var(--muted);padding:8px 0">No releases yet. Create one to start tracking.</p>
+        {% endif %}
+        <p style="font-size:0.78rem;color:var(--muted);margin-top:10px">Archive has <strong>{{ archive_count }}</strong> completed TODOs available to link.</p>
+      </div>
+    </div>
+
+    <!-- Tag Permissions -->
+    <div class="settings-card" id="tag-perms">
+      <div class="settings-card-head">
+        <h2>Tag Permissions</h2>
+        <button class="btn btn-primary btn-sm" onclick="saveTagPerms()">Save</button>
+      </div>
+      <div class="settings-card-body">
+        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem">Restrict which roles can apply certain tags. Leave empty to allow all managers.</p>
+        <div id="tag-perms-list" style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:0.82rem;color:var(--muted)">Loading…</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="addTagPermRow()" style="margin-top:10px">+ Add Rule</button>
       </div>
     </div>
 
@@ -371,6 +465,90 @@ async function syncMembers(btn) {
   }
 }
 
+// ── Tag Permissions ────────────────────────────────────────────────────────────
+async function loadTagPerms() {
+  try {
+    const perms = await (await fetch('/api/tag-permissions')).json();
+    renderTagPerms(perms);
+  } catch(e) {
+    document.getElementById('tag-perms-list').innerHTML = `<div style="color:var(--blocked);font-size:0.82rem">${e.message}</div>`;
+  }
+}
+
+function renderTagPerms(perms) {
+  const el = document.getElementById('tag-perms-list');
+  if (!Object.keys(perms).length) {
+    el.innerHTML = '<div style="font-size:0.82rem;color:var(--muted)">No restrictions set — all managers can use all tags.</div>';
+    return;
+  }
+  el.innerHTML = Object.entries(perms).map(([tag, roles]) => `
+    <div style="display:flex;align-items:center;gap:8px" data-tag-row>
+      <input class="form-control" type="text" value="${tag}" style="width:120px" placeholder="tag name" />
+      <span style="color:var(--muted);font-size:0.85rem">→ allowed for:</span>
+      <input class="form-control" type="text" value="${roles.join(', ')}" style="flex:1" placeholder="admin, manager" />
+      <button class="btn btn-danger btn-sm" onclick="this.closest('[data-tag-row]').remove()">✕</button>
+    </div>`).join('');
+}
+
+function addTagPermRow() {
+  const el = document.getElementById('tag-perms-list');
+  const existing = el.querySelector('[style*="color:var(--muted)"]');
+  if (existing && existing.textContent.includes('No restrictions')) existing.remove();
+  const row = document.createElement('div');
+  row.setAttribute('data-tag-row', '');
+  row.style.cssText = 'display:flex;align-items:center;gap:8px';
+  row.innerHTML = `
+    <input class="form-control" type="text" style="width:120px" placeholder="tag name" />
+    <span style="color:var(--muted);font-size:0.85rem">→ allowed for:</span>
+    <input class="form-control" type="text" style="flex:1" placeholder="admin, manager" />
+    <button class="btn btn-danger btn-sm" onclick="this.closest('[data-tag-row]').remove()">✕</button>`;
+  el.appendChild(row);
+}
+
+async function saveTagPerms() {
+  const rows = document.querySelectorAll('[data-tag-row]');
+  const perms = {};
+  rows.forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const tag = inputs[0].value.trim();
+    const roles = inputs[1].value.split(',').map(r => r.trim()).filter(Boolean);
+    if (tag && roles.length) perms[tag] = roles;
+  });
+  try {
+    await api('POST', '/api/tag-permissions', perms);
+    toast('Tag permissions saved!');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Releases ────────────────────────────────────────────────────────────────────
+function openReleaseModal() {
+  const version = prompt('Version number (e.g. v1.2.3):');
+  if (!version) return;
+  const notes = prompt('Release notes (optional):') || '';
+  api('POST', '/api/releases', { version: version.trim(), notes, published: false })
+    .then(() => { toast(`Release ${version} created!`); setTimeout(() => location.reload(), 600); })
+    .catch(e => toast(e.message, 'error'));
+}
+
+async function togglePublish(id, publish, btn) {
+  btn.disabled = true;
+  try {
+    await api('PATCH', `/api/releases/${id}`, { published: publish === 'true' || publish === true });
+    toast(publish === 'true' || publish === true ? 'Published!' : 'Unpublished');
+    setTimeout(() => location.reload(), 500);
+  } catch(e) { toast(e.message, 'error'); btn.disabled = false; }
+}
+
+async function deleteRelease(id, btn) {
+  if (!confirm('Delete this release?')) return;
+  btn.disabled = true;
+  try {
+    await api('DELETE', `/api/releases/${id}`);
+    toast('Deleted'); setTimeout(() => location.reload(), 500);
+  } catch(e) { toast(e.message, 'error'); btn.disabled = false; }
+}
+
+loadTagPerms();
 loadMembers();
 </script>
 {% endblock %}

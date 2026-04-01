@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Releases — AnymeX{% endblock %}
+{% block head %}
+<style>
+.releases-hero { text-align:center; padding:3rem 1rem 2rem; }
+.releases-hero h1 { font-family:var(--mono); font-size:2rem; font-weight:700; margin-bottom:.5rem; }
+.releases-hero p { color:var(--muted); font-size:.9rem; }
+.release-card {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); margin-bottom:1.5rem; overflow:hidden;
+}
+.release-card-head {
+  padding:1rem 1.25rem; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+}
+.release-version { font-family:var(--mono); font-size:1.2rem; font-weight:700; color:var(--accent); }
+.release-date { font-size:.8rem; color:var(--muted); font-family:var(--mono); }
+.release-body { padding:1.25rem; }
+.release-notes-text { font-size:.9rem; line-height:1.7; color:var(--text); margin-bottom:1rem; white-space:pre-wrap; }
+.release-todos { display:flex; flex-direction:column; gap:6px; }
+.release-todo {
+  display:flex; align-items:center; gap:8px;
+  padding:8px 12px; background:var(--surface2); border-radius:6px; font-size:.83rem;
+  border-left:3px solid var(--done);
+}
+.release-todo .id { font-family:var(--mono); font-size:.72rem; color:var(--muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="releases-hero">
+  <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(88,101,242,0.1);border:1px solid rgba(88,101,242,0.2);color:var(--accent2);border-radius:20px;padding:4px 14px;font-size:.78rem;font-weight:600;margin-bottom:1rem;font-family:var(--mono)">📦 Releases</div>
+  <h1>Release History</h1>
+  <p>Published release notes for the AnymeX project.</p>
+</div>
+
+{% if releases %}
+  {% for r in releases %}
+  <div class="release-card">
+    <div class="release-card-head">
+      <span class="release-version">{{ r.version }}</span>
+      <span class="release-date">{{ r.date }}</span>
+      <span style="font-size:.72rem;background:rgba(29,158,117,0.12);color:var(--done);padding:2px 8px;border-radius:8px;font-weight:700">✓ Published</span>
+      <span style="font-size:.75rem;color:var(--muted);margin-left:auto">{{ r.todos|length if r.todos else 0 }} items</span>
+    </div>
+    <div class="release-body">
+      {% if r.notes %}
+      <div class="release-notes-text">{{ r.notes }}</div>
+      {% endif %}
+      {% if r.todos %}
+      <div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">What's Included</div>
+      <div class="release-todos">
+        {% for t in r.todos %}
+        <div class="release-todo">
+          <span class="id">#{{ t.id }}</span>
+          <span style="flex:1">{{ t.title }}</span>
+          <span class="status-pill status-done">✓ Done</span>
+          {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty card">
+  <div class="emoji">📦</div>
+  <p>No published releases yet.</p>
+  {% if access_level in ('admin','owner') %}
+  <a href="/settings#releases" class="btn btn-primary btn-sm" style="margin-top:12px">Create a Release →</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

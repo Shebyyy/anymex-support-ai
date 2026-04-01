@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Public Roadmap — AnymeX{% endblock %}
+{% block head %}
+<style>
+.rm-hero { text-align:center; padding:3rem 1rem 2rem; }
+.rm-hero h1 { font-family:var(--mono); font-size:2rem; font-weight:700; margin-bottom:.5rem; }
+.rm-hero p { color:var(--muted); font-size:.9rem; }
+.rm-cols {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:1.25rem; margin-bottom:2rem;
+}
+.rm-col { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.rm-col-head {
+  padding:.75rem 1rem; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between;
+}
+.rm-col-head h3 { font-size:.82rem; font-weight:700; font-family:var(--mono); }
+.rm-col-body { padding:.75rem; display:flex; flex-direction:column; gap:8px; }
+.rm-card {
+  background:var(--surface2); border:1px solid var(--border);
+  border-radius:8px; padding:10px 12px;
+  border-left:3px solid var(--accent);
+}
+.rm-card .title { font-size:.88rem; font-weight:600; margin-bottom:6px; line-height:1.3; }
+.rm-card .meta { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.rm-empty { text-align:center; padding:1.5rem .5rem; color:var(--muted); font-size:.82rem; }
+@media (max-width:640px) { .rm-cols { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rm-hero">
+  <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(88,101,242,0.1);border:1px solid rgba(88,101,242,0.2);color:var(--accent2);border-radius:20px;padding:4px 14px;font-size:.78rem;font-weight:600;margin-bottom:1rem;font-family:var(--mono)">✦ Public Roadmap</div>
+  <h1>What We're Building</h1>
+  <p>A transparent look at what the AnymeX team is working on.</p>
+</div>
+
+<div class="rm-cols">
+  {% set col_config = [
+    ('todo',           '○ To Do',       'var(--todo)'),
+    ('in_progress',    '◑ In Progress', 'var(--inprog)'),
+    ('review_needed',  '◇ Review',      'var(--review)'),
+    ('blocked',        '✕ Blocked',     'var(--blocked)'),
+  ] %}
+  {% for status, label, color in col_config %}
+  <div class="rm-col">
+    <div class="rm-col-head">
+      <h3 style="color:{{ color }}">{{ label }}</h3>
+      <span style="font-size:.72rem;color:var(--muted);font-family:var(--mono)">{{ by_status[status]|length }}</span>
+    </div>
+    <div class="rm-col-body">
+      {% if by_status[status] %}
+        {% for t in by_status[status] %}
+        <div class="rm-card" style="border-left-color:{{ color }}">
+          <div class="title">{{ t.title }}</div>
+          <div class="meta">
+            <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
+            {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="rm-empty">Nothing here</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if public_done %}
+<div class="section-head">
+  <h2>Recently Shipped</h2>
+  <span class="count">{{ public_done|length }}</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+  {% for t in public_done %}
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--done)">
+    <span style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">#{{ t.id }}</span>
+    <span style="flex:1;font-size:.88rem">{{ t.title }}</span>
+    <span class="status-pill status-done">✓ Done</span>
+    {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not by_status.todo and not by_status.in_progress and not by_status.review_needed and not by_status.blocked and not public_done %}
+<div class="empty card" style="margin-top:2rem">
+  <div class="emoji">🔭</div>
+  <p>No public roadmap items yet. Admins can mark TODOs as public from the board.</p>
+</div>
+{% endif %}
+{% endblock %}
