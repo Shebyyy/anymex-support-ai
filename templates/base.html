@@ -339,6 +339,9 @@
     <a href="/suggestions" class="{% if request.endpoint == 'suggestions_page' %}active{% endif %}">
       <span>💡 Suggestions</span>
     </a>
+    <a href="/issues" class="{% if request.endpoint == 'issues_page' %}active{% endif %}">
+      <span>📦 Issues</span>
+    </a>
     {% if user %}
     <a href="/dashboard" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
       <span>My Tasks</span>

@@ -1,0 +1,614 @@
+{% extends "base.html" %}
+{% block title %}GitHub Issues — AnymeX{% endblock %}
+
+{% block head %}
+<style>
+.page-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1.25rem; flex-wrap: wrap; gap: 12px;
+}
+.page-header h1 { font-family: var(--mono); font-size: 1.3rem; }
+.page-header p   { color: var(--muted); font-size: 0.82rem; margin-top: 4px; }
+
+.channel-tabs {
+  display: flex; gap: 4px; margin-bottom: 1.25rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px; width: fit-content;
+}
+.channel-tab {
+  padding: 7px 18px; border-radius: 7px; font-size: 0.85rem; font-weight: 600;
+  text-decoration: none; color: var(--muted); transition: all 0.15s;
+}
+.channel-tab:hover { color: var(--text); background: var(--surface2); }
+.channel-tab.active { background: var(--blocked); color: #fff; }
+
+.filters-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
+.filter-input {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 7px 12px; font-size: 0.85rem; font-family: var(--sans);
+  outline: none; transition: border-color 0.15s; min-width: 200px; flex: 1;
+}
+.filter-input:focus { border-color: var(--accent); }
+.filter-select {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 7px 28px 7px 10px; font-size: 0.85rem; font-family: var(--sans);
+  outline: none; cursor: pointer; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7280'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.filter-select option { background: #1a1d27; }
+.results-info { font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; }
+
+.forum-grid { display: flex; flex-direction: column; gap: 10px; }
+.forum-post {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem 1.25rem;
+  display: flex; align-items: flex-start; gap: 14px;
+  cursor: pointer; transition: box-shadow 0.15s, transform 0.15s;
+  border-left: 4px solid var(--blocked);
+}
+.forum-post:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.3); transform: translateY(-1px); }
+.forum-post.is-linked { border-left-color: var(--accent); }
+.forum-post .author-avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 2px solid var(--border); flex-shrink: 0; background: var(--surface2);
+}
+.forum-post-body { flex: 1; min-width: 0; }
+.forum-post-top { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+.forum-post-top .post-title {
+  font-size: 0.95rem; font-weight: 600; flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.forum-post-preview {
+  font-size: 0.82rem; color: var(--muted); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.forum-post-meta { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 0.75rem; color: var(--muted); flex-wrap: wrap; }
+.forum-post-meta .author-name { color: var(--text); font-weight: 500; }
+.reply-count {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--surface2); border-radius: 10px; padding: 2px 8px; font-size: 0.72rem;
+}
+.linked-todo-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: rgba(88,101,242,0.12); color: var(--accent2);
+  border-radius: 10px; padding: 2px 8px; font-size: 0.72rem; font-family: var(--mono);
+}
+.tags-wrap { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.thread-modal .modal { max-width: 700px; }
+.thread-header { padding-bottom: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+.thread-header .post-title-lg { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; line-height: 1.3; }
+.thread-op {
+  background: var(--surface2); border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+  font-size: 0.88rem; line-height: 1.6; border-left: 3px solid var(--blocked);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.linked-todo-card {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 10px; border-left: 3px solid var(--accent);
+}
+.linked-todo-card .ltc-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 6px; }
+.linked-todo-card .ltc-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.todo-search-results { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; margin-top: 10px; }
+.todo-search-item {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 14px; cursor: pointer; transition: border-color 0.15s; border-left: 3px solid var(--border);
+}
+.todo-search-item:hover { border-color: var(--accent2); }
+.todo-search-item.selected { border-color: var(--accent); background: rgba(88,101,242,0.08); }
+.todo-search-item .tsi-title { font-size: 0.88rem; font-weight: 600; margin-bottom: 4px; }
+.todo-search-item .tsi-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.75rem; }
+
+.todo-confirm-card {
+  background: var(--surface2); border: 1px solid var(--accent); border-radius: 10px;
+  padding: 14px; margin: 12px 0; border-left: 4px solid var(--accent);
+}
+.todo-confirm-card .tcc-id { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; }
+.todo-confirm-card .tcc-title { font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
+.todo-confirm-card .tcc-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+.todo-confirm-card .tcc-desc { font-size: 0.82rem; color: var(--muted); line-height: 1.5; font-style: italic; margin-top: 6px; }
+
+.loading-dots::after { content: ''; animation: dots 1.2s steps(3,end) infinite; }
+@keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
+
+.sync-info {
+  font-size: 0.75rem; color: var(--muted); font-family: var(--mono);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 14px; margin-bottom: 1rem;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.sync-info a { color: var(--accent2); text-decoration: none; }
+.sync-info a:hover { text-decoration: underline; }
+
+/* Issues — mobile */
+@media (max-width: 768px) {
+  .channel-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .channel-tab {
+    padding: 7px 14px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+  .filters-bar {
+    gap: 6px;
+  }
+  .filter-input {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .filter-select {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .forum-post {
+    padding: 0.85rem 1rem;
+    gap: 10px;
+  }
+  .forum-post .author-avatar {
+    width: 30px;
+    height: 30px;
+  }
+  .forum-post-top .post-title {
+    font-size: 0.88rem;
+  }
+  .forum-post-meta {
+    gap: 6px;
+  }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>📦 GitHub Issues</h1>
+    <p>From <strong><a href="https://github.com/{{ repo }}" target="_blank" style="color:var(--accent2);text-decoration:none">{{ repo }}</a></strong></p>
+  </div>
+  <span style="font-size:0.8rem;color:var(--muted)" id="results-count">{{ issues|length }} issue{{ 's' if issues|length != 1 }}</span>
+</div>
+
+<div class="channel-tabs">
+  <a class="channel-tab" href="/bugs">🐛 Bug Reports</a>
+  <a class="channel-tab" href="/suggestions">💡 Suggestions</a>
+  <a class="channel-tab active" href="/issues">📦 GitHub Issues</a>
+</div>
+
+{% if last_synced %}
+<div class="sync-info">
+  <span>↻ Last synced: {{ last_synced[:19] }} UTC</span>
+  <span style="color:var(--border)">·</span>
+  <span>{{ all_issues|length }} open issues in DB</span>
+  {% if access_level in ('admin', 'owner') %}
+  <button class="btn btn-ghost btn-sm" onclick="syncIssues(this)" id="sync-btn">↻ Sync Now</button>
+  {% endif %}
+</div>
+{% else %}
+<div class="sync-info">
+  <span>⏳ Syncing issues from GitHub… refresh in a few seconds.</span>
+</div>
+{% endif %}
+
+{% if issues %}
+<div class="filters-bar">
+  <input class="filter-input" type="text" id="search-input" placeholder="Search issues…" oninput="applyFilters()" value="{{ search }}" />
+  {% if all_labels %}
+  <select class="filter-select" id="label-filter" onchange="applyFilters()">
+    <option value="all">All labels</option>
+    {% for label in all_labels %}
+    <option value="{{ label | lower }}" {% if label_filter == label.lower() %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+  <select class="filter-select" id="linked-filter" onchange="applyFilters()">
+    <option value="all">All issues</option>
+    <option value="linked">✦ Linked to TODO</option>
+    <option value="unlinked">○ Not linked</option>
+  </select>
+  <select class="filter-select" id="platform-filter" onchange="applyFilters()">
+    <option value="all">All platforms</option>
+    <option value="android">Android</option>
+    <option value="ios">iOS</option>
+    <option value="windows">Windows</option>
+    <option value="linux">Linux</option>
+    <option value="macos">macOS</option>
+    <option value="desktop">Desktop</option>
+    <option value="mobile">Mobile</option>
+  </select>
+  <select class="filter-select" id="sort-select" onchange="applyFilters()">
+    <option value="newest">Newest first</option>
+    <option value="oldest">Oldest first</option>
+    <option value="most-comments">Most comments</option>
+    <option value="least-comments">Least comments</option>
+  </select>
+  <button class="btn btn-ghost btn-sm" onclick="clearFilters()">✕ Clear</button>
+</div>
+<div class="results-info" id="filter-info">Showing all {{ issues|length }} issues</div>
+{% endif %}
+
+<div class="forum-grid" id="forum-grid">
+{% if issues %}
+  {% for issue in issues %}
+  <div class="forum-post {% if issue.linked_todo_id %}is-linked{% endif %}"
+       data-id="{{ issue.number }}"
+       data-title="{{ issue.title | lower }}"
+       data-labels="{{ issue.labels | join(',') | lower if issue.labels else '' }}"
+       data-linked="{{ 'linked' if issue.linked_todo_id else 'unlinked' }}"
+       data-comments="{{ issue.comment_count }}"
+       data-created="{{ issue.created_at or '' }}"
+       data-platform="{{ issue.platform or '' }}"
+       onclick="openIssueDetail({{ issue.number }})">
+    <div class="author-avatar" style="display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--muted);font-weight:700;font-family:var(--mono)">
+      #{{ issue.number }}
+    </div>
+    <div class="forum-post-body">
+      <div class="forum-post-top">
+        <span class="post-title">{{ issue.title }}</span>
+        {% if issue.linked_todo_id %}<span class="linked-todo-badge">✦ TODO #{{ issue.linked_todo_id }}</span>{% endif %}
+        {% if issue.labels %}
+        <div class="tags-wrap">
+          {% for label in issue.labels[:4] %}
+          <span class="tag">{{ label }}</span>
+          {% endfor %}
+          {% if issue.labels|length > 4 %}<span class="tag" style="opacity:0.6">+{{ issue.labels|length - 4 }}</span>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% if issue.body %}
+      <div class="forum-post-preview">{{ issue.body[:200] }}</div>
+      {% endif %}
+      <div class="forum-post-meta">
+        {% if issue.assignees %}
+        <span class="author-name">👤 {{ issue.assignees | join(', ') }}</span>
+        {% else %}
+        <span style="color:var(--muted)">No assignee</span>
+        {% endif %}
+        <span>·</span>
+        <span>{{ issue.created_at[:10] if issue.created_at else '—' }}</span>
+        <span class="reply-count">💬 {{ issue.comment_count }}</span>
+        {% if issue.platform %}
+        <span class="tag" style="background:rgba(186,117,23,0.12);color:var(--inprog)">{{ issue.platform }}</span>
+        {% endif %}
+        <a href="{{ issue.html_url }}" target="_blank" style="color:var(--muted);text-decoration:none;font-size:0.72rem" onclick="event.stopPropagation()">↗ GitHub</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+{% elif last_synced %}
+  <div class="empty card"><div class="emoji">🎉</div><p>No open issues — all clear!</p></div>
+{% else %}
+  <div class="empty card"><div class="emoji">⏳</div><p>Syncing issues from GitHub…</p></div>
+{% endif %}
+</div>
+<div class="empty" id="no-results" style="display:none">
+  <div class="emoji">🔍</div><p>No issues match your filters.</p>
+</div>
+
+<!-- Issue Detail Modal -->
+<div class="modal-overlay thread-modal" id="thread-modal">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:700px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h3 id="tm-title">GitHub Issue</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('thread-modal')">✕</button>
+    </div>
+    <div id="thread-loading" style="text-align:center;padding:2rem;color:var(--muted);display:none">
+      Loading<span class="loading-dots"></span>
+    </div>
+    <div id="thread-content" style="display:none">
+      <div class="thread-header">
+        <div class="post-title-lg" id="tm-post-title"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <span style="font-size:0.82rem;font-weight:600;color:var(--accent2);font-family:var(--mono)" id="tm-issue-number"></span>
+          <span style="font-size:0.75rem;color:var(--muted)" id="tm-created-at"></span>
+          <a id="tm-github-link" href="" target="_blank" style="font-size:0.75rem;color:var(--accent2);text-decoration:none">↗ Open on GitHub</a>
+          <div id="tm-tags" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+        </div>
+      </div>
+      <div class="thread-op" id="tm-op-text"></div>
+
+      <div style="font-size:0.75rem;color:var(--muted);margin-bottom:8px" id="tm-meta-row"></div>
+
+      {% if access_level in ('manager', 'admin', 'owner') %}
+      <div style="border-top:1px solid var(--border);padding-top:1rem;margin-top:1rem">
+        <!-- Linked -->
+        <div id="tm-linked-block" style="display:none;margin-bottom:4px">
+          <div class="linked-todo-card" id="tm-linked-card"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a href="/board" class="btn btn-ghost btn-sm">View on Board →</a>
+            <button class="btn btn-danger btn-sm" onclick="unlinkIssue()">Unlink</button>
+          </div>
+        </div>
+        <!-- Not linked -->
+        <div id="tm-unlinked-block" style="display:none">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" onclick="importIssue()">✦ Import as TODO</button>
+            <button class="btn btn-ghost btn-sm" onclick="openLinkModal()">🔗 Link existing TODO</button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if access_level in ('manager', 'admin', 'owner') %}
+<!-- Link existing TODO modal -->
+<div class="modal-overlay" id="link-todo-modal">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:560px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h3>Link Existing TODO</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('link-todo-modal')">✕</button>
+    </div>
+    <div id="link-step-search">
+      <div class="form-group">
+        <label>Search by title or ID</label>
+        <input class="form-control" type="text" id="link-search-input"
+          placeholder="e.g. login crash, or #12…" oninput="searchTodos(this.value)" />
+      </div>
+      <div id="link-search-results" class="todo-search-results">
+        <p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1.5rem">Start typing to search TODOs…</p>
+      </div>
+    </div>
+    <div id="link-step-confirm" style="display:none">
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:4px">Link this issue to:</p>
+      <div class="todo-confirm-card" id="link-confirm-card"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
+        <button class="btn btn-ghost" onclick="backToSearch()">← Back</button>
+        <button class="btn btn-primary" id="link-confirm-btn" onclick="confirmLink()">Confirm Link</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script id="issues-data" type="application/json">{{ issues | tojson }}</script>
+<script>
+const _ISSUES     = JSON.parse(document.getElementById('issues-data').textContent);
+const _ISSUES_MAP = Object.fromEntries(_ISSUES.map(i => [String(i.number), i]));
+let _currentIssue = null;
+let _selectedTodo  = null;
+let _allTodos      = null;
+
+const STATUS_ICONS_MAP  = { todo:'○', in_progress:'◑', review_needed:'◇', blocked:'✕', done:'✓' };
+const STATUS_LABELS_MAP = { todo:'To Do', in_progress:'In Progress', review_needed:'Review Needed', blocked:'Blocked', done:'Done' };
+const STATUS_COLOR_MAP  = { todo:'var(--todo)', in_progress:'var(--inprog)', review_needed:'var(--review)', blocked:'var(--blocked)', done:'var(--done)' };
+const PRI_ICONS_MAP     = { low:'▽', medium:'◈', high:'▲' };
+const PRI_LABELS_MAP    = { low:'Low', medium:'Medium', high:'High' };
+
+document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', () => m.classList.remove('open')));
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
+  catch { return iso; }
+}
+
+// ── Filters + Sort ────────────────────────────────────────────────────────────
+function applyFilters() {
+  const q        = (document.getElementById('search-input')?.value || '').toLowerCase();
+  const label    = document.getElementById('label-filter')?.value || 'all';
+  const linked   = document.getElementById('linked-filter')?.value || 'all';
+  const platform = document.getElementById('platform-filter')?.value || 'all';
+  const sort     = document.getElementById('sort-select')?.value || 'newest';
+  const grid     = document.getElementById('forum-grid');
+  const cards    = [...grid.querySelectorAll('.forum-post')];
+  let visible    = 0;
+
+  cards.forEach(card => {
+    const cardLabels = (card.dataset.labels||'').split(',').filter(Boolean);
+    const show = (!q || (card.dataset.title||'').includes(q))
+              && (label === 'all' || cardLabels.includes(label))
+              && (linked === 'all' || card.dataset.linked === linked)
+              && (platform === 'all' || card.dataset.platform === platform);
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  cards.filter(c => c.style.display !== 'none').sort((a, b) => {
+    if (sort === 'newest')         return (b.dataset.created||'') > (a.dataset.created||'') ? 1 : -1;
+    if (sort === 'oldest')         return (a.dataset.created||'') > (b.dataset.created||'') ? 1 : -1;
+    if (sort === 'most-comments')  return parseInt(b.dataset.comments||0) - parseInt(a.dataset.comments||0);
+    if (sort === 'least-comments') return parseInt(a.dataset.comments||0) - parseInt(b.dataset.comments||0);
+    return 0;
+  }).forEach(c => grid.appendChild(c));
+
+  const total = cards.length;
+  const fi = document.getElementById('filter-info');
+  if (fi) fi.textContent = visible === total ? `Showing all ${total} issues` : `Showing ${visible} of ${total} issues`;
+  document.getElementById('no-results').style.display = visible === 0 ? 'block' : 'none';
+  document.getElementById('results-count').textContent = `${visible} issue${visible !== 1 ? 's' : ''}`;
+}
+
+function clearFilters() {
+  ['search-input','label-filter','linked-filter','platform-filter','sort-select'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = el.tagName === 'SELECT' ? el.options[0].value : '';
+  });
+  applyFilters();
+}
+
+// ── Sync ──────────────────────────────────────────────────────────────────────
+async function syncIssues(btn) {
+  btn.disabled = true; btn.textContent = 'Syncing…';
+  try {
+    await api('POST', '/api/issues/sync');
+    toast('Sync started! Refresh in ~10 seconds.');
+    setTimeout(() => { btn.disabled = false; btn.textContent = '↻ Sync Now'; location.reload(); }, 10000);
+  } catch(e) { toast(e.message, 'error'); btn.disabled = false; btn.textContent = '↻ Sync Now'; }
+}
+
+// ── Issue detail ───────────────────────────────────────────────────────────────
+function openIssueDetail(issueNum) {
+  _currentIssue = _ISSUES_MAP[String(issueNum)] || null;
+  if (!_currentIssue) return;
+
+  document.getElementById('thread-modal').classList.add('open');
+  document.getElementById('thread-loading').style.display = 'block';
+  document.getElementById('thread-content').style.display = 'none';
+  document.getElementById('thread-loading').innerHTML = 'Loading<span class="loading-dots"></span>';
+
+  setTimeout(() => renderIssue(_currentIssue), 150);
+}
+
+function renderIssue(data) {
+  document.getElementById('thread-loading').style.display = 'none';
+  document.getElementById('thread-content').style.display = 'block';
+  document.getElementById('tm-title').textContent       = `📦 Issue #${data.number}`;
+  document.getElementById('tm-post-title').textContent  = data.title;
+  document.getElementById('tm-issue-number').textContent = `#${data.number}`;
+  document.getElementById('tm-created-at').textContent  = fmtTime(data.created_at);
+  document.getElementById('tm-github-link').href        = data.html_url || '#';
+  document.getElementById('tm-op-text').textContent     = data.body || '(no description)';
+
+  const metaParts = [];
+  metaParts.push(`💬 ${data.comment_count} comment${data.comment_count !== 1 ? 's' : ''}`);
+  if (data.assignees && data.assignees.length) metaParts.push(`👤 ${data.assignees.join(', ')}`);
+  if (data.platform) metaParts.push(`📱 ${data.platform}`);
+  document.getElementById('tm-meta-row').innerHTML = metaParts.join('<span style="color:var(--border)"> · </span>');
+
+  document.getElementById('tm-tags').innerHTML = (data.labels||[]).map(l => `<span class="tag">${l}</span>`).join('');
+
+  _currentIssue = data;
+  renderLinkedState(data.linked_todo_id);
+}
+
+function renderLinkedState(linkedId) {
+  const lb = document.getElementById('tm-linked-block');
+  const ub = document.getElementById('tm-unlinked-block');
+  if (!lb || !ub) return;
+  if (linkedId) {
+    lb.style.display = 'block'; ub.style.display = 'none';
+    document.getElementById('tm-linked-card').innerHTML = `
+      <div class="ltc-title">TODO #${linkedId}</div>
+      <div style="font-size:0.8rem;color:var(--muted)">This GitHub issue is linked to a TODO on the board.</div>
+      <a href="/board" class="btn btn-ghost btn-sm" style="margin-top:8px">View on Board →</a>
+    `;
+  } else {
+    lb.style.display = 'none'; ub.style.display = 'block';
+  }
+}
+
+// ── Import as TODO ─────────────────────────────────────────────────────────────
+async function importIssue() {
+  if (!_currentIssue) return;
+  if (!confirm(`Import GitHub Issue #${_currentIssue.number} as a new TODO?\n\n"${_currentIssue.title}"`)) return;
+  try {
+    const data = await api('POST', `/api/issues/${_currentIssue.number}/import`);
+    toast(`Created TODO #${data.todo_id || 'new'} from issue #${_currentIssue.number}!`);
+    closeModal('thread-modal');
+    setTimeout(() => location.reload(), 700);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Link existing TODO ─────────────────────────────────────────────────────────
+async function openLinkModal() {
+  _selectedTodo = null;
+  document.getElementById('link-step-search').style.display  = 'block';
+  document.getElementById('link-step-confirm').style.display = 'none';
+  document.getElementById('link-search-input').value = '';
+  document.getElementById('link-search-results').innerHTML =
+    '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1.5rem">Start typing to search TODOs…</p>';
+  document.getElementById('link-todo-modal').classList.add('open');
+  if (!_allTodos) {
+    try {
+      const r = await fetch('/api/todos');
+      _allTodos = await r.json();
+    } catch { _allTodos = []; }
+  }
+}
+
+function searchTodos(q) {
+  q = q.trim().toLowerCase();
+  const container = document.getElementById('link-search-results');
+  if (!_allTodos) { container.innerHTML = '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">Loading…</p>'; return; }
+  let results = q
+    ? _allTodos.filter(t => t.title.toLowerCase().includes(q) || String(t.id).includes(q.replace('#','')))
+    : _allTodos;
+  results = results.slice(0, 20);
+  if (!results.length) {
+    container.innerHTML = '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">No TODOs found.</p>';
+    return;
+  }
+  container.innerHTML = results.map(t => {
+    const s = t.status||'todo'; const p = t.priority||'medium';
+    return `<div class="todo-search-item" style="border-left-color:${STATUS_COLOR_MAP[s]||'var(--accent)'}" onclick="selectTodo(${t.id}, this)">
+      <div class="tsi-title">#${t.id} — ${t.title}</div>
+      <div class="tsi-meta">
+        <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
+        <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+        ${(t.tags||[]).slice(0,3).map(tg=>`<span class="tag">${tg}</span>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectTodo(todoId, el) {
+  _selectedTodo = (_allTodos||[]).find(t => t.id === todoId);
+  if (!_selectedTodo) return;
+  document.querySelectorAll('.todo-search-item').forEach(x => x.classList.remove('selected'));
+  el.classList.add('selected');
+  const t = _selectedTodo; const s = t.status||'todo'; const p = t.priority||'medium';
+  document.getElementById('link-confirm-card').innerHTML = `
+    <div class="tcc-id">TODO #${t.id}</div>
+    <div class="tcc-title">${t.title}</div>
+    <div class="tcc-meta">
+      <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
+      <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+      ${(t.tags||[]).map(tg=>`<span class="tag">${tg}</span>`).join('')}
+    </div>
+    ${t.ai_description?`<div class="tcc-desc">${t.ai_description}</div>`:''}`;
+  document.getElementById('link-step-search').style.display  = 'none';
+  document.getElementById('link-step-confirm').style.display = 'block';
+}
+
+function backToSearch() {
+  _selectedTodo = null;
+  document.getElementById('link-step-search').style.display  = 'block';
+  document.getElementById('link-step-confirm').style.display = 'none';
+}
+
+async function confirmLink() {
+  if (!_selectedTodo || !_currentIssue) return;
+  const btn = document.getElementById('link-confirm-btn');
+  btn.disabled = true; btn.textContent = 'Linking…';
+  try {
+    await api('POST', `/api/issues/${_currentIssue.number}/link`, { todo_id: _selectedTodo.id });
+    toast(`Linked to TODO #${_selectedTodo.id}!`);
+    closeModal('link-todo-modal');
+    _currentIssue.linked_todo_id = _selectedTodo.id;
+    renderLinkedState(_selectedTodo.id);
+    const card = document.querySelector(`.forum-post[data-id="${_currentIssue.number}"]`);
+    if (card) {
+      card.classList.add('is-linked'); card.dataset.linked = 'linked';
+      const top = card.querySelector('.forum-post-top');
+      if (top && !top.querySelector('.linked-todo-badge')) {
+        const badge = document.createElement('span');
+        badge.className = 'linked-todo-badge';
+        badge.textContent = `✦ TODO #${_selectedTodo.id}`;
+        top.insertBefore(badge, top.children[1]);
+      }
+    }
+  } catch(e) { toast(e.message,'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Confirm Link'; }
+}
+
+// ── Unlink ─────────────────────────────────────────────────────────────────────
+async function unlinkIssue() {
+  if (!_currentIssue || !confirm('Remove the link between this issue and its TODO?')) return;
+  try {
+    await api('POST', `/api/issues/${_currentIssue.number}/link`, { todo_id: null });
+    toast('Unlinked.');
+    _currentIssue.linked_todo_id = null;
+    renderLinkedState(null);
+    const card = document.querySelector(`.forum-post[data-id="${_currentIssue.number}"]`);
+    if (card) { card.classList.remove('is-linked'); card.dataset.linked='unlinked'; card.querySelector('.linked-todo-badge')?.remove(); }
+  } catch(e) { toast(e.message,'error'); }
+}
+</script>
+{% endblock %}
