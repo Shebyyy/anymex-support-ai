@@ -104,6 +104,15 @@
     .badge.member  { background: rgba(107,114,128,0.1); color: var(--muted); }
     .badge.public  { background: rgba(107,114,128,0.1); color: var(--muted); }
 
+    /* Nav task badge */
+    .nav-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--accent); color: #fff;
+      font-size: 0.6rem; font-weight: 700; font-family: var(--mono);
+      border-radius: 10px; padding: 1px 5px; min-width: 16px;
+      margin-left: 4px; line-height: 1.4;
+    }
+
     .btn {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 8px 16px; border-radius: var(--radius);
@@ -333,9 +342,13 @@
     {% if user %}
     <a href="/dashboard" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
       <span>My Tasks</span>
+      {% if my_task_count > 0 %}<span class="nav-badge">{{ my_task_count }}</span>{% endif %}
     </a>
     <a href="/analytics" class="{% if request.endpoint == 'analytics' %}active{% endif %}">
       <span>Analytics</span>
+    </a>
+    <a href="/activity" class="{% if request.endpoint == 'activity' %}active{% endif %}">
+      <span>Activity</span>
     </a>
     {% if access_level in ('admin', 'owner') %}
     <a href="/settings" class="{% if request.endpoint == 'settings' %}active{% endif %}">

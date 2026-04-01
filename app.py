@@ -53,6 +53,7 @@ FILE_CONFIG        = "config.json"
 FILE_TODOS         = "todos.json"
 FILE_TODOS_ARCHIVE = "todos_archive.json"
 FILE_FORUM_LINKS   = "forum_links.json"   # maps forum thread id → todo id
+FILE_ACTIVITY_LOG  = "activity_log.json"  # web activity feed
 
 # Bot notification (triggers Discord board refresh after site changes)
 BOT_NOTIFY_URL  = os.environ.get("BOT_NOTIFY_URL")   # e.g. http://localhost:8081/notify
@@ -285,6 +286,33 @@ def _web_log_activity(action: str, todo: dict, user: dict, extra: str = ""):
             print(f"[web_log] Failed to post activity: {e}")
 
     _threading.Thread(target=_post, daemon=True).start()
+    # Also persist to activity_log.json for the /activity page
+    _persist_activity(action, todo, user if user else {}, extra)
+
+
+def _persist_activity(action: str, todo: dict, user: dict, extra: str = ""):
+    """Append an entry to activity_log.json (last 200 entries, newest first)."""
+    def _write():
+        try:
+            log, sha = gh_read(FILE_ACTIVITY_LOG, force=True)
+            log = log or []
+            entry = {
+                "ts":        datetime.datetime.utcnow().isoformat() + "Z",
+                "action":    action,
+                "extra":     extra,
+                "todo_id":   todo.get("id"),
+                "todo_title": todo.get("title", "")[:80],
+                "todo_status": todo.get("status", "todo"),
+                "user_id":   str(user.get("id", "")) if user else "",
+                "user_name": (user.get("global_name") or user.get("username") or "Web User") if user else "System",
+                "user_avatar": _avatar_url(user) if user else "",
+            }
+            log.insert(0, entry)
+            log = log[:200]   # keep last 200 entries
+            gh_write(FILE_ACTIVITY_LOG, log, sha, f"Activity: {action[:40]}")
+        except Exception as e:
+            print(f"[activity_log] Failed: {e}")
+    _threading.Thread(target=_write, daemon=True).start()
 
 def _avatar_url(user_obj):
     """Build a Discord CDN avatar URL from a user object."""
@@ -947,7 +975,48 @@ def enrich_todo(t):
                 t[f"{field}_ts"]  = int(dt.timestamp())
             except Exception:
                 t[f"{field}_fmt"] = val
+    # Due date enrichment
+    due = t.get("due_date")
+    if due:
+        try:
+            due_dt = datetime.datetime.fromisoformat(due)
+            t["due_date_fmt"] = due_dt.strftime("%b %d, %Y")
+            now = datetime.datetime.utcnow()
+            delta = (due_dt - now).days
+            if status not in ("done",):
+                if delta < 0:
+                    t["due_overdue"] = True
+                    t["due_urgency"] = "overdue"
+                    t["due_label"]   = f"Overdue by {abs(delta)}d"
+                elif delta == 0:
+                    t["due_urgency"] = "today"
+                    t["due_label"]   = "Due today"
+                elif delta <= 2:
+                    t["due_urgency"] = "soon"
+                    t["due_label"]   = f"Due in {delta}d"
+                else:
+                    t["due_urgency"] = "normal"
+                    t["due_label"]   = t["due_date_fmt"]
+            else:
+                t["due_urgency"] = "done"
+                t["due_label"]   = t["due_date_fmt"]
+        except Exception:
+            t["due_date_fmt"] = due
     return t
+
+@app.context_processor
+def inject_nav_counts():
+    """Inject my_task_count into every template for the nav badge."""
+    sess = get_session()
+    user = sess.get("user")
+    if not user:
+        return {"my_task_count": 0}
+    uid = str(user.get("id", ""))
+    todos, _ = gh_read(FILE_TODOS)
+    count = len([t for t in (todos or [])
+                 if t.get("assigned_to_id") == uid and t.get("status") != "done"])
+    return {"my_task_count": count}
+
 
 app.jinja_env.globals.update(
     STATUS_LABELS=STATUS_LABELS,
@@ -1132,7 +1201,12 @@ def board():
     status_filter   = request.args.get("status", "all")
     priority_filter = request.args.get("priority", "all")
     tag_filter      = request.args.get("tag", "all")
+    assignee_filter = request.args.get("assignee", "all")   # "all" | "me" | "unassigned"
+    due_filter      = request.args.get("due", "all")         # "all" | "overdue" | "soon"
     search          = request.args.get("q", "").lower().strip()
+
+    sess = get_session()
+    current_uid = str(sess.get("user", {}).get("id", "")) if sess.get("user") else ""
 
     filtered = todos
     if status_filter != "all":
@@ -1141,6 +1215,14 @@ def board():
         filtered = [t for t in filtered if t.get("priority") == priority_filter]
     if tag_filter != "all":
         filtered = [t for t in filtered if tag_filter in t.get("tags", [])]
+    if assignee_filter == "me" and current_uid:
+        filtered = [t for t in filtered if t.get("assigned_to_id") == current_uid]
+    elif assignee_filter == "unassigned":
+        filtered = [t for t in filtered if not t.get("assigned_to_id")]
+    if due_filter == "overdue":
+        filtered = [t for t in filtered if t.get("due_urgency") == "overdue"]
+    elif due_filter == "soon":
+        filtered = [t for t in filtered if t.get("due_urgency") in ("overdue", "today", "soon")]
     if search:
         filtered = [t for t in filtered if search in t["title"].lower()
                     or search in (t.get("ai_description") or "").lower()]
@@ -1151,8 +1233,10 @@ def board():
         todos=filtered, all_todos=todos, archive_count=len(archive),
         cfg=cfg, all_tags=all_tags,
         status_filter=status_filter, priority_filter=priority_filter,
-        tag_filter=tag_filter, search=search,
-        user=get_session().get("user"), access_level=get_session().get("access_level", "public"),
+        tag_filter=tag_filter, assignee_filter=assignee_filter,
+        due_filter=due_filter, search=search,
+        user=sess.get("user"), access_level=sess.get("access_level", "public"),
+        current_user_id=current_uid,
     )
 
 @app.route("/analytics")
@@ -1252,6 +1336,7 @@ def api_todo_create():
         "priority": data.get("priority", "medium"),
         "tags": data.get("tags", []),
         "assigned_to_id": data.get("assigned_to_id"),
+        "due_date": data.get("due_date") or None,
         "added_by_id": str(user.get("id", "")),
         "added_by": user.get("username", "web"),
         "created_at": datetime.datetime.utcnow().isoformat(),
@@ -1306,7 +1391,7 @@ def api_todo_update(todo_id):
         return jsonify({"error": "Not found"}), 404
 
     data = request.json or {}
-    allowed = ("status", "priority", "tags", "assigned_to_id", "assigned_to_name", "title", "ai_description")
+    allowed = ("status", "priority", "tags", "assigned_to_id", "assigned_to_name", "title", "ai_description", "due_date")
 
     # Build a human-readable action label from what actually changed
     changes = []
@@ -1325,6 +1410,11 @@ def api_todo_update(todo_id):
                 changes.append("Tags updated")
             elif field == "ai_description":
                 changes.append("Description updated")
+            elif field == "due_date":
+                if data[field]:
+                    changes.append(f"Due date → {data[field][:10]}")
+                else:
+                    changes.append("Due date cleared")
         if field in data:
             todo[field] = data[field]
 
@@ -1508,6 +1598,149 @@ def api_me():
         "member": get_session().get("member"),
     })
 
+@app.route("/api/members/search")
+def api_members_search():
+    """
+    Search only members who have a configured TODO role (or are admins).
+    Uses GET /guilds/{id}/roles/{role_id}/members for each configured TODO role,
+    so we only ever pull the exact set of people who can be assigned work —
+    never the full server member list.
+
+    ?q=<query>  — filter by username, global_name, or server nickname
+    Access: manager, admin, owner only.
+    """
+    sess = get_session()
+    if sess.get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    q = request.args.get("q", "").strip().lower()
+    if not q:
+        return jsonify([])
+
+    if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
+        return jsonify({"error": "Bot token or guild ID not configured"}), 503
+
+    cfg, _ = gh_read(FILE_CONFIG)
+    todo_roles = list((cfg or {}).get("todo_roles", []))
+
+    # Fetch only members who hold a TODO role via the role-members endpoint.
+    # One API call per role — much cheaper and more precise than /members?limit=1000.
+    seen_ids: set = set()
+    candidates: list = []
+
+    for role_id in todo_roles:
+        role_members = bot_get(f"/guilds/{DISCORD_GUILD_ID}/roles/{role_id}/members?limit=1000")
+        if not role_members:
+            continue
+        for m in role_members:
+            user = m.get("user") or {}
+            if user.get("bot"):
+                continue
+            uid = str(user.get("id", ""))
+            if uid in seen_ids:
+                continue
+            seen_ids.add(uid)
+            candidates.append(m)
+
+    # If no TODO roles are configured at all, fall back to fetching admins only
+    # (avoids pulling the whole server; admins can still be assigned tasks).
+    if not todo_roles:
+        all_members = bot_get(f"/guilds/{DISCORD_GUILD_ID}/members?limit=1000") or []
+        for m in all_members:
+            user = m.get("user") or {}
+            if user.get("bot"):
+                continue
+            uid   = str(user.get("id", ""))
+            perms = int(m.get("permissions", 0))
+            if bool(perms & 0x8) and uid not in seen_ids:
+                seen_ids.add(uid)
+                candidates.append(m)
+
+    # Filter the role-member pool by the search query
+    results = []
+    for m in candidates:
+        user         = m.get("user") or {}
+        uid          = str(user.get("id", ""))
+        username     = user.get("username", "")
+        global_name  = user.get("global_name") or ""
+        nick         = m.get("nick") or ""
+        display_name = nick or global_name or username
+
+        searchable = f"{username} {global_name} {nick}".lower()
+        if q not in searchable:
+            continue
+
+        av = user.get("avatar")
+        avatar_url = (
+            f"https://cdn.discordapp.com/avatars/{uid}/{av}.png?size=64"
+            if av else
+            f"https://cdn.discordapp.com/embed/avatars/{(int(uid) >> 22) % 6 if uid else 0}.png"
+        )
+
+        results.append({
+            "id":           uid,
+            "username":     username,
+            "display_name": display_name,
+            "avatar_url":   avatar_url,
+            "is_manager":   True,   # everyone in this pool holds the TODO role
+        })
+
+        if len(results) >= 15:
+            break
+
+    return jsonify(results)
+
+
+@app.route("/api/todo/<int:todo_id>/assign", methods=["POST"])
+def api_todo_assign(todo_id):
+    """
+    Self-assign / unassign endpoint for users with the TODO role (manager).
+    Body: { action: "assign" | "unassign" }
+    Managers can only assign/unassign THEMSELVES.
+    Admins/owners can pass assignee_id to assign anyone.
+    """
+    sess  = get_session()
+    level = sess.get("access_level")
+    if level not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data   = request.json or {}
+    action = data.get("action", "assign")   # "assign" or "unassign"
+    me     = sess.get("user", {})
+    me_id  = str(me.get("id", ""))
+
+    # Managers can only assign themselves; admins/owners can assign anyone
+    if level == "manager":
+        assignee_id   = me_id
+        assignee_name = me.get("global_name") or me.get("username") or "Unknown"
+    else:
+        assignee_id   = str(data.get("assignee_id", me_id))
+        assignee_name = data.get("assignee_name") or assignee_id
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        return jsonify({"error": "Not found"}), 404
+
+    if action == "unassign":
+        old_name = todo.get("assigned_to_name") or todo.get("assigned_to_id") or "Unassigned"
+        todo["assigned_to_id"]   = None
+        todo["assigned_to_name"] = None
+        action_label = f"Unassigned (was {old_name})"
+    else:
+        todo["assigned_to_id"]   = assignee_id
+        todo["assigned_to_name"] = assignee_name
+        action_label = f"Assigned → {assignee_name}"
+
+    todo["updated_at"] = datetime.datetime.utcnow().isoformat()
+
+    gh_write(FILE_TODOS, todos, sha,
+             f"Web: {action_label} for TODO #{todo_id} by {me.get('username','?')}")
+    notify_bot_board()
+    _web_log_activity(action_label, todo, me)
+    return jsonify({"ok": True, "todo": enrich_todo(todo)})
+
 @app.route("/api/forum/sync", methods=["POST"])
 def api_forum_sync():
     """Force an immediate sync of both forum channels. Admin only."""
@@ -1578,6 +1811,108 @@ def api_forum_suggestion_thread(thread_id):
     if error:
         return jsonify({"error": error}), 500
     return jsonify(detail)
+
+
+@app.route("/activity")
+@login_required
+def activity():
+    log, _ = gh_read(FILE_ACTIVITY_LOG)
+    log    = log or []
+    # Enrich each entry with display helpers
+    enriched = []
+    for e in log[:100]:
+        e = dict(e)
+        status = e.get("todo_status", "todo")
+        e["status_color"] = STATUS_COLORS.get(status, "#5865F2")
+        e["status_label"] = STATUS_LABELS.get(status, status)
+        # Human-friendly timestamp
+        try:
+            dt = datetime.datetime.fromisoformat(e["ts"].rstrip("Z"))
+            now = datetime.datetime.utcnow()
+            delta = int((now - dt).total_seconds())
+            if delta < 60:
+                e["ts_fmt"] = "just now"
+            elif delta < 3600:
+                e["ts_fmt"] = f"{delta // 60}m ago"
+            elif delta < 86400:
+                e["ts_fmt"] = f"{delta // 3600}h ago"
+            else:
+                e["ts_fmt"] = dt.strftime("%b %d")
+        except Exception:
+            e["ts_fmt"] = e.get("ts", "")[:10]
+        enriched.append(e)
+    return render_template("activity.html",
+        log=enriched,
+        user=get_session()["user"],
+        access_level=get_session().get("access_level"),
+    )
+
+
+@app.route("/api/todos/bulk", methods=["POST"])
+def api_todos_bulk():
+    """
+    Bulk update a set of TODOs.
+    Body: { ids: [int, ...], patch: { status?, assigned_to_id?, assigned_to_name? } }
+    Access: manager, admin, owner.
+    """
+    sess  = get_session()
+    level = sess.get("access_level")
+    if level not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    data  = request.json or {}
+    ids   = [int(i) for i in (data.get("ids") or [])]
+    patch = data.get("patch") or {}
+    if not ids:
+        return jsonify({"error": "No IDs provided"}), 400
+
+    # Managers can only self-assign in bulk
+    me = sess.get("user", {})
+    if level == "manager" and "assigned_to_id" in patch:
+        patch["assigned_to_id"]   = str(me.get("id", ""))
+        patch["assigned_to_name"] = me.get("global_name") or me.get("username") or "Unknown"
+
+    allowed_patch = ("status", "priority", "assigned_to_id", "assigned_to_name")
+    patch = {k: v for k, v in patch.items() if k in allowed_patch}
+    if not patch:
+        return jsonify({"error": "Nothing to update"}), 400
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+
+    archive_new = []
+    updated_ids = []
+    changes_desc = "  ·  ".join(
+        f"{k.replace('_',' ')} → {v}" for k, v in patch.items()
+        if k not in ("assigned_to_name",)
+    )
+
+    for t in todos:
+        if t["id"] in ids:
+            for k, v in patch.items():
+                t[k] = v
+            t["updated_at"] = datetime.datetime.utcnow().isoformat()
+            updated_ids.append(t["id"])
+
+    # Archive any newly-done ones
+    if patch.get("status") == "done":
+        archive, arch_sha = gh_read(FILE_TODOS_ARCHIVE, force=True)
+        archive = archive or []
+        done_todos = [t for t in todos if t["id"] in ids]
+        todos     = [t for t in todos if t["id"] not in ids]
+        archive.extend(done_todos)
+        gh_write(FILE_TODOS_ARCHIVE, archive, arch_sha,
+                 f"Web: Bulk archive {len(done_todos)} TODOs")
+
+    gh_write(FILE_TODOS, todos, sha,
+             f"Web: Bulk update {len(updated_ids)} TODOs by {me.get('username','?')}")
+    notify_bot_board()
+
+    # Log one summary entry
+    fake_todo = {"id": f"{len(updated_ids)} items", "title": f"Bulk: {changes_desc}", "status": patch.get("status","todo")}
+    _web_log_activity(f"Bulk Update ({len(updated_ids)} TODOs)", fake_todo, me, extra=changes_desc)
+
+    return jsonify({"ok": True, "updated": updated_ids})
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ERROR HANDLERS

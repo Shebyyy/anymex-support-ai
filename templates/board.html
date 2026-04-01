@@ -36,6 +36,47 @@
   font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem;
 }
 
+/* Assignee chip on cards */
+.assignee-chip {
+  font-size: 0.73rem; color: var(--muted);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 2px 8px;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+
+/* Member search dropdown */
+.member-search-wrap { position: relative; }
+.member-results {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; z-index: 200; max-height: 200px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.member-result {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; cursor: pointer; transition: background 0.1s;
+  font-size: 0.875rem;
+}
+.member-result:hover { background: var(--border); }
+.member-result img { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; }
+.member-result .mname { font-weight: 600; }
+.member-result .muname { font-size: 0.75rem; color: var(--muted); }
+.member-result .mrole {
+  margin-left: auto; font-size: 0.65rem; padding: 2px 6px;
+  border-radius: 4px; background: rgba(29,158,117,.12); color: var(--done);
+}
+.assignee-selected {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 12px; font-size: 0.875rem;
+}
+.assignee-selected img { width: 22px; height: 22px; border-radius: 50%; }
+.assignee-selected .clear {
+  margin-left: auto; cursor: pointer; color: var(--muted); font-size: 0.8rem;
+  background: none; border: none; color: var(--muted);
+}
+.assignee-selected .clear:hover { color: var(--blocked); }
+
 /* TODO cards grid */
 .todo-grid {
   display: flex; flex-direction: column; gap: 10px;
@@ -100,6 +141,39 @@
   font-size: 0.82rem; color: var(--muted); margin: 10px 0;
   font-style: italic;
 }
+
+/* Due date badges */
+.due-badge {
+  font-size: 0.68rem; font-weight: 700; font-family: var(--mono);
+  padding: 2px 7px; border-radius: 4px; white-space: nowrap;
+}
+.due-overdue { background: rgba(226,75,74,0.15); color: var(--blocked); }
+.due-today   { background: rgba(186,117,23,0.15); color: var(--inprog); }
+.due-soon    { background: rgba(55,138,221,0.12); color: var(--todo); }
+.due-normal  { background: var(--surface2); color: var(--muted); }
+
+/* Bulk actions bar */
+.bulk-bar {
+  position: sticky; top: 58px; z-index: 90;
+  background: var(--surface); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 10px 16px;
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 1rem; flex-wrap: wrap;
+  box-shadow: 0 4px 16px rgba(88,101,242,0.15);
+  animation: slideDown 0.15s ease;
+}
+@keyframes slideDown { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+.bulk-bar .count { font-family: var(--mono); font-size: 0.85rem; font-weight: 700; color: var(--accent); }
+.bulk-bar .sep { color: var(--border); }
+
+/* Checkbox on cards */
+.card-checkbox {
+  position: absolute; top: 12px; left: -28px;
+  width: 16px; height: 16px; cursor: pointer;
+  accent-color: var(--accent);
+}
+.todo-card { position: relative; }
+.todo-card.selected { border-color: var(--accent) !important; background: rgba(88,101,242,0.04); }
 
 /* Board — mobile */
 @media (max-width: 768px) {
@@ -183,8 +257,18 @@
     {% endfor %}
   </select>
   {% endif %}
+  <select class="filter-select" name="assignee" onchange="this.form.submit()">
+    <option value="all"        {% if assignee_filter=='all' %}selected{% endif %}>All assignees</option>
+    {% if user %}<option value="me" {% if assignee_filter=='me' %}selected{% endif %}>👤 Mine</option>{% endif %}
+    <option value="unassigned" {% if assignee_filter=='unassigned' %}selected{% endif %}>Unassigned</option>
+  </select>
+  <select class="filter-select" name="due" onchange="this.form.submit()">
+    <option value="all"     {% if due_filter=='all' %}selected{% endif %}>Any due date</option>
+    <option value="overdue" {% if due_filter=='overdue' %}selected{% endif %}>⚠ Overdue</option>
+    <option value="soon"    {% if due_filter=='soon' %}selected{% endif %}>🕐 Due soon</option>
+  </select>
   <button type="submit" class="btn btn-ghost btn-sm">Search</button>
-  {% if search or status_filter != 'all' or priority_filter != 'all' or tag_filter != 'all' %}
+  {% if search or status_filter != 'all' or priority_filter != 'all' or tag_filter != 'all' or assignee_filter != 'all' or due_filter != 'all' %}
   <a href="/board" class="btn btn-ghost btn-sm">✕ Clear</a>
   {% endif %}
 </form>
@@ -197,10 +281,29 @@
 <!-- ── Embed all todo data safely as JSON in a script tag (fixes onclick encoding bugs) ── -->
 <script id="todos-data" type="application/json">{{ todos | tojson }}</script>
 
+<!-- Bulk action bar (shown when items are selected) -->
+{% if access_level in ('manager','admin','owner') %}
+<div class="bulk-bar" id="bulk-bar" style="display:none">
+  <span class="count" id="bulk-count">0 selected</span>
+  <span class="sep">|</span>
+  <button class="btn btn-ghost btn-sm" onclick="bulkAction('status','in_progress')">◑ In Progress</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkAction('status','review_needed')">◇ Review</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkAction('status','done')">✓ Mark Done</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkAction('assign_me')">👤 Assign to me</button>
+  <button class="btn btn-ghost btn-sm" onclick="bulkAction('status','blocked')">✕ Blocked</button>
+  <span class="sep">|</span>
+  <button class="btn btn-ghost btn-sm" onclick="clearSelection()">✕ Cancel</button>
+</div>
+{% endif %}
+
 <!-- Cards -->
-<div class="todo-grid">
+<div class="todo-grid" id="todo-grid">
 {% for t in todos %}
-<div class="todo-card" style="border-left-color:{{ t.status_color }}" data-id="{{ t.id }}" onclick="viewTodoById({{ t.id }})">
+<div class="todo-card" style="border-left-color:{{ t.status_color }}" data-id="{{ t.id }}" onclick="cardClick(event,{{ t.id }})">
+  {% if access_level in ('manager','admin','owner') %}
+  <input type="checkbox" class="card-checkbox" data-id="{{ t.id }}"
+    onclick="event.stopPropagation();toggleSelect({{ t.id }},this)" />
+  {% endif %}
   <div class="todo-card-top">
     <span class="id">#{{ t.id }}</span>
     <span class="title">{{ t.title }}</span>
@@ -215,11 +318,27 @@
     {% for tag in t.get('tags', []) %}
       <span class="tag">{{ tag }}</span>
     {% endfor %}
+    {% if t.get('assigned_to_name') or t.get('assigned_to_id') %}
+    <span class="assignee-chip">👤 {{ t.assigned_to_name or ('User #' + (t.assigned_to_id|string)) }}</span>
+    {% endif %}
+    {% if t.get('due_urgency') and t.due_urgency != 'done' %}
+    <span class="due-badge due-{{ t.due_urgency }}">
+      {{ '⚠' if t.due_urgency == 'overdue' else '🕐' if t.due_urgency in ('today','soon') else '📅' }}
+      {{ t.due_label }}
+    </span>
+    {% endif %}
     {% if t.get('created_at_fmt') %}
     <span class="created-at">{{ t.created_at_fmt }}</span>
     {% endif %}
     {% if access_level in ('manager','admin','owner') %}
     <div class="todo-card-actions" onclick="event.stopPropagation()">
+      {% if access_level == 'manager' %}
+        {% if t.get('assigned_to_id') == current_user_id|string %}
+        <button class="btn btn-ghost btn-sm" title="Unassign yourself" onclick="selfAssign({{ t.id }}, 'unassign', this)">✗ Unassign</button>
+        {% else %}
+        <button class="btn btn-ghost btn-sm" title="Assign to yourself" onclick="selfAssign({{ t.id }}, 'assign', this)">👤 Claim</button>
+        {% endif %}
+      {% endif %}
       <button class="btn btn-ghost btn-sm" onclick="editTodoById({{ t.id }})">Edit</button>
       <button class="btn btn-danger btn-sm" onclick="deleteTodo({{ t.id }}, this)">Delete</button>
     </div>
@@ -257,6 +376,16 @@
       <div class="detail-field">
         <label>Added By</label>
         <div class="val" id="vm-added"></div>
+      </div>
+    </div>
+    <div class="detail-grid" style="margin-top:0">
+      <div class="detail-field">
+        <label>Due Date</label>
+        <div class="val" id="vm-due"></div>
+      </div>
+      <div class="detail-field">
+        <label>Created</label>
+        <div class="val" id="vm-created" style="font-size:0.82rem;color:var(--muted)"></div>
       </div>
     </div>
     <div id="vm-desc-wrap" style="display:none">
@@ -313,6 +442,28 @@
       <label>Tags (comma-separated)</label>
       <input class="form-control" type="text" id="em-tags" placeholder="bug, feature, urgent…" />
     </div>
+    <div class="form-group">
+      <label>Due Date <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+      <input class="form-control" type="date" id="em-due-date" />
+    </div>
+    <!-- Assignee — managers see self-assign toggle; admins/owners see full search -->
+    <div class="form-group" id="em-assign-group">
+      <label>Assign To</label>
+      <div id="em-assignee-selected" style="display:none" class="assignee-selected">
+        <img id="em-assignee-avatar" src="" alt="" />
+        <span id="em-assignee-label"></span>
+        <button class="clear" type="button" onclick="clearAssignee()">✕ Remove</button>
+      </div>
+      <div id="em-assign-input-wrap" class="member-search-wrap">
+        <input class="form-control" type="text" id="em-assignee-search"
+          placeholder="Search by username or nickname…"
+          autocomplete="off"
+          oninput="onAssigneeSearch(this.value)" />
+        <div class="member-results" id="em-member-results" style="display:none"></div>
+      </div>
+    </div>
+    <input type="hidden" id="em-assignee-id" value="" />
+    <input type="hidden" id="em-assignee-name" value="" />
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
       <button class="btn btn-ghost" onclick="closeModal('edit-modal')">Cancel</button>
       <button class="btn btn-primary" id="em-save-btn" onclick="saveTodo()">Save</button>
@@ -321,7 +472,7 @@
 </div>
 
 <script>
-// ── Load todo data from the safe JSON script tag (no inline onclick encoding issues) ──
+// ── Load todo data from the safe JSON script tag ──
 const _TODOS = JSON.parse(document.getElementById('todos-data').textContent);
 const _TODOS_MAP = Object.fromEntries(_TODOS.map(t => [t.id, t]));
 
@@ -329,6 +480,81 @@ const STATUS_ICONS  = { todo:'○', in_progress:'◑', review_needed:'◇', bloc
 const STATUS_LABELS = { todo:'To Do', in_progress:'In Progress', review_needed:'Review Needed', blocked:'Blocked', done:'Done' };
 const PRI_ICONS     = { low:'▽', medium:'◈', high:'▲' };
 const PRI_LABELS    = { low:'Low', medium:'Medium', high:'High' };
+
+const ACCESS_LEVEL  = "{{ access_level }}";
+const CURRENT_UID   = "{{ current_user_id }}";
+
+// ── Bulk selection ────────────────────────────────────────────────────────────
+const _selected = new Set();
+
+function cardClick(e, id) {
+  // If clicking directly on the checkbox or a button, don't open modal
+  if (e.target.type === 'checkbox' || e.target.closest('button')) return;
+  // If we're in selection mode, toggle instead of opening modal
+  if (_selected.size > 0) {
+    const cb = document.querySelector(`.card-checkbox[data-id="${id}"]`);
+    if (cb) { cb.checked = !cb.checked; toggleSelect(id, cb); }
+    return;
+  }
+  viewTodoById(id);
+}
+
+function toggleSelect(id, cb) {
+  if (cb.checked) _selected.add(id);
+  else _selected.delete(id);
+  const card = document.querySelector(`.todo-card[data-id="${id}"]`);
+  if (card) card.classList.toggle('selected', cb.checked);
+  _refreshBulkBar();
+}
+
+function _refreshBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  if (!bar) return;
+  if (_selected.size === 0) {
+    bar.style.display = 'none';
+  } else {
+    bar.style.display = 'flex';
+    document.getElementById('bulk-count').textContent =
+      `${_selected.size} selected`;
+  }
+}
+
+function clearSelection() {
+  _selected.clear();
+  document.querySelectorAll('.card-checkbox').forEach(cb => {
+    cb.checked = false;
+    const card = document.querySelector(`.todo-card[data-id="${cb.dataset.id}"]`);
+    if (card) card.classList.remove('selected');
+  });
+  _refreshBulkBar();
+}
+
+async function bulkAction(type, value) {
+  if (_selected.size === 0) return;
+  const ids = [..._selected];
+  let patch = {};
+  if (type === 'status')    patch = { status: value };
+  if (type === 'assign_me') patch = { assigned_to_id: CURRENT_UID };
+
+  const bar = document.getElementById('bulk-bar');
+  bar.style.opacity = '0.5';
+
+  try {
+    const res = await fetch('/api/todos/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, patch }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    toast(`Updated ${data.updated.length} TODO${data.updated.length !== 1 ? 's' : ''}`);
+    clearSelection();
+    setTimeout(() => location.reload(), 700);
+  } catch(e) {
+    toast(e.message, 'error');
+    bar.style.opacity = '1';
+  }
+}
 
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
@@ -351,10 +577,37 @@ function viewTodo(t) {
     `<span class="status-pill status-${status}">${STATUS_ICONS[status] || '○'} ${STATUS_LABELS[status] || status}</span>`;
   document.getElementById('vm-priority').innerHTML =
     `<span class="pri-icon pri-${pri}">${PRI_ICONS[pri] || '◈'} ${PRI_LABELS[pri] || pri}</span>`;
-  document.getElementById('vm-assigned').textContent =
-    t.assigned_to_id ? `<@${t.assigned_to_id}>` : 'Unassigned';
+
+  // Assigned-to — show name + assign-to-me button in viewer
+  const assignedEl = document.getElementById('vm-assigned');
+  const assignedName = t.assigned_to_name || (t.assigned_to_id ? `User #${t.assigned_to_id}` : null);
+  let assignedHtml = assignedName
+    ? `<span>${assignedName}</span>`
+    : '<span style="color:var(--muted)">Unassigned</span>';
+
+  if (['manager','admin','owner'].includes(ACCESS_LEVEL)) {
+    if (t.assigned_to_id === CURRENT_UID) {
+      assignedHtml += ` <button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="selfAssign(${t.id},'unassign',this)">✗ Unassign me</button>`;
+    } else {
+      assignedHtml += ` <button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="selfAssign(${t.id},'assign',this)">👤 Assign to me</button>`;
+    }
+  }
+  assignedEl.innerHTML = assignedHtml;
+
   document.getElementById('vm-added').textContent =
-    t.added_by || (t.added_by_id ? `<@${t.added_by_id}>` : '—');
+    t.added_by || (t.added_by_id ? `User #${t.added_by_id}` : '—');
+
+  // Due date in view modal
+  const dueEl = document.getElementById('vm-due');
+  if (t.due_date) {
+    const urgency = t.due_urgency || 'normal';
+    const label   = t.due_label || t.due_date_fmt || t.due_date?.slice(0,10);
+    const icon    = urgency === 'overdue' ? '⚠ ' : urgency === 'today' ? '🕐 ' : '📅 ';
+    dueEl.innerHTML = `<span class="due-badge due-${urgency}">${icon}${label}</span>`;
+  } else {
+    dueEl.innerHTML = '<span style="color:var(--muted);font-size:0.82rem">No due date</span>';
+  }
+  document.getElementById('vm-created').textContent = t.created_at_fmt || '—';
 
   const descWrap = document.getElementById('vm-desc-wrap');
   const desc = t.ai_description || '';
@@ -380,6 +633,9 @@ function openAddModal() {
   document.getElementById('em-status').value = 'todo';
   document.getElementById('em-priority').value = 'medium';
   document.getElementById('em-tags').value = '';
+  clearAssignee();
+  document.getElementById('em-due-date').value = '';
+  _showAssignSearch();
   document.getElementById('edit-modal').classList.add('open');
 }
 
@@ -397,9 +653,113 @@ function editTodo(t) {
   document.getElementById('em-status').value = t.status || 'todo';
   document.getElementById('em-priority').value = t.priority || 'medium';
   document.getElementById('em-tags').value = (t.tags || []).join(', ');
+
+  // Prefill assignee
+  clearAssignee(true); // silent clear
+  if (t.assigned_to_id) {
+    _setAssignee({
+      id: t.assigned_to_id,
+      display_name: t.assigned_to_name || `User #${t.assigned_to_id}`,
+      avatar_url: `https://cdn.discordapp.com/embed/avatars/0.png`,
+    });
+  }
+  // Prefill due date
+  document.getElementById('em-due-date').value = (t.due_date || '').slice(0,10);
+
+  _showAssignSearch();
   document.getElementById('edit-modal').classList.add('open');
 }
 
+// ── Assignee search ──────────────────────────────────────────────────────────
+let _assignSearchTimer = null;
+
+function _showAssignSearch() {
+  // Managers can also search (they can assign themselves, but let them see the field)
+  const grp = document.getElementById('em-assign-group');
+  if (grp) grp.style.display = ['manager','admin','owner'].includes(ACCESS_LEVEL) ? '' : 'none';
+}
+
+function clearAssignee(silent) {
+  document.getElementById('em-assignee-id').value = '';
+  document.getElementById('em-assignee-name').value = '';
+  document.getElementById('em-assignee-search').value = '';
+  document.getElementById('em-assignee-selected').style.display = 'none';
+  document.getElementById('em-assign-input-wrap').style.display = '';
+  document.getElementById('em-member-results').style.display = 'none';
+}
+
+function _setAssignee(member) {
+  document.getElementById('em-assignee-id').value   = member.id;
+  document.getElementById('em-assignee-name').value = member.display_name;
+  document.getElementById('em-assignee-avatar').src  = member.avatar_url;
+  document.getElementById('em-assignee-label').textContent = member.display_name;
+  document.getElementById('em-assignee-selected').style.display = 'flex';
+  document.getElementById('em-assign-input-wrap').style.display = 'none';
+  document.getElementById('em-member-results').style.display   = 'none';
+}
+
+function onAssigneeSearch(val) {
+  clearTimeout(_assignSearchTimer);
+  const resultsEl = document.getElementById('em-member-results');
+  if (!val.trim()) { resultsEl.style.display = 'none'; return; }
+
+  // Managers: only allow themselves — shortcut straight to self-assign
+  if (ACCESS_LEVEL === 'manager') {
+    resultsEl.style.display = 'none';
+    return;
+  }
+
+  _assignSearchTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/members/search?q=${encodeURIComponent(val)}`);
+      const members = await res.json();
+      if (!Array.isArray(members) || members.length === 0) {
+        resultsEl.innerHTML = '<div style="padding:10px 14px;font-size:0.8rem;color:var(--muted)">No members found</div>';
+        resultsEl.style.display = 'block';
+        return;
+      }
+      resultsEl.innerHTML = members.map(m => `
+        <div class="member-result" onclick="pickMember(${JSON.stringify(m).replace(/"/g, '&quot;')})">
+          <img src="${m.avatar_url}" alt="" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+          <div>
+            <div class="mname">${m.display_name}</div>
+            <div class="muname">@${m.username}</div>
+          </div>
+          ${m.is_manager ? '<span class="mrole">Manager</span>' : ''}
+        </div>
+      `).join('');
+      resultsEl.style.display = 'block';
+    } catch(e) {
+      resultsEl.style.display = 'none';
+    }
+  }, 300);
+}
+
+function pickMember(member) {
+  _setAssignee(member);
+}
+
+// ── Self-assign (Claim / Unassign) ───────────────────────────────────────────
+async function selfAssign(todoId, action, btn) {
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const res = await fetch(`/api/todo/${todoId}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    toast(action === 'assign' ? '👤 Assigned to you!' : 'Unassigned');
+    setTimeout(() => location.reload(), 500);
+  } catch(e) {
+    toast(e.message, 'error');
+    btn.disabled = false; btn.textContent = prev;
+  }
+}
+
+// ── Save (create/update) ─────────────────────────────────────────────────────
 async function saveTodo() {
   const id       = document.getElementById('em-id').value;
   const title    = document.getElementById('em-title-input').value.trim();
@@ -409,13 +769,30 @@ async function saveTodo() {
   const tagsRaw  = document.getElementById('em-tags').value;
   const tags     = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
+  // Assignee — for managers, if they filled the search field it means themselves
+  let assigneeId   = document.getElementById('em-assignee-id').value || null;
+  let assigneeName = document.getElementById('em-assignee-name').value || null;
+
+  if (ACCESS_LEVEL === 'manager' && !assigneeId) {
+    // If manager typed something in the search box, treat it as self-assign intent
+    const typed = document.getElementById('em-assignee-search').value.trim();
+    if (typed) {
+      assigneeId   = CURRENT_UID;
+      assigneeName = null; // server will fill from session
+    }
+  }
+
   if (!title) { toast('Title is required', 'error'); return; }
 
   const btn = document.getElementById('em-save-btn');
   btn.disabled = true; btn.textContent = 'Saving…';
 
   try {
-    const body = { title, description: desc, status, priority, tags };
+    const dueDate = document.getElementById('em-due-date').value || null;
+  const body = { title, description: desc, status, priority, tags, due_date: dueDate };
+    if (assigneeId !== undefined) body.assigned_to_id = assigneeId;
+    if (assigneeName)             body.assigned_to_name = assigneeName;
+
     if (id) {
       await api('PATCH', `/api/todo/${id}`, body);
       toast(`TODO #${id} updated!`);
@@ -443,5 +820,16 @@ async function deleteTodo(id, btn) {
     toast(e.message, 'error');
   }
 }
+
+// Hide assignee field for public/member on page load
+_showAssignSearch();
+
+// Close member search dropdown on outside click
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('em-assign-input-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('em-member-results').style.display = 'none';
+  }
+});
 </script>
 {% endblock %}

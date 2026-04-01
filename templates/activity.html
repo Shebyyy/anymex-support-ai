@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Activity — AnymeX{% endblock %}
+
+{% block head %}
+<style>
+.activity-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1.75rem; flex-wrap: wrap; gap: 10px;
+}
+.activity-header h1 { font-family: var(--mono); font-size: 1.3rem; }
+
+.feed {
+  display: flex; flex-direction: column; gap: 0;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.feed-entry {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+.feed-entry:last-child { border-bottom: none; }
+.feed-entry:hover { background: var(--surface2); }
+
+.feed-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  flex-shrink: 0; margin-top: 2px;
+  border: 2px solid var(--border);
+}
+
+.feed-body { flex: 1; min-width: 0; }
+
+.feed-top {
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; margin-bottom: 3px;
+}
+.feed-user {
+  font-size: 0.85rem; font-weight: 700; color: var(--text);
+}
+.feed-action {
+  font-size: 0.85rem; color: var(--muted);
+}
+.feed-todo {
+  font-size: 0.82rem; font-family: var(--mono);
+  color: var(--accent2);
+  background: rgba(88,101,242,0.08);
+  padding: 1px 7px; border-radius: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 240px;
+  display: inline-block;
+}
+.feed-extra {
+  font-size: 0.78rem; color: var(--muted); margin-top: 3px;
+}
+
+.feed-ts {
+  font-size: 0.72rem; color: var(--muted);
+  font-family: var(--mono); flex-shrink: 0; margin-left: auto;
+  white-space: nowrap;
+}
+
+.feed-status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  margin-top: 6px;
+}
+
+@media (max-width: 600px) {
+  .feed-entry { padding: 12px 14px; gap: 10px; }
+  .feed-todo  { max-width: 160px; }
+  .feed-ts    { display: none; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="activity-header">
+  <div>
+    <h1>Activity Feed</h1>
+    <p style="color:var(--muted);font-size:0.85rem;margin-top:4px">Recent changes from the web dashboard — last 100 entries</p>
+  </div>
+  <span style="font-size:0.8rem;color:var(--muted)">{{ log|length }} entries</span>
+</div>
+
+{% if log %}
+<div class="feed">
+  {% for e in log %}
+  <div class="feed-entry">
+    <img class="feed-avatar"
+      src="{{ e.user_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}"
+      onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"
+      alt="{{ e.user_name }}" />
+    <div class="feed-status-dot" style="background:{{ e.status_color }}"></div>
+    <div class="feed-body">
+      <div class="feed-top">
+        <span class="feed-user">{{ e.user_name }}</span>
+        <span class="feed-action">{{ e.action }}</span>
+        {% if e.todo_id %}
+        <span class="feed-todo">#{{ e.todo_id }}{% if e.todo_title %} — {{ e.todo_title[:40] }}{% endif %}</span>
+        {% endif %}
+        <span class="feed-ts">{{ e.ts_fmt }}</span>
+      </div>
+      {% if e.extra %}
+      <div class="feed-extra">{{ e.extra }}</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty card">
+  <div class="emoji">📋</div>
+  <p>No activity logged yet — changes made through the dashboard will appear here.</p>
+</div>
+{% endif %}
+{% endblock %}
