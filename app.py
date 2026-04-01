@@ -1224,19 +1224,33 @@ def board():
         filtered = [t for t in filtered if str(t.get("assigned_to_id", "")) == current_uid]
     elif assignee_filter == "unassigned":
         filtered = [t for t in filtered if not t.get("assigned_to_id")]
+    elif assignee_filter not in ("all", "me", "unassigned") and assignee_filter:
+        # specific user ID passed
+        filtered = [t for t in filtered if str(t.get("assigned_to_id", "")) == assignee_filter]
     if due_filter == "overdue":
         filtered = [t for t in filtered if t.get("due_urgency") == "overdue"]
     elif due_filter == "soon":
         filtered = [t for t in filtered if t.get("due_urgency") in ("overdue", "today", "soon")]
     if search:
-        filtered = [t for t in filtered if search in t["title"].lower()
-                    or search in (t.get("ai_description") or "").lower()]
+        filtered = [t for t in filtered if
+                    search in t["title"].lower()
+                    or search in (t.get("ai_description") or "").lower()
+                    or search in (t.get("assigned_to_name") or "").lower()
+                    or any(search in tag.lower() for tag in t.get("tags", []))]
 
     all_tags = sorted(set(tag for t in todos for tag in t.get("tags", [])))
+
+    # Load todo-role members for the assignee filter dropdown
+    members_db = gh_read(FILE_MEMBERS)[0] or {}
+    assignable_members = sorted(
+        [m for m in (members_db.get("members") or {}).values() if m.get("is_todo_role")],
+        key=lambda m: m.get("display_name", "").lower()
+    )
 
     return render_template("board.html",
         todos=filtered, all_todos=todos, archive_count=len(archive),
         cfg=cfg, all_tags=all_tags,
+        assignable_members=assignable_members,
         status_filter=status_filter, priority_filter=priority_filter,
         tag_filter=tag_filter, assignee_filter=assignee_filter,
         due_filter=due_filter, search=search,

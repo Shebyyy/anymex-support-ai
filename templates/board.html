@@ -260,7 +260,14 @@
   <select class="filter-select" name="assignee" onchange="this.form.submit()">
     <option value="all"        {% if assignee_filter=='all' %}selected{% endif %}>All assignees</option>
     {% if user %}<option value="me" {% if assignee_filter=='me' %}selected{% endif %}>👤 Mine</option>{% endif %}
-    <option value="unassigned" {% if assignee_filter=='unassigned' %}selected{% endif %}>Unassigned</option>
+    <option value="unassigned" {% if assignee_filter=='unassigned' %}selected{% endif %}>⊘ Unassigned</option>
+    {% if assignable_members %}
+    <optgroup label="── Team ──">
+      {% for m in assignable_members %}
+      <option value="{{ m.id }}" {% if assignee_filter==m.id %}selected{% endif %}>{{ m.display_name }}</option>
+      {% endfor %}
+    </optgroup>
+    {% endif %}
   </select>
   <select class="filter-select" name="due" onchange="this.form.submit()">
     <option value="all"     {% if due_filter=='all' %}selected{% endif %}>Any due date</option>

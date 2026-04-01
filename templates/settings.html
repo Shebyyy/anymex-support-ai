@@ -299,25 +299,34 @@ document.querySelectorAll('.settings-nav a').forEach(a => {
 
 // ── Member DB ────────────────────────────────────────────────────────────────
 async function loadMembers() {
+  const listEl = document.getElementById('members-list');
+  const ls     = document.getElementById('members-last-synced');
+  const stats  = document.getElementById('members-stats');
   try {
     const res  = await fetch('/api/members');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      listEl.innerHTML = `<div style="font-size:0.82rem;color:var(--blocked)">Error ${res.status}: ${err.error || 'Failed to load members'}</div>`;
+      ls.textContent = '—';
+      return;
+    }
     const data = await res.json();
 
-    // Last synced
-    const ls = document.getElementById('members-last-synced');
+    // Last synced timestamp
     if (data.last_synced) {
-      const dt    = new Date(data.last_synced + 'Z');
+      const raw   = data.last_synced.replace('Z','').replace(/ /,'T');
+      const dt    = new Date(raw + 'Z');
       const delta = Math.floor((Date.now() - dt) / 1000);
-      ls.textContent = delta < 60 ? 'just now'
+      ls.textContent = isNaN(delta) ? data.last_synced.slice(0,16).replace('T',' ') + ' UTC'
+        : delta < 60   ? 'just now'
         : delta < 3600 ? `${Math.floor(delta/60)}m ago`
         : delta < 86400 ? `${Math.floor(delta/3600)}h ago`
         : dt.toLocaleDateString();
     } else {
-      ls.textContent = 'Never synced';
+      ls.textContent = 'Never synced — click Sync Now';
     }
 
-    // Stats row
-    const stats = document.getElementById('members-stats');
+    // Stats
     const todoCount = (data.members || []).length;
     stats.innerHTML = `
       <span>👥 <strong>${data.total || 0}</strong> total members</span>
@@ -326,9 +335,8 @@ async function loadMembers() {
     `;
 
     // Member list
-    const listEl = document.getElementById('members-list');
     if (!data.members || data.members.length === 0) {
-      listEl.innerHTML = '<div style="font-size:0.82rem;color:var(--muted);padding:8px 0">No members with TODO role found. Try syncing.</div>';
+      listEl.innerHTML = '<div style="font-size:0.82rem;color:var(--muted);padding:8px 0">No members with TODO role found. Make sure todo_roles are configured, then click Sync Now.</div>';
       return;
     }
 
@@ -346,8 +354,8 @@ async function loadMembers() {
       </div>
     `).join('');
   } catch(e) {
-    document.getElementById('members-list').innerHTML =
-      '<div style="font-size:0.82rem;color:var(--blocked)">Failed to load members.</div>';
+    listEl.innerHTML = `<div style="font-size:0.82rem;color:var(--blocked)">Failed to load members: ${e.message}</div>`;
+    if (ls) ls.textContent = '—';
   }
 }
 
