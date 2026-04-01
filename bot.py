@@ -33,8 +33,17 @@ GITHUB_API  = "https://api.github.com"
 FILE_CONFIG        = "config.json"
 FILE_TODOS         = "todos.json"
 FILE_TODOS_ARCHIVE = "todos_archive.json"
-FILE_BOARD_IDS       = "board_ids.json"        # dedicated store for Discord message IDs
-FILE_THREAD_MESSAGES = "thread_messages.json"  # saved thread conversation history
+FILE_BOARD_IDS       = "board_ids.json"
+FILE_THREAD_MESSAGES = "thread_messages.json"
+
+# ── New feature files (must match app.py) ───────────────────────────────────
+FILE_COMMENTS      = "todo_comments.json"
+FILE_BOT_HEALTH    = "bot_health.json"
+FILE_ACTIVITY_LOG  = "activity_log.json"
+
+# GitHub issues repo (for issue import)
+ANYMEX_OWNER = os.environ.get("ANYMEX_OWNER", "RyanYuuki")
+ANYMEX_REPO  = os.environ.get("ANYMEX_REPO",  "AnymeX")
 
 TODOS_PER_PAGE = 10
 
@@ -1848,26 +1857,6 @@ async def thread_sync_task():
 # EVENTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-@bot.event
-async def on_ready():
-    print(f"AnymeX TODO Bot online as {bot.user}")
-    await ensure_files()
-    if not getattr(bot, "_synced", False):
-        try:
-            await bot.tree.sync()
-            bot._synced = True
-            print("Slash commands synced")
-        except Exception as e:
-            print(f"Sync failed: {e}")
-    if not reminder_task.is_running():
-        reminder_task.start()
-        print("Reminder task started")
-    if not thread_sync_task.is_running():
-        thread_sync_task.start()
-        print("Thread sync task started")
-
-
-
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -3440,6 +3429,568 @@ async def todo_refresh(interaction: discord.Interaction):
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
+
+async def main():
+    await start_health_server()
+    _ph = os.environ.get("PROXY_HOST")
+    _pp = os.environ.get("PROXY_PORT")
+    _pu = os.environ.get("PROXY_USER")
+    _pw = os.environ.get("PROXY_PASS")
+    if all([_ph, _pp, _pu, _pw]):
+        proxy_url = f"http://{_pu}:{_pw}@{_ph}:{_pp}"
+        print(f"Using proxy: {_ph}:{_pp}")
+        bot.http.proxy = proxy_url
+    await bot.start(DISCORD_TOKEN)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE: HEALTH HEARTBEAT TASK
+# Writes bot status to bot_health.json every 5 minutes so the dashboard
+# settings page can show online/offline status and sync times.
+# ══════════════════════════════════════════════════════════════════════════════
+
+BOT_NOTIFY_URL  = os.environ.get("BOT_NOTIFY_URL", "")
+INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")
+WEB_APP_URL     = os.environ.get("WEB_APP_URL", "")  # e.g. https://yourapp.onrender.com
+
+@tasks.loop(minutes=5)
+async def health_heartbeat_task():
+    """Report bot health to web app every 5 min."""
+    if not WEB_APP_URL and not INTERNAL_SECRET:
+        return  # Not configured — skip
+    try:
+        async with aiohttp.ClientSession() as session:
+            todos,   _   = await gh_read(session, FILE_TODOS)
+            archive, _   = await gh_read(session, FILE_TODOS_ARCHIVE)
+            cfg,     _   = await gh_read(session, FILE_CONFIG)
+
+        active_count = len([t for t in (todos or []) if t.get("status") != "done"])
+        health_data  = {
+            "last_heartbeat":     datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "bot_user":           str(bot.user) if bot.user else "unknown",
+            "guild_count":        len(bot.guilds),
+            "active_todo_count":  active_count,
+            "archive_count":      len(archive or []),
+            "todo_style":         int((cfg or {}).get("todo_style", 1)),
+            "reminder_task":      reminder_task.is_running(),
+            "thread_sync_task":   thread_sync_task.is_running(),
+            "latency_ms":         round(bot.latency * 1000, 1),
+        }
+
+        # Write to GitHub
+        async with aiohttp.ClientSession() as session:
+            existing, sha = await gh_read(session, FILE_BOT_HEALTH)
+            await gh_write(session, FILE_BOT_HEALTH, health_data, sha, "Bot: health heartbeat")
+
+        # Also POST to web app if configured
+        if WEB_APP_URL and INTERNAL_SECRET:
+            url = WEB_APP_URL.rstrip("/") + "/api/bot/health"
+            async with aiohttp.ClientSession() as session:
+                try:
+                    async with session.post(
+                        url,
+                        json=health_data,
+                        headers={"X-Internal-Secret": INTERNAL_SECRET},
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as _:
+                        pass
+                except Exception:
+                    pass
+
+    except Exception as e:
+        print(f"[health_heartbeat] Error: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE: WATCHER NOTIFICATIONS
+# When a TODO status changes, DM all watchers.
+# Called from the existing todo_status command after the write.
+# We monkey-patch in a helper to be called from update flows.
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def notify_watchers(guild: discord.Guild, todo: dict, changed_field: str, new_value: str, actor: discord.Member | None):
+    """DM all watchers of a TODO when a field changes. Never DMs the actor."""
+    watchers = todo.get("watchers", [])
+    if not watchers:
+        return
+    actor_id = str(actor.id) if actor else ""
+    title    = todo.get("title", f"TODO #{todo.get('id','?')}")
+    for uid in watchers:
+        if uid == actor_id:
+            continue
+        member = guild.get_member(int(uid))
+        if not member:
+            continue
+        try:
+            await member.send(
+                f"📋 **TODO #{todo.get('id')}** — *{title[:60]}*\n"
+                f"**{changed_field}** changed to **{new_value}** by "
+                f"{actor.display_name if actor else 'someone'}."
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE: @MENTION NOTIFICATIONS IN TODO DESCRIPTIONS
+# Scan description on create/update for @username mentions, DM them.
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def notify_mentions(guild: discord.Guild, todo: dict, actor: discord.Member | None):
+    """Scan todo description for @username mentions and DM those users."""
+    desc = todo.get("ai_description", "") or ""
+    if not desc:
+        return
+    actor_id = str(actor.id) if actor else ""
+    # Look for <@id> patterns (from web form) or plain @username
+    mentioned_ids = re.findall(r"<@!?(\d+)>", desc)
+    for uid in set(mentioned_ids):
+        if uid == actor_id:
+            continue
+        member = guild.get_member(int(uid))
+        if not member:
+            continue
+        try:
+            await member.send(
+                f"💬 You were mentioned in **TODO #{todo.get('id')}** — *{todo.get('title','')[:60]}*\n"
+                f"By {actor.display_name if actor else 'someone'} on the web dashboard."
+            )
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE: WEEKLY DIGEST TASK
+# Sends a weekly summary embed to the configured digest channel.
+# config.json: "digest_channel": "channel_id", "digest_day": 0 (Monday)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_digest_last_fired: str = ""
+
+
+@tasks.loop(hours=1)
+async def weekly_digest_task():
+    """Fire a weekly digest on the configured day (default Monday) at 09:00 UTC."""
+    global _digest_last_fired
+    try:
+        async with aiohttp.ClientSession() as session:
+            cfg, _ = await gh_read(session, FILE_CONFIG)
+        cfg = cfg or {}
+        digest_ch_id = cfg.get("digest_channel")
+        if not digest_ch_id:
+            return  # not configured
+
+        now_utc  = datetime.datetime.now(datetime.timezone.utc)
+        # Only fire on the configured weekday at 09:xx UTC
+        digest_day = int(cfg.get("digest_day", 0))  # 0=Monday
+        if now_utc.weekday() != digest_day or now_utc.hour != 9:
+            return
+
+        today_key = now_utc.strftime("%Y-%m-%d")
+        if _digest_last_fired == today_key:
+            return
+        _digest_last_fired = today_key
+
+        async with aiohttp.ClientSession() as session:
+            todos,   _ = await gh_read(session, FILE_TODOS)
+            archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        todos   = todos   or []
+        archive = archive or []
+
+        week_ago = (now_utc - datetime.timedelta(days=7)).isoformat()
+        completed_this_week = [t for t in archive if (t.get("done_at") or t.get("updated_at","")) >= week_ago]
+        active = [t for t in todos if t.get("status") != "done"]
+
+        from collections import Counter
+        completers = Counter(t.get("done_by_id") for t in completed_this_week if t.get("done_by_id"))
+
+        e = discord.Embed(
+            title="📊 Weekly TODO Digest",
+            color=0x5865F2,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+        e.add_field(name="✅ Completed this week", value=str(len(completed_this_week)), inline=True)
+        e.add_field(name="📋 Active TODOs",        value=str(len(active)),              inline=True)
+        e.add_field(name="📁 Total archived",       value=str(len(archive)),             inline=True)
+
+        # Status breakdown
+        counts = {s: len([t for t in active if t["status"] == s])
+                  for s in ["todo", "in_progress", "review_needed", "blocked"]}
+        e.add_field(
+            name="Active breakdown",
+            value=(
+                f"○ To Do: {counts['todo']}  ◑ In Progress: {counts['in_progress']}\n"
+                f"◇ Review: {counts['review_needed']}  ✕ Blocked: {counts['blocked']}"
+            ),
+            inline=False,
+        )
+
+        # Top completers
+        if completers:
+            top = "\n".join(f"<@{uid}> — {cnt}" for uid, cnt in completers.most_common(3))
+            e.add_field(name="🏆 Top completers", value=top, inline=False)
+
+        # Recent completions
+        if completed_this_week:
+            items = "\n".join(f"• #{t['id']} {t.get('title','')[:50]}" for t in completed_this_week[:5])
+            e.add_field(name="Recent completions", value=items, inline=False)
+
+        # Overdue / blocked
+        overdue = [t for t in active if t.get("status") == "blocked"]
+        if overdue:
+            items = "\n".join(f"• #{t['id']} {t.get('title','')[:50]}" for t in overdue[:3])
+            e.add_field(name="🔴 Blocked", value=items, inline=False)
+
+        e.set_footer(text="AnymeX Weekly Digest — every Monday")
+
+        for guild in bot.guilds:
+            ch = guild.get_channel(int(digest_ch_id))
+            if ch:
+                try:
+                    await ch.send(embed=e)
+                except Exception as ex:
+                    print(f"[digest] Failed to send to {guild.name}: {ex}")
+
+    except Exception as e:
+        print(f"[weekly_digest_task] Error: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE: RECURRING TODO SPAWNER
+# Runs daily; creates new copies of todos with "recur" field when due.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@tasks.loop(hours=24)
+async def recurring_todo_task():
+    """Daily: spawn new copies of recurring TODOs that are due."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            todos, sha = await gh_read_fresh(session, FILE_TODOS)
+        todos = todos or []
+        now   = datetime.datetime.now(datetime.timezone.utc)
+        new_todos = []
+        changed   = False
+
+        for t in todos:
+            recur = t.get("recur")
+            if not recur or t.get("status") == "done":
+                continue
+            next_run_str = recur.get("next_run", "")
+            if not next_run_str:
+                continue
+            try:
+                next_run = datetime.datetime.fromisoformat(next_run_str.rstrip("Z"))
+                if next_run.tzinfo is None:
+                    next_run = next_run.replace(tzinfo=datetime.timezone.utc)
+            except Exception:
+                continue
+
+            if now < next_run:
+                continue
+
+            # Time to spawn a new copy
+            interval = recur.get("interval", "weekly")
+            deltas = {"daily": datetime.timedelta(days=1), "weekly": datetime.timedelta(weeks=1), "monthly": datetime.timedelta(days=30)}
+            next_next = (now + deltas.get(interval, datetime.timedelta(weeks=1))).isoformat()
+
+            all_ids = [x["id"] for x in todos] + [x["id"] for x in new_todos]
+            new_id  = max(all_ids) + 1
+            new_copy = {
+                k: v for k, v in t.items()
+                if k not in ("id", "status", "assigned_to_id", "assigned_to_name",
+                             "created_at", "updated_at", "done_at", "done_by_id",
+                             "done_by_name", "time_logs", "watchers")
+            }
+            new_copy.update({
+                "id":         new_id,
+                "status":     "todo",
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+                "source":     "recurring",
+            })
+            new_todos.append(new_copy)
+
+            # Update next_run on the original
+            t["recur"]["next_run"] = next_next
+            changed = True
+            print(f"[recurring] Spawned TODO #{new_id} from recurring #{t['id']}")
+
+        if changed:
+            todos.extend(new_todos)
+            async with aiohttp.ClientSession() as session:
+                _, sha2 = await gh_read_fresh(session, FILE_TODOS)
+                await gh_write(session, FILE_TODOS, todos, sha2,
+                               f"Recurring: spawned {len(new_todos)} new TODO(s)")
+            # Refresh boards
+            for guild in bot.guilds:
+                async with aiohttp.ClientSession() as session:
+                    cfg, _ = await gh_read(session, FILE_CONFIG)
+                await update_todo_board(guild, cfg or {})
+
+    except Exception as e:
+        print(f"[recurring_todo_task] Error: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE: NEW BOT SLASH COMMANDS
+# /todo_watch, /todo_comment, /todo_blocks, /todo_recur, /todo_digest, /issues
+# ══════════════════════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="todo_watch", description="Watch or unwatch a TODO — get DMs on status changes")
+@app_commands.describe(todo_id="TODO number", action="watch or unwatch")
+@app_commands.choices(action=[
+    app_commands.Choice(name="Watch", value="watch"),
+    app_commands.Choice(name="Unwatch", value="unwatch"),
+])
+async def todo_watch(interaction: discord.Interaction, todo_id: int, action: str = "watch"):
+    await interaction.response.defer(ephemeral=True)
+    uid = str(interaction.user.id)
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+    todos = todos or []
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True)
+        return
+    watchers = todo.get("watchers", [])
+    if action == "unwatch":
+        watchers = [w for w in watchers if w != uid]
+        msg = f"You'll no longer receive DMs for **TODO #{todo_id}**."
+    else:
+        if uid not in watchers:
+            watchers.append(uid)
+        msg = f"You'll now get DMs when **TODO #{todo_id}** is updated."
+    todo["watchers"] = watchers
+    async with aiohttp.ClientSession() as session:
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} {action} by {interaction.user}")
+    await interaction.followup.send(msg, ephemeral=True)
+
+
+@bot.tree.command(name="todo_comment", description="Add a comment to a TODO")
+@app_commands.describe(todo_id="TODO number", text="Your comment")
+async def todo_comment(interaction: discord.Interaction, todo_id: int, text: str):
+    if not await has_todo_role(interaction):
+        await interaction.response.send_message("No permission.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    text = text.strip()[:500]
+    if not text:
+        await interaction.followup.send("Comment cannot be empty.", ephemeral=True)
+        return
+
+    user = interaction.user
+    import secrets as _sec
+    async with aiohttp.ClientSession() as session:
+        comments, sha = await gh_read_fresh(session, FILE_COMMENTS)
+    comments = comments or {}
+    key = str(todo_id)
+    thread = comments.get(key, [])
+    thread.append({
+        "id":          _sec.token_hex(8),
+        "user_id":     str(user.id),
+        "user_name":   user.display_name,
+        "user_avatar": str(user.display_avatar.url) if user.display_avatar else "",
+        "text":        text,
+        "ts":          datetime.datetime.now(datetime.timezone.utc).isoformat() + "Z",
+    })
+    comments[key] = thread
+    async with aiohttp.ClientSession() as session:
+        await gh_write(session, FILE_COMMENTS, comments, sha, f"Comment on TODO #{todo_id} by {user}")
+
+    # Log activity
+    async with aiohttp.ClientSession() as session:
+        todos, _ = await gh_read(session, FILE_TODOS)
+    todo = next((t for t in (todos or []) if t["id"] == todo_id), {"id": todo_id, "title":"Unknown","status":"todo"})
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await log_activity(interaction.guild, cfg or {}, "💬 Comment Added", todo,
+                       interaction.guild.get_member(user.id), extra=text[:60])
+    await interaction.followup.send(f"Comment added to **TODO #{todo_id}**.", ephemeral=True)
+
+
+@bot.tree.command(name="todo_blocks", description="Set a dependency: this TODO blocks another")
+@app_commands.describe(todo_id="The blocking TODO", blocks_id="The TODO being blocked", action="add or remove")
+@app_commands.choices(action=[
+    app_commands.Choice(name="Add dependency", value="add"),
+    app_commands.Choice(name="Remove dependency", value="remove"),
+])
+async def todo_blocks(interaction: discord.Interaction, todo_id: int, blocks_id: int, action: str = "add"):
+    if not await has_todo_role(interaction):
+        await interaction.response.send_message("No permission.", ephemeral=True)
+        return
+    if todo_id == blocks_id:
+        await interaction.response.send_message("A TODO cannot block itself.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+    todos = todos or []
+    todo      = next((t for t in todos if t["id"] == todo_id), None)
+    dep_todo  = next((t for t in todos if t["id"] == blocks_id), None)
+    if not todo or not dep_todo:
+        await interaction.followup.send("One or both TODOs not found.", ephemeral=True)
+        return
+
+    blocks_list = todo.get("blocks", [])
+    blocked_by  = dep_todo.get("blocked_by", [])
+    if action == "remove":
+        blocks_list = [x for x in blocks_list if x != blocks_id]
+        blocked_by  = [x for x in blocked_by  if x != todo_id]
+        msg = f"Removed: **TODO #{todo_id}** no longer blocks **#{blocks_id}**."
+    else:
+        if blocks_id not in blocks_list: blocks_list.append(blocks_id)
+        if todo_id not in blocked_by:    blocked_by.append(todo_id)
+        msg = f"Set: **TODO #{todo_id}** now blocks **#{blocks_id}**."
+
+    todo["blocks"]         = blocks_list
+    dep_todo["blocked_by"] = blocked_by
+    todo["updated_at"]     = now_iso()
+    dep_todo["updated_at"] = now_iso()
+    async with aiohttp.ClientSession() as session:
+        await gh_write(session, FILE_TODOS, todos, sha, f"Dependency: #{todo_id} {action} blocks #{blocks_id}")
+    await interaction.followup.send(msg, ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        cfg, _ = await gh_read(session, FILE_CONFIG)
+    await update_todo_board(interaction.guild, cfg or {})
+
+
+@bot.tree.command(name="todo_recur", description="Set a TODO to recur automatically")
+@app_commands.describe(todo_id="TODO number", interval="Recurrence interval")
+@app_commands.choices(interval=[
+    app_commands.Choice(name="Daily",   value="daily"),
+    app_commands.Choice(name="Weekly",  value="weekly"),
+    app_commands.Choice(name="Monthly", value="monthly"),
+    app_commands.Choice(name="Off (remove recurrence)", value="off"),
+])
+async def todo_recur(interaction: discord.Interaction, todo_id: int, interval: str):
+    if not await has_todo_role(interaction):
+        await interaction.response.send_message("No permission.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    async with aiohttp.ClientSession() as session:
+        todos, sha = await gh_read_fresh(session, FILE_TODOS)
+    todos = todos or []
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        await interaction.followup.send(f"TODO #{todo_id} not found.", ephemeral=True)
+        return
+    if interval == "off":
+        todo.pop("recur", None)
+        msg = f"Recurrence removed from **TODO #{todo_id}**."
+    else:
+        deltas = {"daily": datetime.timedelta(days=1), "weekly": datetime.timedelta(weeks=1), "monthly": datetime.timedelta(days=30)}
+        next_run = (datetime.datetime.now(datetime.timezone.utc) + deltas[interval]).isoformat()
+        todo["recur"] = {"interval": interval, "next_run": next_run}
+        msg = f"**TODO #{todo_id}** will now recur **{interval}**."
+    todo["updated_at"] = now_iso()
+    async with aiohttp.ClientSession() as session:
+        await gh_write(session, FILE_TODOS, todos, sha, f"TODO #{todo_id} recur={interval}")
+    await interaction.followup.send(msg, ephemeral=True)
+
+
+@bot.tree.command(name="setup_digest", description="Configure the weekly digest channel (Admin)")
+@app_commands.describe(channel="Channel for the weekly digest", day="Day to send (0=Monday, 6=Sunday)")
+@app_commands.default_permissions(administrator=True)
+async def setup_digest(interaction: discord.Interaction, channel: discord.TextChannel, day: int = 0):
+    if day < 0 or day > 6:
+        await interaction.response.send_message("Day must be 0 (Monday) to 6 (Sunday).", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    day_names = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    async with aiohttp.ClientSession() as session:
+        cfg, sha = await gh_read_fresh(session, FILE_CONFIG)
+        cfg = cfg or DEFAULT_CONFIG.copy()
+        cfg["digest_channel"] = str(channel.id)
+        cfg["digest_day"]     = day
+        await gh_write(session, FILE_CONFIG, cfg, sha, "Setup: digest channel")
+    await interaction.followup.send(
+        f"Weekly digest will post to {channel.mention} every **{day_names[day]}** at 09:00 UTC.",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="todo_digest_now", description="Post a weekly digest right now (Admin)")
+@app_commands.default_permissions(administrator=True)
+async def todo_digest_now(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    # Force fire by temporarily resetting the last-fired key
+    global _digest_last_fired
+    _digest_last_fired = ""
+    # Run a manual digest without the day/hour check
+    try:
+        async with aiohttp.ClientSession() as session:
+            cfg, _ = await gh_read(session, FILE_CONFIG)
+        cfg = cfg or {}
+        digest_ch_id = cfg.get("digest_channel")
+        if not digest_ch_id:
+            await interaction.followup.send("No digest channel configured. Use `/setup_digest` first.", ephemeral=True)
+            return
+        async with aiohttp.ClientSession() as session:
+            todos,   _ = await gh_read(session, FILE_TODOS)
+            archive, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+        todos   = todos   or []
+        archive = archive or []
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        week_ago = (now_utc - datetime.timedelta(days=7)).isoformat()
+        completed_this_week = [t for t in archive if (t.get("done_at") or t.get("updated_at","")) >= week_ago]
+        active = [t for t in todos if t.get("status") != "done"]
+        from collections import Counter
+        completers = Counter(t.get("done_by_id") for t in completed_this_week if t.get("done_by_id"))
+        e = discord.Embed(title="📊 Weekly TODO Digest (manual)", color=0x5865F2,
+                          timestamp=datetime.datetime.now(datetime.timezone.utc))
+        e.add_field(name="✅ Completed this week", value=str(len(completed_this_week)), inline=True)
+        e.add_field(name="📋 Active TODOs",        value=str(len(active)),              inline=True)
+        e.add_field(name="📁 Total archived",       value=str(len(archive)),             inline=True)
+        if completers:
+            top = "\n".join(f"<@{uid}> — {cnt}" for uid, cnt in completers.most_common(3))
+            e.add_field(name="🏆 Top completers", value=top, inline=False)
+        ch = interaction.guild.get_channel(int(digest_ch_id))
+        if ch:
+            await ch.send(embed=e)
+            await interaction.followup.send(f"Digest posted to {ch.mention}.", ephemeral=True)
+        else:
+            await interaction.followup.send("Digest channel not found.", ephemeral=True)
+    except Exception as ex:
+        await interaction.followup.send(f"Error: {ex}", ephemeral=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PATCH on_ready to start new tasks
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@bot.event
+async def on_ready():
+    print(f"AnymeX TODO Bot online as {bot.user}")
+    await ensure_files()
+    if not getattr(bot, "_synced", False):
+        try:
+            await bot.tree.sync()
+            bot._synced = True
+            print("Slash commands synced")
+        except Exception as e:
+            print(f"Sync failed: {e}")
+    if not reminder_task.is_running():
+        reminder_task.start()
+        print("Reminder task started")
+    if not thread_sync_task.is_running():
+        thread_sync_task.start()
+        print("Thread sync task started")
+    # New tasks
+    if not health_heartbeat_task.is_running():
+        health_heartbeat_task.start()
+        print("Health heartbeat task started")
+    if not weekly_digest_task.is_running():
+        weekly_digest_task.start()
+        print("Weekly digest task started")
+    if not recurring_todo_task.is_running():
+        recurring_todo_task.start()
+        print("Recurring TODO task started")
+
 
 async def main():
     await start_health_server()

@@ -57,6 +57,20 @@ FILE_ACTIVITY_LOG  = "activity_log.json"
 FILE_MEMBERS       = "members.json"       # guild member snapshot synced from Discord
 FILE_TODO_MEMBERS  = "todo_members.json"  # only is_todo_role=true members (small, always readable)
 
+# ── New feature files ────────────────────────────────────────────────────────
+FILE_COMMENTS       = "todo_comments.json"       # #1  Comments on TODOs
+FILE_SAVED_FILTERS  = "saved_filters.json"       # #3  Saved board filters per user
+FILE_GITHUB_ISSUES  = "github_issues.json"       # #14 GitHub issues mirror
+FILE_ISSUE_LINKS    = "github_issue_links.json"  # #14 GitHub issue → TODO links
+FILE_RELEASES       = "releases.json"            # #22 Release notes
+FILE_BOT_HEALTH     = "bot_health.json"          # #25 Bot health monitor
+
+# GitHub repo to mirror issues from (AnymeX main repo)
+ANYMEX_OWNER = os.environ.get("ANYMEX_OWNER", "RyanYuuki")
+ANYMEX_REPO  = os.environ.get("ANYMEX_REPO",  "AnymeX")
+
+GITHUB_ISSUES_SYNC_TTL = 10 * 60  # 10 min
+
 # Bot notification (triggers Discord board refresh after site changes)
 BOT_NOTIFY_URL  = os.environ.get("BOT_NOTIFY_URL")   # e.g. http://localhost:8081/notify
 INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")  # same value set in bot.py
@@ -2208,6 +2222,1199 @@ def server_error(e):
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #1 — TODO COMMENTS
+# Schema: { "todo_id": [{ id, user_id, user_name, user_avatar, text, ts }] }
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/todo/<int:todo_id>/comments", methods=["GET"])
+def api_comments_get(todo_id):
+    comments, _ = gh_read(FILE_COMMENTS)
+    comments = comments or {}
+    return jsonify(comments.get(str(todo_id), []))
+
+@app.route("/api/todo/<int:todo_id>/comments", methods=["POST"])
+def api_comments_post(todo_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    data = request.json or {}
+    text = (data.get("text") or "").strip()[:1000]
+    if not text:
+        return jsonify({"error": "Text required"}), 400
+
+    comments, sha = gh_read(FILE_COMMENTS, force=True)
+    comments = comments or {}
+    key = str(todo_id)
+    thread = comments.get(key, [])
+    user = sess["user"]
+    new_comment = {
+        "id":          secrets.token_hex(8),
+        "user_id":     str(user.get("id", "")),
+        "user_name":   user.get("global_name") or user.get("username") or "Member",
+        "user_avatar": _avatar_url(user),
+        "text":        text,
+        "ts":          datetime.datetime.utcnow().isoformat() + "Z",
+    }
+    thread.append(new_comment)
+    comments[key] = thread
+    ok = gh_write(FILE_COMMENTS, comments, sha, f"Comment on TODO #{todo_id} by {user.get('username','?')}")
+    if ok:
+        # Log to activity
+        todos, _ = gh_read(FILE_TODOS)
+        todo = next((t for t in (todos or []) if t["id"] == todo_id), {"id": todo_id, "title": "Unknown", "status": "todo"})
+        _web_log_activity("💬 Comment Added", todo, user, extra=text[:60])
+    return jsonify(new_comment), 201
+
+@app.route("/api/todo/<int:todo_id>/comments/<comment_id>", methods=["DELETE"])
+def api_comments_delete(todo_id, comment_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    user = sess["user"]
+    level = sess.get("access_level", "public")
+
+    comments, sha = gh_read(FILE_COMMENTS, force=True)
+    comments = comments or {}
+    key = str(todo_id)
+    thread = comments.get(key, [])
+    comment = next((c for c in thread if c["id"] == comment_id), None)
+    if not comment:
+        return jsonify({"error": "Not found"}), 404
+    # Only author or manager+ can delete
+    if comment["user_id"] != str(user.get("id")) and level not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    thread = [c for c in thread if c["id"] != comment_id]
+    comments[key] = thread
+    gh_write(FILE_COMMENTS, comments, sha, f"Delete comment on TODO #{todo_id}")
+    return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #2 — TODO WATCHERS
+# Stored as "watchers": ["user_id", ...] on each todo in todos.json
+# Bot DMs watchers when status changes (handled in bot.py via notify endpoint)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/todo/<int:todo_id>/watch", methods=["POST"])
+def api_todo_watch(todo_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    user = sess["user"]
+    uid = str(user.get("id", ""))
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        return jsonify({"error": "Not found"}), 404
+
+    action = request.json.get("action", "watch") if request.json else "watch"
+    watchers = todo.get("watchers", [])
+    if action == "unwatch":
+        watchers = [w for w in watchers if w != uid]
+        msg = "unwatched"
+    else:
+        if uid not in watchers:
+            watchers.append(uid)
+        msg = "watching"
+    todo["watchers"] = watchers
+    gh_write(FILE_TODOS, todos, sha, f"TODO #{todo_id} {msg} by {user.get('username','?')}")
+    return jsonify({"ok": True, "action": msg, "watchers": watchers})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #3 — SAVED FILTERS
+# Schema: { "user_id": [{ id, name, params: {status,priority,tag,assignee,due,q} }] }
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/filters", methods=["GET"])
+def api_filters_get():
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify([])
+    uid = str(sess["user"].get("id", ""))
+    saved, _ = gh_read(FILE_SAVED_FILTERS)
+    return jsonify((saved or {}).get(uid, []))
+
+@app.route("/api/filters", methods=["POST"])
+def api_filters_save():
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    user = sess["user"]
+    uid = str(user.get("id", ""))
+    data = request.json or {}
+    name = (data.get("name") or "").strip()[:50]
+    params = data.get("params") or {}
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+
+    saved, sha = gh_read(FILE_SAVED_FILTERS, force=True)
+    saved = saved or {}
+    user_filters = saved.get(uid, [])
+    new_filter = {
+        "id":     secrets.token_hex(6),
+        "name":   name,
+        "params": params,
+        "ts":     datetime.datetime.utcnow().isoformat() + "Z",
+    }
+    user_filters.append(new_filter)
+    user_filters = user_filters[-20:]  # max 20 per user
+    saved[uid] = user_filters
+    gh_write(FILE_SAVED_FILTERS, saved, sha, f"Saved filter '{name}' for {user.get('username','?')}")
+    return jsonify(new_filter), 201
+
+@app.route("/api/filters/<filter_id>", methods=["DELETE"])
+def api_filters_delete(filter_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    uid = str(sess["user"].get("id", ""))
+    saved, sha = gh_read(FILE_SAVED_FILTERS, force=True)
+    saved = saved or {}
+    user_filters = [f for f in saved.get(uid, []) if f["id"] != filter_id]
+    saved[uid] = user_filters
+    gh_write(FILE_SAVED_FILTERS, saved, sha, f"Delete filter {filter_id}")
+    return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #4 — TODO TEMPLATES (stored in config.json under "templates")
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/templates", methods=["GET"])
+def api_templates_get():
+    cfg, _ = gh_read(FILE_CONFIG)
+    return jsonify((cfg or {}).get("templates", []))
+
+@app.route("/api/templates", methods=["POST"])
+def api_templates_save():
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    name = (data.get("name") or "").strip()[:50]
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+    cfg, sha = gh_read(FILE_CONFIG, force=True)
+    cfg = cfg or DEFAULT_CONFIG.copy()
+    templates = cfg.get("templates", [])
+    new_tpl = {
+        "id":          secrets.token_hex(6),
+        "name":        name,
+        "title":       data.get("title", ""),
+        "description": data.get("description", ""),
+        "priority":    data.get("priority", "medium"),
+        "tags":        data.get("tags", []),
+    }
+    templates.append(new_tpl)
+    cfg["templates"] = templates
+    gh_write(FILE_CONFIG, cfg, sha, f"Add template '{name}'")
+    return jsonify(new_tpl), 201
+
+@app.route("/api/templates/<tpl_id>", methods=["DELETE"])
+def api_templates_delete(tpl_id):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    cfg, sha = gh_read(FILE_CONFIG, force=True)
+    cfg = cfg or DEFAULT_CONFIG.copy()
+    cfg["templates"] = [t for t in cfg.get("templates", []) if t["id"] != tpl_id]
+    gh_write(FILE_CONFIG, cfg, sha, f"Delete template {tpl_id}")
+    return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #5 — WEEKLY DIGEST (stored: config.json "last_digest_at")
+# POST /api/digest/send  — admin triggers manual digest; auto via bot
+# GET  /api/digest/preview — returns this week's completion stats
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/digest/preview", methods=["GET"])
+@login_required
+def api_digest_preview():
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    archive = archive or []
+    now = datetime.datetime.utcnow()
+    week_ago = (now - datetime.timedelta(days=7)).isoformat()
+    this_week = [t for t in archive if (t.get("done_at") or t.get("updated_at", "")) >= week_ago]
+    from collections import Counter
+    completers = Counter(t.get("done_by_id") for t in this_week if t.get("done_by_id"))
+    return jsonify({
+        "week_completed": len(this_week),
+        "total_archive":  len(archive),
+        "top_completers": dict(completers.most_common(5)),
+        "items":          [{"id": t["id"], "title": t.get("title",""), "done_at": t.get("done_at","")} for t in this_week[:20]],
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #6 — TIME TRACKING
+# Stored as "time_logs": [{ user_id, start, end, minutes }] on each TODO in todos.json
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/todo/<int:todo_id>/time", methods=["POST"])
+def api_time_log(todo_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    if sess.get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    minutes = int(data.get("minutes", 0))
+    if minutes < 1 or minutes > 1440:
+        return jsonify({"error": "Minutes must be 1–1440"}), 400
+    user = sess["user"]
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        # Check archive
+        archive, arch_sha = gh_read(FILE_TODOS_ARCHIVE, force=True)
+        todo = next((t for t in (archive or []) if t["id"] == todo_id), None)
+        if not todo:
+            return jsonify({"error": "Not found"}), 404
+        logs = todo.get("time_logs", [])
+        logs.append({
+            "user_id":   str(user.get("id","")),
+            "user_name": user.get("global_name") or user.get("username","?"),
+            "start":     data.get("start", datetime.datetime.utcnow().isoformat() + "Z"),
+            "end":       datetime.datetime.utcnow().isoformat() + "Z",
+            "minutes":   minutes,
+        })
+        todo["time_logs"] = logs
+        gh_write(FILE_TODOS_ARCHIVE, archive, arch_sha, f"Time log TODO #{todo_id}")
+        return jsonify({"ok": True, "total_minutes": sum(l.get("minutes",0) for l in logs)})
+
+    logs = todo.get("time_logs", [])
+    logs.append({
+        "user_id":   str(user.get("id","")),
+        "user_name": user.get("global_name") or user.get("username","?"),
+        "start":     data.get("start", datetime.datetime.utcnow().isoformat() + "Z"),
+        "end":       datetime.datetime.utcnow().isoformat() + "Z",
+        "minutes":   minutes,
+    })
+    todo["time_logs"] = logs
+    gh_write(FILE_TODOS, todos, sha, f"Time log TODO #{todo_id}")
+    return jsonify({"ok": True, "total_minutes": sum(l.get("minutes",0) for l in logs)})
+
+@app.route("/api/todo/<int:todo_id>/time", methods=["GET"])
+def api_time_get(todo_id):
+    todos, _ = gh_read(FILE_TODOS)
+    todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
+    if not todo:
+        archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+        todo = next((t for t in (archive or []) if t["id"] == todo_id), None)
+    if not todo:
+        return jsonify({"error": "Not found"}), 404
+    logs = todo.get("time_logs", [])
+    return jsonify({"logs": logs, "total_minutes": sum(l.get("minutes",0) for l in logs)})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #7 — BURNDOWN / VELOCITY  (derived from archive timestamps)
+# GET /api/analytics/burndown?weeks=8
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/analytics/burndown")
+@login_required
+def api_burndown():
+    weeks = min(int(request.args.get("weeks", 8)), 26)
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    archive = archive or []
+    now = datetime.datetime.utcnow()
+    result = []
+    for i in range(weeks - 1, -1, -1):
+        week_start = now - datetime.timedelta(weeks=i+1)
+        week_end   = now - datetime.timedelta(weeks=i)
+        count = sum(
+            1 for t in archive
+            if week_start.isoformat() <= (t.get("done_at") or t.get("updated_at","")) < week_end.isoformat()
+        )
+        result.append({
+            "week":  week_end.strftime("%b %d"),
+            "count": count,
+        })
+    return jsonify(result)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #9 — FORUM UPVOTES
+# "upvotes": {"user_id": true} stored in forum_posts_bugs/suggestions.json
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/forum/<forum_type>/<thread_id>/upvote", methods=["POST"])
+def api_forum_upvote(forum_type, thread_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    uid = str(sess["user"].get("id", ""))
+    db, sha = gh_read(_forum_file(forum_type), force=True)
+    db = db or {}
+    section = db.get(forum_type, {})
+    posts = section.get("posts", [])
+    for post in posts:
+        if str(post.get("id")) == str(thread_id):
+            upvotes = post.get("upvotes", {})
+            if uid in upvotes:
+                del upvotes[uid]
+                action = "removed"
+            else:
+                upvotes[uid] = True
+                action = "added"
+            post["upvotes"] = upvotes
+            section["posts"] = posts
+            db[forum_type] = section
+            gh_write(_forum_file(forum_type), db, sha, f"Upvote {action} on {forum_type} {thread_id}")
+            return jsonify({"ok": True, "action": action, "count": len(upvotes)})
+    return jsonify({"error": "Post not found"}), 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #10 — CHANGELOG PAGE
+# GET /changelog  — public page showing done TODOs grouped by week
+# Admin can flag todos as public_changelog=true via PATCH /api/todo/<id>
+# (public_changelog field already supported by the existing PATCH handler via allowed fields)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/changelog")
+def changelog():
+    # Also include releases
+    releases, _ = gh_read(FILE_RELEASES)
+    releases = sorted((releases or []), key=lambda r: r.get("date", ""), reverse=True)
+
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    archive = archive or []
+    public_todos = [enrich_todo(t) for t in archive if t.get("public_changelog")]
+
+    # Group by week
+    from collections import defaultdict
+    weeks = defaultdict(list)
+    for t in public_todos:
+        done_at = t.get("done_at") or t.get("updated_at", "")
+        try:
+            dt = datetime.datetime.fromisoformat(done_at[:10])
+            # Monday of that week
+            monday = dt - datetime.timedelta(days=dt.weekday())
+            key = monday.strftime("%Y-%m-%d")
+        except Exception:
+            key = "older"
+        weeks[key].append(t)
+
+    sorted_weeks = sorted(weeks.items(), reverse=True)
+    return render_template("changelog.html",
+        releases=releases,
+        weeks=sorted_weeks,
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #11 — ROLE-BASED TAG RESTRICTIONS
+# config.json: "tag_permissions": { "urgent": ["admin"], "blocked": ["admin","manager"] }
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _check_tag_permission(tag: str, access_level: str) -> bool:
+    cfg, _ = gh_read(FILE_CONFIG)
+    tag_perms = (cfg or {}).get("tag_permissions", {})
+    allowed_roles = tag_perms.get(tag)
+    if not allowed_roles:
+        return True  # no restriction
+    return access_level in allowed_roles
+
+@app.route("/api/tag-permissions", methods=["GET"])
+@admin_required
+def api_tag_permissions_get():
+    cfg, _ = gh_read(FILE_CONFIG)
+    return jsonify((cfg or {}).get("tag_permissions", {}))
+
+@app.route("/api/tag-permissions", methods=["POST"])
+@admin_required
+def api_tag_permissions_save():
+    data = request.json or {}
+    cfg, sha = gh_read(FILE_CONFIG, force=True)
+    cfg = cfg or DEFAULT_CONFIG.copy()
+    cfg["tag_permissions"] = data
+    gh_write(FILE_CONFIG, cfg, sha, "Update tag permissions")
+    return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #12 — GITHUB ISSUE IMPORT
+# Sync open issues from RyanYuuki/AnymeX into github_issues.json
+# Stored: [{ number, title, body, labels, state, assignees, created_at,
+#            comment_count, html_url, linked_todo_id }]
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _sync_github_issues():
+    """Fetch open issues from ANYMEX_OWNER/ANYMEX_REPO and save to github_issues.json."""
+    try:
+        headers = gh_headers()  # reuse same GitHub token
+        url = f"https://api.github.com/repos/{ANYMEX_OWNER}/{ANYMEX_REPO}/issues?state=open&per_page=100&sort=created&direction=desc"
+        r = req.get(url, headers=headers, timeout=15)
+        if not r.ok:
+            print(f"[gh_issues] GitHub API error {r.status_code}")
+            return
+        raw_issues = r.json()
+
+        # Load existing links
+        links, _ = gh_read(FILE_ISSUE_LINKS)
+        links = links or {}
+
+        issues_out = []
+        for issue in raw_issues:
+            if issue.get("pull_request"):
+                continue  # skip PRs
+            num = issue.get("number")
+            issues_out.append({
+                "number":       num,
+                "title":        issue.get("title", ""),
+                "body":         (issue.get("body") or "")[:500],
+                "labels":       [l.get("name","") for l in issue.get("labels", [])],
+                "state":        issue.get("state", "open"),
+                "assignees":    [a.get("login","") for a in issue.get("assignees", [])],
+                "created_at":   issue.get("created_at", ""),
+                "comment_count": issue.get("comments", 0),
+                "html_url":     issue.get("html_url", ""),
+                "linked_todo_id": links.get(str(num)),
+                "platform":     _detect_platform(issue.get("title","") + " " + (issue.get("body") or "")),
+            })
+
+        db, sha = gh_read(FILE_GITHUB_ISSUES, force=True)
+        new_db = {
+            "last_synced": datetime.datetime.utcnow().isoformat(),
+            "repo":        f"{ANYMEX_OWNER}/{ANYMEX_REPO}",
+            "issues":      issues_out,
+        }
+        gh_write(FILE_GITHUB_ISSUES, new_db, sha, f"GitHub issues sync: {len(issues_out)} issues")
+        print(f"[gh_issues] Synced {len(issues_out)} issues")
+    except Exception as e:
+        print(f"[gh_issues] Error: {e}")
+
+def _detect_platform(text: str) -> str:
+    """Detect platform from issue text."""
+    text_lower = text.lower()
+    for p in ("android", "ios", "windows", "linux", "macos", "desktop", "mobile"):
+        if p in text_lower:
+            return p
+    return ""
+
+def _get_github_issues(force=False):
+    """Return github issues from DB, triggering background sync if stale."""
+    db, _ = gh_read(FILE_GITHUB_ISSUES)
+    db = db or {}
+    last_synced = db.get("last_synced", "")
+    needs_sync = True
+    if last_synced and not force:
+        try:
+            age = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_synced)).total_seconds()
+            needs_sync = age > GITHUB_ISSUES_SYNC_TTL
+        except Exception:
+            needs_sync = True
+    if needs_sync:
+        _threading.Thread(target=_sync_github_issues, daemon=True).start()
+    return db.get("issues", []), db.get("last_synced", "")
+
+@app.route("/issues")
+def issues_page():
+    issues, last_synced = _get_github_issues()
+    # Enrich with linked todo info
+    links, _ = gh_read(FILE_ISSUE_LINKS)
+    links = links or {}
+    for issue in issues:
+        issue["linked_todo_id"] = links.get(str(issue.get("number")), issue.get("linked_todo_id"))
+
+    label_filter    = request.args.get("label", "all")
+    platform_filter = request.args.get("platform", "all")
+    search          = request.args.get("q", "").lower().strip()
+
+    filtered = issues
+    if label_filter != "all":
+        filtered = [i for i in filtered if label_filter in i.get("labels", [])]
+    if platform_filter != "all":
+        filtered = [i for i in filtered if i.get("platform") == platform_filter]
+    if search:
+        filtered = [i for i in filtered if search in i.get("title","").lower() or search in i.get("body","").lower()]
+
+    all_labels = sorted(set(l for i in issues for l in i.get("labels",[])))
+    return render_template("issues.html",
+        issues=filtered, all_issues=issues,
+        all_labels=all_labels,
+        label_filter=label_filter, platform_filter=platform_filter, search=search,
+        last_synced=last_synced,
+        repo=f"{ANYMEX_OWNER}/{ANYMEX_REPO}",
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+@app.route("/api/issues/sync", methods=["POST"])
+@admin_required
+def api_issues_sync():
+    _threading.Thread(target=_sync_github_issues, daemon=True).start()
+    return jsonify({"ok": True, "message": "Sync started"})
+
+@app.route("/api/issues", methods=["GET"])
+def api_issues_list():
+    issues, last_synced = _get_github_issues()
+    return jsonify({"issues": issues, "last_synced": last_synced})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #13 — GITHUB ISSUE → TODO LINK
+# POST /api/issues/<number>/link  { todo_id } or { todo_id: null } to unlink
+# POST /api/issues/<number>/import  — create a new TODO from this issue
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/issues/<int:issue_number>/link", methods=["POST"])
+def api_issue_link(issue_number):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    todo_id = data.get("todo_id")
+
+    links, links_sha = gh_read(FILE_ISSUE_LINKS, force=True)
+    links = links or {}
+    if todo_id is not None:
+        links[str(issue_number)] = int(todo_id)
+    else:
+        links.pop(str(issue_number), None)
+    gh_write(FILE_ISSUE_LINKS, links, links_sha, f"Link issue #{issue_number} → TODO #{todo_id}")
+
+    # Also patch the github_issues DB record
+    db, db_sha = gh_read(FILE_GITHUB_ISSUES, force=True)
+    if db:
+        for issue in (db.get("issues") or []):
+            if issue.get("number") == issue_number:
+                issue["linked_todo_id"] = todo_id
+                break
+        gh_write(FILE_GITHUB_ISSUES, db, db_sha, f"Issue link patch #{issue_number}")
+
+    return jsonify({"ok": True})
+
+@app.route("/api/issues/<int:issue_number>/import", methods=["POST"])
+def api_issue_import(issue_number):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    # Check not already imported
+    links, _ = gh_read(FILE_ISSUE_LINKS)
+    if links and str(issue_number) in links:
+        return jsonify({"error": f"Issue #{issue_number} already linked to TODO #{links[str(issue_number)]}"}), 409
+
+    # Find the issue in DB
+    db, _ = gh_read(FILE_GITHUB_ISSUES)
+    issue = next((i for i in (db or {}).get("issues", []) if i.get("number") == issue_number), None)
+    if not issue:
+        return jsonify({"error": "Issue not found in DB — trigger a sync first"}), 404
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+    next_id = max((t["id"] for t in todos), default=0) + 1
+    user = get_session().get("user", {})
+
+    new_todo = {
+        "id":               next_id,
+        "title":            issue.get("title","")[:120],
+        "ai_description":   issue.get("body","")[:300],
+        "status":           "todo",
+        "priority":         "medium",
+        "tags":             issue.get("labels", [])[:5],
+        "assigned_to_id":   None,
+        "due_date":         None,
+        "added_by_id":      str(user.get("id", "")),
+        "added_by":         user.get("username", "web"),
+        "created_at":       datetime.datetime.utcnow().isoformat(),
+        "updated_at":       datetime.datetime.utcnow().isoformat(),
+        "auto_generated":   False,
+        "source":           "github_issue",
+        "github_issue_id":  issue_number,
+        "github_issue_url": issue.get("html_url", ""),
+        "watchers":         [],
+    }
+    todos.append(new_todo)
+    gh_write(FILE_TODOS, todos, sha, f"Import GitHub issue #{issue_number} as TODO #{next_id}")
+
+    # Link it
+    links, links_sha = gh_read(FILE_ISSUE_LINKS, force=True)
+    links = links or {}
+    links[str(issue_number)] = next_id
+    gh_write(FILE_ISSUE_LINKS, links, links_sha, f"Link issue #{issue_number} → TODO #{next_id}")
+
+    notify_bot_board()
+    _web_log_activity("TODO Created (GitHub Issue)", new_todo, user, extra=f"From issue #{issue_number}")
+    return jsonify(enrich_todo(new_todo)), 201
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #14 — PLATFORM LABEL ON BUGS (stored in forum_posts_bugs.json)
+# Already populated during sync via _detect_platform(); exposed via filter on /bugs
+# ══════════════════════════════════════════════════════════════════════════════
+# (No extra routes needed — /bugs page already accepts query params; platform
+#  is populated on each post object during _sync_forum_to_db_inner)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #15 — TODO DEPENDENCY CHAINS
+# Stored as "blocks": [id,...] and "blocked_by": [id,...] on each todo
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/todo/<int:todo_id>/depends", methods=["POST"])
+def api_todo_depends(todo_id):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    action     = data.get("action", "add")   # "add" or "remove"
+    dep_id     = int(data.get("dep_id", 0))
+    rel        = data.get("rel", "blocks")   # "blocks" or "blocked_by"
+
+    if not dep_id:
+        return jsonify({"error": "dep_id required"}), 400
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+    todo     = next((t for t in todos if t["id"] == todo_id), None)
+    dep_todo = next((t for t in todos if t["id"] == dep_id), None)
+    if not todo or not dep_todo:
+        return jsonify({"error": "TODO not found"}), 404
+
+    key      = rel           # "blocks" or "blocked_by"
+    rev_key  = "blocked_by" if rel == "blocks" else "blocks"
+
+    lst      = todo.get(key, [])
+    rev_lst  = dep_todo.get(rev_key, [])
+
+    if action == "remove":
+        lst     = [x for x in lst     if x != dep_id]
+        rev_lst = [x for x in rev_lst if x != todo_id]
+    else:
+        if dep_id not in lst:     lst.append(dep_id)
+        if todo_id not in rev_lst: rev_lst.append(todo_id)
+
+    todo[key]         = lst
+    dep_todo[rev_key] = rev_lst
+    todo["updated_at"]     = datetime.datetime.utcnow().isoformat()
+    dep_todo["updated_at"] = datetime.datetime.utcnow().isoformat()
+    gh_write(FILE_TODOS, todos, sha, f"TODO #{todo_id} {rel} #{dep_id} ({action})")
+    return jsonify({"ok": True, key: lst})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #16 — BUG SEVERITY TRIAGE
+# PATCH /api/forum/<forum_type>/<thread_id>/severity  { severity: "critical"|... }
+# ══════════════════════════════════════════════════════════════════════════════
+
+SEVERITY_LEVELS = ("critical", "high", "medium", "low")
+
+@app.route("/api/forum/<forum_type>/<thread_id>/severity", methods=["PATCH"])
+def api_forum_severity(forum_type, thread_id):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    severity = data.get("severity")
+    if severity and severity not in SEVERITY_LEVELS:
+        return jsonify({"error": f"severity must be one of {SEVERITY_LEVELS}"}), 400
+
+    db, sha = gh_read(_forum_file(forum_type), force=True)
+    db = db or {}
+    section = db.get(forum_type, {})
+    for post in section.get("posts", []):
+        if str(post.get("id")) == str(thread_id):
+            post["severity"] = severity
+            section["posts"] = section["posts"]
+            db[forum_type] = section
+            gh_write(_forum_file(forum_type), db, sha, f"Triage {forum_type} {thread_id} severity={severity}")
+            return jsonify({"ok": True, "severity": severity})
+    return jsonify({"error": "Post not found"}), 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #17 — FORUM POST STATUS OVERRIDE
+# PATCH /api/forum/<forum_type>/<thread_id>/status-override
+# ══════════════════════════════════════════════════════════════════════════════
+
+STATUS_OVERRIDES = ("known_issue", "wont_fix", "duplicate", "investigating", None)
+
+@app.route("/api/forum/<forum_type>/<thread_id>/status-override", methods=["PATCH"])
+def api_forum_status_override(forum_type, thread_id):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    override = data.get("override")  # None clears it
+    if override and override not in STATUS_OVERRIDES:
+        return jsonify({"error": f"Invalid override"}), 400
+
+    db, sha = gh_read(_forum_file(forum_type), force=True)
+    db = db or {}
+    section = db.get(forum_type, {})
+    for post in section.get("posts", []):
+        if str(post.get("id")) == str(thread_id):
+            post["status_override"] = override
+            db[forum_type] = section
+            gh_write(_forum_file(forum_type), db, sha, f"Status override {forum_type} {thread_id}: {override}")
+            return jsonify({"ok": True, "status_override": override})
+    return jsonify({"error": "Post not found"}), 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #18 — UNIFIED SEARCH  /search
+# Searches todos, archive, forum bugs, forum suggestions
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/search")
+def search_page():
+    q = request.args.get("q", "").lower().strip()
+    results = {"todos": [], "archive": [], "bugs": [], "suggestions": []}
+    if q:
+        todos, _ = gh_read(FILE_TODOS)
+        for t in (todos or []):
+            if q in t.get("title","").lower() or q in (t.get("ai_description") or "").lower():
+                results["todos"].append(enrich_todo(t))
+
+        archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+        for t in (archive or []):
+            if q in t.get("title","").lower() or q in (t.get("ai_description") or "").lower():
+                results["archive"].append(enrich_todo(t))
+
+        bugs_db, _ = gh_read(FILE_FORUM_POSTS_BUGS)
+        for p in ((bugs_db or {}).get("bugs", {}).get("posts", [])):
+            if q in p.get("title","").lower() or q in p.get("preview","").lower():
+                results["bugs"].append(p)
+
+        sugg_db, _ = gh_read(FILE_FORUM_POSTS_SUGGESTIONS)
+        for p in ((sugg_db or {}).get("suggestions", {}).get("posts", [])):
+            if q in p.get("title","").lower() or q in p.get("preview","").lower():
+                results["suggestions"].append(p)
+
+    total = sum(len(v) for v in results.values())
+    return render_template("search.html",
+        q=request.args.get("q", ""),
+        results=results, total=total,
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+@app.route("/api/search")
+def api_search():
+    q = request.args.get("q", "").lower().strip()
+    if not q:
+        return jsonify({"todos": [], "bugs": [], "suggestions": [], "issues": []})
+    results = {"todos": [], "bugs": [], "suggestions": [], "issues": []}
+
+    todos, _ = gh_read(FILE_TODOS)
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    for t in ((todos or []) + (archive or [])):
+        if q in t.get("title","").lower() or q in (t.get("ai_description") or "").lower():
+            results["todos"].append({"id": t["id"], "title": t.get("title",""), "status": t.get("status","todo")})
+
+    bugs_db, _ = gh_read(FILE_FORUM_POSTS_BUGS)
+    for p in ((bugs_db or {}).get("bugs", {}).get("posts", [])):
+        if q in p.get("title","").lower():
+            results["bugs"].append({"id": p.get("id"), "title": p.get("title","")})
+
+    issues_db, _ = gh_read(FILE_GITHUB_ISSUES)
+    for i in (issues_db or {}).get("issues", []):
+        if q in i.get("title","").lower():
+            results["issues"].append({"number": i.get("number"), "title": i.get("title","")})
+
+    return jsonify(results)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #19 — BOT HEALTH MONITOR
+# GET /api/bot/health  — reads bot_health.json written by bot every 5 min
+# POST /api/bot/health — bot writes its status here (internal endpoint)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/bot/health", methods=["GET"])
+@login_required
+def api_bot_health():
+    health, _ = gh_read(FILE_BOT_HEALTH)
+    health = health or {}
+    # Also derive freshness
+    last_beat = health.get("last_heartbeat", "")
+    is_online = False
+    if last_beat:
+        try:
+            age = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_beat)).total_seconds()
+            is_online = age < 360  # 6 min threshold
+        except Exception:
+            pass
+    health["is_online"] = is_online
+    return jsonify(health)
+
+@app.route("/api/bot/health", methods=["POST"])
+def api_bot_health_report():
+    """Called by bot.py to report its health. Protected by INTERNAL_SECRET."""
+    auth = request.headers.get("X-Internal-Secret", "")
+    if INTERNAL_SECRET and auth != INTERNAL_SECRET:
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    data["last_heartbeat"] = datetime.datetime.utcnow().isoformat()
+    existing, sha = gh_read(FILE_BOT_HEALTH, force=True)
+    gh_write(FILE_BOT_HEALTH, data, sha, "Bot health update")
+    return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #20 — MEMBER PROFILE PAGES
+# GET /member/<user_id>  — shows member's assigned todos, added todos, activity
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/member/<user_id>")
+@login_required
+def member_profile(user_id):
+    db, _ = gh_read(FILE_MEMBERS)
+    db = db or {}
+    member = (db.get("members") or {}).get(str(user_id))
+    if not member:
+        abort(404)
+
+    todos, _   = gh_read(FILE_TODOS)
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    todos   = todos   or []
+    archive = archive or []
+
+    assigned  = [enrich_todo(t) for t in todos   if t.get("assigned_to_id") == str(user_id) and t.get("status") != "done"]
+    added     = [enrich_todo(t) for t in todos   if t.get("added_by_id")    == str(user_id)]
+    completed = [enrich_todo(t) for t in archive if t.get("assigned_to_id") == str(user_id)][:10]
+
+    log, _ = gh_read(FILE_ACTIVITY_LOG)
+    activity = [e for e in (log or []) if e.get("user_id") == str(user_id)][:20]
+
+    return render_template("member_profile.html",
+        member=member,
+        assigned=assigned, added=added, completed=completed,
+        activity=activity,
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #21 — PUBLIC ROADMAP  /roadmap
+# Only todos with "public": true are shown
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/roadmap")
+def roadmap():
+    todos, _ = gh_read(FILE_TODOS)
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    public_active   = [enrich_todo(t) for t in (todos   or []) if t.get("public")]
+    public_done     = [enrich_todo(t) for t in (archive or []) if t.get("public")][:20]
+
+    by_status = {s: [] for s in ["todo","in_progress","review_needed","blocked"]}
+    for t in public_active:
+        s = t.get("status","todo")
+        if s in by_status:
+            by_status[s].append(t)
+
+    return render_template("roadmap.html",
+        by_status=by_status,
+        public_done=public_done,
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+@app.route("/api/todo/<int:todo_id>/public", methods=["POST"])
+def api_todo_set_public(todo_id):
+    """Toggle public visibility of a TODO (admin only)."""
+    if get_session().get("access_level") not in ("admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    public = bool(data.get("public", False))
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if todo:
+        todo["public"] = public
+        gh_write(FILE_TODOS, todos, sha, f"TODO #{todo_id} public={public}")
+        return jsonify({"ok": True, "public": public})
+
+    # Check archive
+    archive, arch_sha = gh_read(FILE_TODOS_ARCHIVE, force=True)
+    todo = next((t for t in (archive or []) if t["id"] == todo_id), None)
+    if todo:
+        todo["public"] = public
+        gh_write(FILE_TODOS_ARCHIVE, archive, arch_sha, f"Archive TODO #{todo_id} public={public}")
+        return jsonify({"ok": True, "public": public})
+
+    return jsonify({"error": "Not found"}), 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #22 — RELEASE NOTES  /releases  +  admin release builder
+# releases.json: [{ id, version, date, notes, todo_ids, published }]
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/releases")
+def releases_page():
+    releases, _ = gh_read(FILE_RELEASES)
+    releases = sorted((releases or []), key=lambda r: r.get("date",""), reverse=True)
+    published = [r for r in releases if r.get("published")]
+
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    archive_map = {t["id"]: t for t in (archive or [])}
+
+    enriched = []
+    for r in published:
+        r = dict(r)
+        r["todos"] = [enrich_todo(archive_map[tid]) for tid in r.get("todo_ids",[]) if tid in archive_map]
+        enriched.append(r)
+
+    return render_template("releases.html",
+        releases=enriched,
+        user=get_session().get("user"),
+        access_level=get_session().get("access_level", "public"),
+    )
+
+@app.route("/api/releases", methods=["GET"])
+def api_releases_get():
+    releases, _ = gh_read(FILE_RELEASES)
+    return jsonify(releases or [])
+
+@app.route("/api/releases", methods=["POST"])
+@admin_required
+def api_releases_create():
+    data = request.json or {}
+    version = (data.get("version") or "").strip()
+    notes   = (data.get("notes") or "").strip()
+    if not version:
+        return jsonify({"error": "version required"}), 400
+    releases, sha = gh_read(FILE_RELEASES, force=True)
+    releases = releases or []
+    new_release = {
+        "id":        secrets.token_hex(6),
+        "version":   version,
+        "date":      data.get("date", datetime.datetime.utcnow().strftime("%Y-%m-%d")),
+        "notes":     notes,
+        "todo_ids":  data.get("todo_ids", []),
+        "published": data.get("published", False),
+        "created_by": str(get_session().get("user",{}).get("username","?")),
+    }
+    releases.insert(0, new_release)
+    gh_write(FILE_RELEASES, releases, sha, f"Release {version}")
+    return jsonify(new_release), 201
+
+@app.route("/api/releases/<release_id>", methods=["PATCH"])
+@admin_required
+def api_releases_patch(release_id):
+    data = request.json or {}
+    releases, sha = gh_read(FILE_RELEASES, force=True)
+    releases = releases or []
+    for r in releases:
+        if r.get("id") == release_id:
+            for k in ("version","date","notes","todo_ids","published"):
+                if k in data:
+                    r[k] = data[k]
+            gh_write(FILE_RELEASES, releases, sha, f"Update release {release_id}")
+            return jsonify(r)
+    return jsonify({"error": "Not found"}), 404
+
+@app.route("/api/releases/<release_id>", methods=["DELETE"])
+@admin_required
+def api_releases_delete(release_id):
+    releases, sha = gh_read(FILE_RELEASES, force=True)
+    releases = [r for r in (releases or []) if r.get("id") != release_id]
+    gh_write(FILE_RELEASES, releases, sha, f"Delete release {release_id}")
+    return jsonify({"ok": True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FEATURE #13 — RECURRING TODOs (config stored on todo: recur field)
+# PATCH /api/todo/<id> already supports arbitrary fields
+# Background check: GET /api/todos/recurring  (admin view)
+# POST /api/todo/<id>/recur  { interval: "daily"|"weekly"|"monthly" }
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/todo/<int:todo_id>/recur", methods=["POST"])
+def api_todo_recur(todo_id):
+    if get_session().get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    interval = data.get("interval")  # None clears it
+    valid_intervals = (None, "daily", "weekly", "monthly")
+    if interval not in valid_intervals:
+        return jsonify({"error": f"interval must be one of {valid_intervals}"}), 400
+
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    todos = todos or []
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        return jsonify({"error": "Not found"}), 404
+
+    if interval:
+        # Calculate next_run
+        now = datetime.datetime.utcnow()
+        deltas = {"daily": datetime.timedelta(days=1), "weekly": datetime.timedelta(weeks=1), "monthly": datetime.timedelta(days=30)}
+        next_run = (now + deltas[interval]).isoformat()
+        todo["recur"] = {"interval": interval, "next_run": next_run}
+    else:
+        todo.pop("recur", None)
+
+    todo["updated_at"] = datetime.datetime.utcnow().isoformat()
+    gh_write(FILE_TODOS, todos, sha, f"TODO #{todo_id} recur={interval}")
+    return jsonify({"ok": True, "recur": todo.get("recur")})
+
+@app.route("/api/todos/recurring", methods=["GET"])
+@login_required
+def api_todos_recurring():
+    todos, _ = gh_read(FILE_TODOS)
+    recurring = [enrich_todo(t) for t in (todos or []) if t.get("recur")]
+    return jsonify(recurring)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENHANCED /board — expose new fields (public toggle, dependency info)
+# Already handled by existing route; these helpers extend template data
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Extend enrich_todo to include dependency display info
+_original_enrich_todo = enrich_todo
+
+def enrich_todo(t):
+    t = _original_enrich_todo(t)
+    # Dependency counts
+    t["blocks_count"]     = len(t.get("blocks", []))
+    t["blocked_by_count"] = len(t.get("blocked_by", []))
+    t["is_blocked"]       = bool(t.get("blocked_by"))
+    # Watcher count
+    t["watcher_count"]    = len(t.get("watchers", []))
+    # Time total
+    t["total_minutes"]    = sum(l.get("minutes",0) for l in t.get("time_logs",[]))
+    # Comment count (loaded lazily — just flag)
+    return t
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENHANCED ANALYTICS — add burndown + velocity data
+# ══════════════════════════════════════════════════════════════════════════════
+
+# /analytics already exists; extend it with new data by overriding its view
+# We patch the existing route by re-registering with a new function
+app.view_functions.pop("analytics", None)
+
+@app.route("/analytics")
+@login_required
+def analytics():
+    todos, _   = gh_read(FILE_TODOS)
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    todos   = todos or []
+    archive = archive or []
+    all_todos = todos + archive
+
+    counts = {s: len([t for t in todos if t["status"] == s])
+              for s in ["todo", "in_progress", "review_needed", "blocked"]}
+    counts["done"] = len(archive)
+
+    from collections import Counter
+    added_by  = Counter(t.get("added_by_id") for t in all_todos if t.get("added_by_id"))
+    assigned  = Counter(t.get("assigned_to_id") for t in all_todos if t.get("assigned_to_id"))
+    tag_counts  = Counter(tag for t in all_todos for tag in t.get("tags", []))
+    pri_counts  = Counter(t.get("priority", "medium") for t in todos if t.get("status") != "done")
+    recent_done = [enrich_todo(t) for t in sorted(archive, key=lambda t: t.get("updated_at",""), reverse=True)[:10]]
+    ai_count     = len([t for t in all_todos if t.get("auto_generated")])
+    manual_count = len(all_todos) - ai_count
+
+    # Velocity: completed per week for last 8 weeks
+    now = datetime.datetime.utcnow()
+    velocity = []
+    for i in range(7, -1, -1):
+        w_start = (now - datetime.timedelta(weeks=i+1)).isoformat()
+        w_end   = (now - datetime.timedelta(weeks=i)).isoformat()
+        cnt = sum(1 for t in archive if w_start <= (t.get("done_at") or t.get("updated_at","")) < w_end)
+        velocity.append({"week": (now - datetime.timedelta(weeks=i)).strftime("%b %d"), "count": cnt})
+
+    # Time tracked totals per user
+    time_by_user: dict = {}
+    for t in all_todos:
+        for log in t.get("time_logs", []):
+            uid = log.get("user_id","unknown")
+            time_by_user[uid] = time_by_user.get(uid, 0) + log.get("minutes", 0)
+
+    # Recurring todos
+    recurring_count = len([t for t in todos if t.get("recur")])
+
+    return render_template("analytics.html",
+        user=get_session()["user"], access_level=get_session().get("access_level"),
+        counts=counts, total=len(all_todos), archive_count=len(archive),
+        tag_counts=dict(tag_counts), pri_counts=dict(pri_counts),
+        ai_count=ai_count, manual_count=manual_count,
+        recent_done=recent_done,
+        added_by=dict(added_by.most_common(5)),
+        assigned=dict(assigned.most_common(5)),
+        velocity=velocity,
+        time_by_user=dict(sorted(time_by_user.items(), key=lambda x: x[1], reverse=True)[:5]),
+        recurring_count=recurring_count,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENHANCED SETTINGS PAGE — expose new admin config options
+# ══════════════════════════════════════════════════════════════════════════════
+
+app.view_functions.pop("settings", None)
+
+@app.route("/settings")
+@admin_required
+def settings():
+    cfg, _    = gh_read(FILE_CONFIG, force=True)
+    cfg       = cfg or DEFAULT_CONFIG.copy()
+    members_db = gh_read(FILE_TODO_MEMBERS)[0] or {}
+    health, _  = gh_read(FILE_BOT_HEALTH)
+    health     = health or {}
+    last_beat  = health.get("last_heartbeat","")
+    bot_online = False
+    if last_beat:
+        try:
+            age = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(last_beat)).total_seconds()
+            bot_online = age < 360
+        except Exception:
+            pass
+    releases, _ = gh_read(FILE_RELEASES)
+    archive, _  = gh_read(FILE_TODOS_ARCHIVE)
+    return render_template("settings.html",
+        user=get_session()["user"], access_level=get_session().get("access_level"),
+        cfg=cfg,
+        members_db=members_db,
+        health=health, bot_online=bot_online,
+        releases=releases or [],
+        archive_count=len(archive or []),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENHANCED /api/config — support new config fields
+# ══════════════════════════════════════════════════════════════════════════════
+
+app.view_functions.pop("api_config_save", None)
+
+@app.route("/api/config", methods=["POST"])
+def api_config_save():
+    if get_session().get("access_level") not in ("admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.json or {}
+    cfg, sha = gh_read(FILE_CONFIG, force=True)
+    cfg = cfg or DEFAULT_CONFIG.copy()
+    allowed = ("prefix", "reminder_days", "reminder_time", "todo_style",
+               "tag_permissions", "digest_channel", "digest_day",
+               "anymex_owner", "anymex_repo")
+    changes = []
+    for k in allowed:
+        if k in data:
+            if data[k] != cfg.get(k):
+                changes.append(f"{k} → {data[k]}")
+            cfg[k] = data[k]
+    ok = gh_write(FILE_CONFIG, cfg, sha, "Web: Config updated")
+    if ok and changes:
+        web_user = get_session().get("user", {})
+        fake_todo = {"id": "—", "title": "Bot Config", "status": "todo"}
+        _web_log_activity("⚙️ Settings Updated", fake_todo, web_user, extra="  ·  ".join(changes))
+    return jsonify({"ok": ok})
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
