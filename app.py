@@ -117,10 +117,30 @@ def gh_headers():
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-def gh_read_large(filepath: str):
-    """
-    Read a file >1MB from GitHub using the Git Data API (blobs endpoint).
-    The Contents API has a 1MB limit;
+def gh_read(filepath: str, force=False):
+    now = time.time()
+    if not force and filepath in _cache and now - _cache_ts.get(filepath, 0) < CACHE_TTL:
+        return _cache[filepath], None
+    try:
+        url = f"{GITHUB_API}/repos/{DATA_OWNER}/{DATA_REPO}/contents/{filepath}?ref={DATA_BRANCH}"
+        r = req.get(url, headers=gh_headers(), timeout=10)
+        if r.status_code == 404:
+            return None, None
+        if not r.ok:
+            print(f"[gh_read] GitHub error {r.status_code} for {filepath}")
+            return _cache.get(filepath), None
+        data = r.json()
+        if "content" not in data:
+            print(f"[gh_read] Unexpected response for {filepath}: {list(data.keys())}")
+            return _cache.get(filepath), None
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        parsed = json.loads(content)
+        _cache[filepath] = parsed
+        _cache_ts[filepath] = now
+        return parsed, data["sha"]
+    except Exception as e:
+        print(f"[gh_read] Exception reading {filepath}: {e}")
+        return _cache.get(filepath), None
 
 def gh_write(filepath: str, data, sha, msg: str):
     _cache.pop(filepath, None)
