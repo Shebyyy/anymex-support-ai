@@ -120,16 +120,27 @@ def gh_read(filepath: str, force=False):
     now = time.time()
     if not force and filepath in _cache and now - _cache_ts.get(filepath, 0) < CACHE_TTL:
         return _cache[filepath], None
-    url = f"{GITHUB_API}/repos/{DATA_OWNER}/{DATA_REPO}/contents/{filepath}?ref={DATA_BRANCH}"
-    r = req.get(url, headers=gh_headers())
-    if r.status_code == 404:
-        return None, None
-    data = r.json()
-    content = base64.b64decode(data["content"]).decode("utf-8")
-    parsed = json.loads(content)
-    _cache[filepath] = parsed
-    _cache_ts[filepath] = now
-    return parsed, data["sha"]
+    try:
+        url = f"{GITHUB_API}/repos/{DATA_OWNER}/{DATA_REPO}/contents/{filepath}?ref={DATA_BRANCH}"
+        r = req.get(url, headers=gh_headers(), timeout=10)
+        if r.status_code == 404:
+            return None, None
+        if not r.ok:
+            print(f"[gh_read] GitHub error {r.status_code} for {filepath}")
+            # Return stale cache if available, otherwise None
+            return _cache.get(filepath), None
+        data = r.json()
+        if "content" not in data:
+            print(f"[gh_read] Unexpected response for {filepath}: {list(data.keys())}")
+            return _cache.get(filepath), None
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        parsed = json.loads(content)
+        _cache[filepath] = parsed
+        _cache_ts[filepath] = now
+        return parsed, data["sha"]
+    except Exception as e:
+        print(f"[gh_read] Exception reading {filepath}: {e}")
+        return _cache.get(filepath), None
 
 def gh_write(filepath: str, data, sha, msg: str):
     _cache.pop(filepath, None)
@@ -141,8 +152,12 @@ def gh_write(filepath: str, data, sha, msg: str):
     if sha:
         payload["sha"] = sha
     url = f"{GITHUB_API}/repos/{DATA_OWNER}/{DATA_REPO}/contents/{filepath}"
-    r = req.put(url, headers=gh_headers(), json=payload)
-    return r.status_code in (200, 201)
+    try:
+        r = req.put(url, headers=gh_headers(), json=payload, timeout=15)
+        return r.status_code in (200, 201)
+    except Exception as e:
+        print(f"[gh_write] Exception writing {filepath}: {e}")
+        return False
 
 
 FILE_SESSIONS = "sessions.json"
@@ -1008,15 +1023,18 @@ def enrich_todo(t):
 @app.context_processor
 def inject_nav_counts():
     """Inject my_task_count into every template for the nav badge."""
-    sess = get_session()
-    user = sess.get("user")
-    if not user:
+    try:
+        sess = get_session()
+        user = sess.get("user")
+        if not user:
+            return {"my_task_count": 0}
+        uid = str(user.get("id", ""))
+        todos, _ = gh_read(FILE_TODOS)
+        count = len([t for t in (todos or [])
+                     if t.get("assigned_to_id") == uid and t.get("status") != "done"])
+        return {"my_task_count": count}
+    except Exception:
         return {"my_task_count": 0}
-    uid = str(user.get("id", ""))
-    todos, _ = gh_read(FILE_TODOS)
-    count = len([t for t in (todos or [])
-                 if t.get("assigned_to_id") == uid and t.get("status") != "done"])
-    return {"my_task_count": count}
 
 
 app.jinja_env.globals.update(
@@ -1897,19 +1915,23 @@ def api_members_list():
     if sess.get("access_level") not in ("manager", "admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
 
-    db = _get_members_db()
-    members = db.get("members") or {}
-    roles   = db.get("roles") or {}
+    try:
+        db = _get_members_db()
+        members = db.get("members") or {}
+        roles   = db.get("roles") or {}
 
-    todo_members = [m for m in members.values() if m.get("is_todo_role")]
-    todo_members.sort(key=lambda m: m.get("display_name", "").lower())
+        todo_members = [m for m in members.values() if m.get("is_todo_role")]
+        todo_members.sort(key=lambda m: m.get("display_name", "").lower())
 
-    return jsonify({
-        "members":     todo_members,
-        "roles":       roles,
-        "last_synced": db.get("last_synced", ""),
-        "total":       len(members),
-    })
+        return jsonify({
+            "members":     todo_members,
+            "roles":       roles,
+            "last_synced": db.get("last_synced", ""),
+            "total":       len(members),
+        })
+    except Exception as e:
+        print(f"[api_members_list] Error: {e}")
+        return jsonify({"error": "Failed to load members — GitHub may be temporarily unavailable. Try again in a moment."}), 503
 
 
 @app.route("/api/members/sync", methods=["POST"])
