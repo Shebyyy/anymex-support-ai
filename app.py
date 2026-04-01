@@ -55,6 +55,7 @@ FILE_TODOS_ARCHIVE = "todos_archive.json"
 FILE_FORUM_LINKS   = "forum_links.json"
 FILE_ACTIVITY_LOG  = "activity_log.json"
 FILE_MEMBERS       = "members.json"       # guild member snapshot synced from Discord
+FILE_TODO_MEMBERS  = "todo_members.json"  # only is_todo_role=true members (small, always readable)
 
 # Bot notification (triggers Discord board refresh after site changes)
 BOT_NOTIFY_URL  = os.environ.get("BOT_NOTIFY_URL")   # e.g. http://localhost:8081/notify
@@ -116,31 +117,10 @@ def gh_headers():
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-def gh_read(filepath: str, force=False):
-    now = time.time()
-    if not force and filepath in _cache and now - _cache_ts.get(filepath, 0) < CACHE_TTL:
-        return _cache[filepath], None
-    try:
-        url = f"{GITHUB_API}/repos/{DATA_OWNER}/{DATA_REPO}/contents/{filepath}?ref={DATA_BRANCH}"
-        r = req.get(url, headers=gh_headers(), timeout=10)
-        if r.status_code == 404:
-            return None, None
-        if not r.ok:
-            print(f"[gh_read] GitHub error {r.status_code} for {filepath}")
-            # Return stale cache if available, otherwise None
-            return _cache.get(filepath), None
-        data = r.json()
-        if "content" not in data:
-            print(f"[gh_read] Unexpected response for {filepath}: {list(data.keys())}")
-            return _cache.get(filepath), None
-        content = base64.b64decode(data["content"]).decode("utf-8")
-        parsed = json.loads(content)
-        _cache[filepath] = parsed
-        _cache_ts[filepath] = now
-        return parsed, data["sha"]
-    except Exception as e:
-        print(f"[gh_read] Exception reading {filepath}: {e}")
-        return _cache.get(filepath), None
+def gh_read_large(filepath: str):
+    """
+    Read a file >1MB from GitHub using the Git Data API (blobs endpoint).
+    The Contents API has a 1MB limit;
 
 def gh_write(filepath: str, data, sha, msg: str):
     _cache.pop(filepath, None)
@@ -1259,9 +1239,9 @@ def board():
     all_tags = sorted(set(tag for t in todos for tag in t.get("tags", [])))
 
     # Load todo-role members for the assignee filter dropdown
-    members_db = gh_read(FILE_MEMBERS)[0] or {}
+    members_db = gh_read(FILE_TODO_MEMBERS)[0] or {}
     assignable_members = sorted(
-        [m for m in (members_db.get("members") or {}).values() if m.get("is_todo_role")],
+        members_db.get("members") or [],
         key=lambda m: m.get("display_name", "").lower()
     )
 
@@ -1781,7 +1761,18 @@ def _sync_members_to_db_inner():
     }
     existing, sha = gh_read(FILE_MEMBERS, force=True)
     gh_write(FILE_MEMBERS, db, sha, f"Members: sync {len(members_out)} members")
-    print(f"[member_sync] Synced {len(members_out)} members, {len(roles_map)} roles")
+
+    # Also write a small todo_members.json with only todo-role members
+    todo_only = [m for m in members_out.values() if m.get("is_todo_role")]
+    todo_db = {
+        "last_synced": now_iso,
+        "guild_id":    DISCORD_GUILD_ID,
+        "members":     todo_only,
+        "total":       len(members_out),
+    }
+    existing_todo, sha_todo = gh_read(FILE_TODO_MEMBERS, force=True)
+    gh_write(FILE_TODO_MEMBERS, todo_db, sha_todo, f"Members: sync {len(todo_only)} todo members")
+    print(f"[member_sync] Synced {len(members_out)} members, {len(todo_only)} todo-role, {len(roles_map)} roles")
 
 
 def _upsert_member(user_obj: dict, member_obj: dict):
@@ -1831,17 +1822,29 @@ def _upsert_member(user_obj: dict, member_obj: dict):
             }
             db["members"] = members
             gh_write(FILE_MEMBERS, db, sha, f"Members: upsert {username}")
+
+            # Keep todo_members.json in sync too
+            if is_todo:
+                todo_db, todo_sha = gh_read(FILE_TODO_MEMBERS, force=True)
+                todo_db = todo_db or {"last_synced": "", "guild_id": DISCORD_GUILD_ID, "members": [], "total": 0}
+                todo_list = todo_db.get("members") or []
+                # Update or add this member
+                todo_list = [m for m in todo_list if m.get("id") != uid]
+                todo_list.append(members[uid])
+                todo_db["members"] = todo_list
+                todo_db["last_synced"] = datetime.datetime.utcnow().isoformat()
+                gh_write(FILE_TODO_MEMBERS, todo_db, todo_sha, f"Members: upsert todo {username}")
         except Exception as e:
             print(f"[member_upsert] Failed: {e}")
     _threading.Thread(target=_write, daemon=True).start()
 
 
-def _get_members_db() -> dict:
+def _get_todo_members_db() -> dict:
     """
-    Return the members DB, triggering a background sync if stale or missing.
-    Always returns immediately with whatever is currently stored.
+    Return the todo_members DB (small file, always readable).
+    Triggers a background sync if stale or missing.
     """
-    db, _ = gh_read(FILE_MEMBERS)
+    db, _ = gh_read(FILE_TODO_MEMBERS)
     db = db or {}
     last_synced = db.get("last_synced", "")
     needs_sync = True
@@ -1860,8 +1863,7 @@ def _get_members_db() -> dict:
 @app.route("/api/members/search")
 def api_members_search():
     """
-    Search guild members from the local members.json DB.
-    Returns only members flagged is_todo_role=true (has todo role or is admin).
+    Search todo-role members from todo_members.json (small file, always readable).
     Zero Discord API calls — purely a local JSON lookup.
 
     ?q=<query>  — matches username, global_name, nick (display_name)
@@ -1875,17 +1877,14 @@ def api_members_search():
     if not q:
         return jsonify([])
 
-    db = _get_members_db()
-    members = db.get("members") or {}
+    db = _get_todo_members_db()
+    members = db.get("members") or []
 
     if not members:
-        # DB not synced yet — tell the client to try again shortly
         return jsonify({"syncing": True, "results": []}), 202
 
     results = []
-    for m in members.values():
-        if not m.get("is_todo_role"):
-            continue
+    for m in members:
         searchable = f"{m.get('username','')} {m.get('global_name','')} {m.get('nick','')}".lower()
         if q not in searchable:
             continue
@@ -1907,7 +1906,7 @@ def api_members_search():
 @app.route("/api/members")
 def api_members_list():
     """
-    Return all todo-role members from the DB (no search filter).
+    Return all todo-role members from todo_members.json (small file, always readable).
     Used by the settings page to display the full assignable team.
     Access: manager, admin, owner only.
     """
@@ -1916,18 +1915,14 @@ def api_members_list():
         return jsonify({"error": "Forbidden"}), 403
 
     try:
-        db = _get_members_db()
-        members = db.get("members") or {}
-        roles   = db.get("roles") or {}
-
-        todo_members = [m for m in members.values() if m.get("is_todo_role")]
-        todo_members.sort(key=lambda m: m.get("display_name", "").lower())
+        db = _get_todo_members_db()
+        todo_members = db.get("members") or []
+        todo_members = sorted(todo_members, key=lambda m: m.get("display_name", "").lower())
 
         return jsonify({
             "members":     todo_members,
-            "roles":       roles,
             "last_synced": db.get("last_synced", ""),
-            "total":       len(members),
+            "total":       db.get("total", 0),
         })
     except Exception as e:
         print(f"[api_members_list] Error: {e}")
