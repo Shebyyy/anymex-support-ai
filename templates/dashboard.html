@@ -84,10 +84,12 @@
 
 {% block content %}
 <div class="dash-header">
+  <a href="/member/{{ user.id }}" style="text-decoration:none">
   <img class="dash-avatar"
     src="https://cdn.discordapp.com/avatars/{{ user.id }}/{{ user.avatar }}.png?size=128"
     onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"
     alt="{{ user.username }}" />
+  </a>
   <div>
     <h1>{{ user.global_name or user.username }}</h1>
     <p>@{{ user.username }} · <span class="badge {{ access_level }}" style="display:inline">{{ access_level }}</span></p>

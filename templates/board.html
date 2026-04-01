@@ -326,7 +326,7 @@
       <span class="tag">{{ tag }}</span>
     {% endfor %}
     {% if t.get('assigned_to_name') or t.get('assigned_to_id') %}
-    <span class="assignee-chip">👤 {{ t.assigned_to_name or ('User #' + (t.assigned_to_id|string)) }}</span>
+    <a class="assignee-chip" href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;cursor:pointer">👤 {{ t.assigned_to_name or ('User #' + (t.assigned_to_id|string)) }}</a>
     {% endif %}
     {% if t.get('due_urgency') and t.due_urgency != 'done' %}
     <span class="due-badge due-{{ t.due_urgency }}">
@@ -371,20 +371,22 @@
 
 <!-- ── View Modal ── -->
 <div class="modal-overlay" id="view-modal">
-  <div class="modal" onclick="event.stopPropagation()">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-      <h3 id="vm-title">TODO #0</h3>
-      <button class="btn btn-ghost btn-sm" onclick="closeModal('view-modal')">✕</button>
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:580px">
+    <!-- Header -->
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1rem;gap:10px">
+      <h3 id="vm-title" style="font-size:1rem;line-height:1.4;word-break:break-word">TODO #0</h3>
+      <button class="btn btn-ghost btn-sm" style="flex-shrink:0" onclick="closeModal('view-modal')">✕</button>
     </div>
+
+    <!-- Status + Priority row -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem">
+      <div id="vm-status"></div>
+      <div id="vm-priority"></div>
+      <div id="vm-public-badge"></div>
+    </div>
+
+    <!-- Main info grid -->
     <div class="detail-grid">
-      <div class="detail-field">
-        <label>Status</label>
-        <div class="val" id="vm-status"></div>
-      </div>
-      <div class="detail-field">
-        <label>Priority</label>
-        <div class="val" id="vm-priority"></div>
-      </div>
       <div class="detail-field">
         <label>Assigned To</label>
         <div class="val" id="vm-assigned"></div>
@@ -393,8 +395,6 @@
         <label>Added By</label>
         <div class="val" id="vm-added"></div>
       </div>
-    </div>
-    <div class="detail-grid" style="margin-top:0">
       <div class="detail-field">
         <label>Due Date</label>
         <div class="val" id="vm-due"></div>
@@ -404,20 +404,37 @@
         <div class="val" id="vm-created" style="font-size:0.82rem;color:var(--muted)"></div>
       </div>
     </div>
-    <div id="vm-desc-wrap" style="display:none">
-      <label style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">AI Summary</label>
+
+    <!-- Extra info row: watchers, time, deps -->
+    <div id="vm-extra-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:0.75rem;font-size:0.78rem;color:var(--muted)"></div>
+
+    <!-- Tags -->
+    <div id="vm-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.75rem"></div>
+
+    <!-- AI description -->
+    <div id="vm-desc-wrap" style="display:none;margin-bottom:0.75rem">
+      <label style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Description</label>
       <div class="source-quote" id="vm-desc"></div>
     </div>
-    <div id="vm-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"></div>
-    {% if access_level in ('manager','admin','owner') %}
+
+    {% if user %}
     <hr>
-    <div style="display:flex;gap:8px;flex-wrap:wrap" id="vm-actions">
-      <button class="btn btn-primary btn-sm" id="vm-edit-btn">Edit TODO</button>
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem" id="vm-actions">
+      {% if access_level in ('manager','admin','owner') %}
+      <button class="btn btn-primary btn-sm" id="vm-edit-btn">✏️ Edit</button>
       <button class="btn btn-ghost btn-sm" id="vm-watch-btn" onclick="toggleWatch()">👁 Watch</button>
       <button class="btn btn-ghost btn-sm" onclick="openTimeLog()">⏱ Log Time</button>
+      <button class="btn btn-ghost btn-sm" id="vm-public-btn" onclick="togglePublic()">🌐 Public</button>
+      {% endif %}
+      {% if access_level in ('admin','owner') %}
+      <button class="btn btn-danger btn-sm" id="vm-delete-btn" onclick="deleteFromView()">🗑 Delete</button>
+      {% endif %}
     </div>
-    <div id="vm-comments-section" style="margin-top:1rem">
-      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Comments</div>
+
+    <!-- Comments -->
+    <div id="vm-comments-section">
+      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">💬 Comments</div>
       <div id="vm-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px">
         <input class="form-control" type="text" id="vm-comment-input" placeholder="Add a comment…" style="flex:1" onkeydown="if(event.key==='Enter')postComment()" />
@@ -598,19 +615,24 @@ function viewTodoById(id) {
 function viewTodo(t) {
   const status = t.status || 'todo';
   const pri    = t.priority || 'medium';
+  const isPublic = t.public !== false;
+
   document.getElementById('vm-title').textContent = `#${t.id} — ${t.title}`;
+
+  // Status + Priority + Public badge row
   document.getElementById('vm-status').innerHTML =
     `<span class="status-pill status-${status}">${STATUS_ICONS[status] || '○'} ${STATUS_LABELS[status] || status}</span>`;
   document.getElementById('vm-priority').innerHTML =
     `<span class="pri-icon pri-${pri}">${PRI_ICONS[pri] || '◈'} ${PRI_LABELS[pri] || pri}</span>`;
+  document.getElementById('vm-public-badge').innerHTML =
+    `<span style="font-size:0.72rem;padding:3px 8px;border-radius:10px;background:${isPublic ? 'rgba(29,158,117,0.12)' : 'rgba(107,114,128,0.1)'};color:${isPublic ? 'var(--done)' : 'var(--muted)'}">${isPublic ? '🌐 Public' : '🔒 Private'}</span>`;
 
-  // Assigned-to — show name + assign-to-me button in viewer
+  // Assigned-to — clickable member profile link + assign/unassign button
   const assignedEl = document.getElementById('vm-assigned');
   const assignedName = t.assigned_to_name || (t.assigned_to_id ? `User #${t.assigned_to_id}` : null);
-  let assignedHtml = assignedName
-    ? `<span>${assignedName}</span>`
+  let assignedHtml = assignedName && t.assigned_to_id
+    ? `<a href="/member/${t.assigned_to_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${assignedName}</a>`
     : '<span style="color:var(--muted)">Unassigned</span>';
-
   if (['manager','admin','owner'].includes(ACCESS_LEVEL)) {
     if (t.assigned_to_id === CURRENT_UID) {
       assignedHtml += ` <button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="selfAssign(${t.id},'unassign',this)">✗ Unassign me</button>`;
@@ -620,14 +642,19 @@ function viewTodo(t) {
   }
   assignedEl.innerHTML = assignedHtml;
 
-  document.getElementById('vm-added').textContent =
-    t.added_by || (t.added_by_id ? `User #${t.added_by_id}` : '—');
+  // Added By — clickable if we have added_by_id
+  const addedEl = document.getElementById('vm-added');
+  if (t.added_by_id) {
+    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${t.added_by || 'User #' + t.added_by_id}</a>`;
+  } else {
+    addedEl.textContent = t.added_by || '—';
+  }
 
-  // Due date in view modal
+  // Due date
   const dueEl = document.getElementById('vm-due');
   if (t.due_date) {
     const urgency = t.due_urgency || 'normal';
-    const label   = t.due_label || t.due_date_fmt || t.due_date?.slice(0,10);
+    const label   = t.due_label || t.due_date_fmt || (t.due_date || '').slice(0,10);
     const icon    = urgency === 'overdue' ? '⚠ ' : urgency === 'today' ? '🕐 ' : '📅 ';
     dueEl.innerHTML = `<span class="due-badge due-${urgency}">${icon}${label}</span>`;
   } else {
@@ -635,21 +662,48 @@ function viewTodo(t) {
   }
   document.getElementById('vm-created').textContent = t.created_at_fmt || '—';
 
-  const descWrap = document.getElementById('vm-desc-wrap');
-  const desc = t.ai_description || '';
-  descWrap.style.display = desc ? 'block' : 'none';
-  document.getElementById('vm-desc').textContent = desc;
+  // Extra info: watchers, time, deps, recur
+  const extras = [];
+  if ((t.watcher_count || 0) > 0) extras.push(`👁 ${t.watcher_count} watcher${t.watcher_count !== 1 ? 's' : ''}`);
+  if ((t.total_minutes || 0) > 0) extras.push(`⏱ ${(t.total_minutes / 60).toFixed(1)}h logged`);
+  if ((t.blocks_count || 0) > 0) extras.push(`⛓ blocks ${t.blocks_count}`);
+  if ((t.blocked_by_count || 0) > 0) extras.push(`⛔ blocked by ${t.blocked_by_count}`);
+  if (t.recur) extras.push(`🔁 recurring`);
+  const extraRow = document.getElementById('vm-extra-row');
+  if (extraRow) extraRow.innerHTML = extras.join('<span style="color:var(--border);margin:0 4px">·</span>');
 
-  const tagsEl = document.getElementById('vm-tags');
-  tagsEl.innerHTML = (t.tags || []).map(tag =>
+  // Tags
+  document.getElementById('vm-tags').innerHTML = (t.tags || []).map(tag =>
     `<span class="tag">${tag}</span>`
   ).join('');
 
+  // Description
+  const descWrap = document.getElementById('vm-desc-wrap');
+  const desc = t.ai_description || t.description || '';
+  descWrap.style.display = desc ? 'block' : 'none';
+  if (desc) document.getElementById('vm-desc').textContent = desc;
+
+  // Edit button
   const editBtn = document.getElementById('vm-edit-btn');
   if (editBtn) editBtn.onclick = () => { closeModal('view-modal'); editTodo(t); };
 
+  // Watch button
+  const watchBtn = document.getElementById('vm-watch-btn');
+  if (watchBtn) {
+    const wc = (t.watchers || []).length;
+    watchBtn.textContent = wc > 0 ? `👁 Watching (${wc})` : '👁 Watch';
+  }
+
+  // Public toggle button
+  const publicBtn = document.getElementById('vm-public-btn');
+  if (publicBtn) {
+    publicBtn.textContent = isPublic ? '🌐 Public (hide)' : '🔒 Private (publish)';
+    publicBtn.style.color = isPublic ? 'var(--done)' : 'var(--muted)';
+  }
+
   document.getElementById('view-modal').classList.add('open');
 }
+
 
 function openAddModal() {
   document.getElementById('em-title').textContent = 'Add TODO';
@@ -876,6 +930,25 @@ function viewTodoById(id) {
   }
 }
 
+async function togglePublic() {
+  if (!_currentViewId) return;
+  const t = _TODOS_MAP[_currentViewId];
+  if (!t) return;
+  const isPublic = t.public !== false;
+  const newPublic = !isPublic;
+  try {
+    await api('POST', `/api/todo/${_currentViewId}/public`, { public: newPublic });
+    t.public = newPublic;
+    _TODOS_MAP[_currentViewId] = t;
+    const btn = document.getElementById('vm-public-btn');
+    if (btn) {
+      btn.textContent = newPublic ? '🌐 Public (click to hide)' : '🔒 Private (click to publish)';
+      btn.style.color = newPublic ? 'var(--done)' : 'var(--muted)';
+    }
+    toast(newPublic ? 'TODO is now public on roadmap & changelog' : 'TODO hidden from public views');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 async function loadComments(todoId) {
   const list = document.getElementById('vm-comments-list');
   if (!list) return;
@@ -926,6 +999,21 @@ function openTimeLog() {
   api('POST', `/api/todo/${_currentViewId}/time`, { minutes: parseInt(mins) })
     .then(res => { toast(`Logged ${mins} mins! Total: ${res.total_minutes} mins`); })
     .catch(e => toast(e.message, 'error'));
+}
+
+async function deleteFromView(id) {
+  const todoId = id || _currentViewId;
+  if (!todoId) return;
+  if (!confirm(`Delete TODO #${todoId}? This cannot be undone.`)) return;
+  try {
+    await api('DELETE', `/api/todo/${todoId}`);
+    closeModal('view-modal');
+    toast(`TODO #${todoId} deleted.`);
+    // Remove card from grid
+    const card = document.querySelector(`.todo-card[data-id="${todoId}"]`);
+    if (card) card.remove();
+    delete _TODOS_MAP[todoId];
+  } catch(e) { toast(e.message, 'error'); }
 }
 </script>
 {% endblock %}

@@ -2581,22 +2581,20 @@ def api_forum_upvote(forum_type, thread_id):
 
 @app.route("/changelog")
 def changelog():
-    # Also include releases
     releases, _ = gh_read(FILE_RELEASES)
     releases = sorted((releases or []), key=lambda r: r.get("date", ""), reverse=True)
 
     archive, _ = gh_read(FILE_TODOS_ARCHIVE)
     archive = archive or []
-    public_todos = [enrich_todo(t) for t in archive if t.get("public_changelog")]
+    # Show all completed todos — exclude only if explicitly set public=False
+    public_todos = [enrich_todo(t) for t in archive if t.get("public", True)]
 
-    # Group by week
     from collections import defaultdict
     weeks = defaultdict(list)
     for t in public_todos:
         done_at = t.get("done_at") or t.get("updated_at", "")
         try:
             dt = datetime.datetime.fromisoformat(done_at[:10])
-            # Monday of that week
             monday = dt - datetime.timedelta(days=dt.weekday())
             key = monday.strftime("%Y-%m-%d")
         except Exception:
@@ -3064,7 +3062,6 @@ def api_bot_health_report():
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/member/<user_id>")
-@login_required
 def member_profile(user_id):
     db, _ = gh_read(FILE_MEMBERS)
     db = db or {}
@@ -3102,8 +3099,9 @@ def member_profile(user_id):
 def roadmap():
     todos, _ = gh_read(FILE_TODOS)
     archive, _ = gh_read(FILE_TODOS_ARCHIVE)
-    public_active   = [enrich_todo(t) for t in (todos   or []) if t.get("public")]
-    public_done     = [enrich_todo(t) for t in (archive or []) if t.get("public")][:20]
+    # public defaults to True — only exclude if explicitly set to False
+    public_active = [enrich_todo(t) for t in (todos or []) if t.get("public", True)]
+    public_done   = [enrich_todo(t) for t in (archive or []) if t.get("public", True)][:20]
 
     by_status = {s: [] for s in ["todo","in_progress","review_needed","blocked"]}
     for t in public_active:
@@ -3118,10 +3116,39 @@ def roadmap():
         access_level=get_session().get("access_level", "public"),
     )
 
+@app.route("/api/migrate/public-defaults", methods=["POST"])
+@admin_required
+def api_migrate_public_defaults():
+    """One-time migration: set public=True on all todos that don't have it set."""
+    todos, sha = gh_read(FILE_TODOS, force=True)
+    archive, arch_sha = gh_read(FILE_TODOS_ARCHIVE, force=True)
+    todos   = todos   or []
+    archive = archive or []
+
+    todo_changed = 0
+    for t in todos:
+        if "public" not in t:
+            t["public"] = True
+            todo_changed += 1
+
+    arch_changed = 0
+    for t in archive:
+        if "public" not in t:
+            t["public"] = True
+            arch_changed += 1
+
+    if todo_changed:
+        gh_write(FILE_TODOS, todos, sha, f"Migrate: set public=True on {todo_changed} todos")
+    if arch_changed:
+        gh_write(FILE_TODOS_ARCHIVE, archive, arch_sha, f"Migrate: set public=True on {arch_changed} archived todos")
+
+    return jsonify({"ok": True, "todos_updated": todo_changed, "archive_updated": arch_changed})
+
+
 @app.route("/api/todo/<int:todo_id>/public", methods=["POST"])
 def api_todo_set_public(todo_id):
-    """Toggle public visibility of a TODO (admin only)."""
-    if get_session().get("access_level") not in ("admin", "owner"):
+    """Toggle public visibility of a TODO (manager+)."""
+    if get_session().get("access_level") not in ("admin", "owner", "manager"):
         return jsonify({"error": "Forbidden"}), 403
     data = request.json or {}
     public = bool(data.get("public", False))

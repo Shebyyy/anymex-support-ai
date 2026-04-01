@@ -71,12 +71,12 @@
     <span class="count">{{ assigned|length }}</span>
   </div>
   {% for t in assigned %}
-  <div class="todo-row" style="border-left-color:{{ t.status_color }}">
+  <a class="todo-row" href="/board" style="border-left-color:{{ t.status_color }};text-decoration:none;color:inherit">
     <span class="id">#{{ t.id }}</span>
     <span class="title">{{ t.title }}</span>
     <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
     <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
-  </div>
+  </a>
   {% endfor %}
 </div>
 {% endif %}
@@ -106,7 +106,7 @@
   <div class="card" style="padding:0;overflow:hidden">
     {% for e in activity %}
     <div class="activity-entry">
-      <div class="activity-dot" style="background:{{ STATUS_COLORS.get(e.get('todo_status','todo'),'#5865F2') }}"></div>
+    <div class="activity-dot" style="background:{% set sc = {'todo':'#378ADD','in_progress':'#BA7517','review_needed':'#888780','blocked':'#E24B4A','done':'#1D9E75'} %}{{ sc.get(e.get('todo_status','todo'),'#5865F2') }}"></div>
       <div style="flex:1">
         <span style="font-size:.85rem;font-weight:600">{{ e.action }}</span>
         {% if e.todo_id %}<span style="font-size:.78rem;color:var(--muted);font-family:var(--mono);margin-left:6px">#{{ e.todo_id }}</span>{% endif %}

@@ -238,10 +238,19 @@
        data-created="{{ post.created_at or '' }}"
        data-tags="{{ post.tags | join(',') | lower if post.tags else '' }}"
        onclick="openThread('{{ post.id }}')">
+    {% if post.author_id %}
+    <a href="/member/{{ post.author_id }}" onclick="event.stopPropagation()" style="flex-shrink:0">
     <img class="author-avatar"
       src="{{ post.author_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}"
       alt="{{ post.author_name }}"
       onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+    </a>
+    {% else %}
+    <img class="author-avatar"
+      src="{{ post.author_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}"
+      alt="{{ post.author_name }}"
+      onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+    {% endif %}
     <div class="forum-post-body">
       <div class="forum-post-top">
         <span class="post-title">{{ post.title }}</span>
@@ -250,7 +259,11 @@
       </div>
       {% if post.preview %}<div class="forum-post-preview">{{ post.preview }}</div>{% endif %}
       <div class="forum-post-meta">
+        {% if post.author_id %}
+        <a href="/member/{{ post.author_id }}" class="author-name" onclick="event.stopPropagation()" style="text-decoration:none">{{ post.author_name }}</a>
+        {% else %}
         <span class="author-name">{{ post.author_name }}</span>
+        {% endif %}
         <span>·</span>
         <span>{{ post.created_at_fmt }}</span>
         <span class="reply-count">💬 {{ post.message_count }}</span>
