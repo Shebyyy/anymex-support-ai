@@ -703,16 +703,17 @@ function onAssigneeSearch(val) {
   const resultsEl = document.getElementById('em-member-results');
   if (!val.trim()) { resultsEl.style.display = 'none'; return; }
 
-  // Managers: only allow themselves — shortcut straight to self-assign
-  if (ACCESS_LEVEL === 'manager') {
-    resultsEl.style.display = 'none';
-    return;
-  }
-
   _assignSearchTimer = setTimeout(async () => {
     try {
       const res = await fetch(`/api/members/search?q=${encodeURIComponent(val)}`);
-      const members = await res.json();
+      const data = await res.json();
+      // If DB isn't synced yet, show a friendly message
+      if (data.syncing) {
+        resultsEl.innerHTML = '<div style="padding:10px 14px;font-size:0.8rem;color:var(--muted)">⏳ Member DB is syncing… try again in a few seconds</div>';
+        resultsEl.style.display = 'block';
+        return;
+      }
+      const members = Array.isArray(data) ? data : (data.results || []);
       if (!Array.isArray(members) || members.length === 0) {
         resultsEl.innerHTML = '<div style="padding:10px 14px;font-size:0.8rem;color:var(--muted)">No members found</div>';
         resultsEl.style.display = 'block';
@@ -723,9 +724,9 @@ function onAssigneeSearch(val) {
           <img src="${m.avatar_url}" alt="" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
           <div>
             <div class="mname">${m.display_name}</div>
-            <div class="muname">@${m.username}</div>
+            <div class="muname">@${m.username}${m.role_names && m.role_names.length ? ' · ' + m.role_names.slice(0,2).join(', ') : ''}</div>
           </div>
-          ${m.is_manager ? '<span class="mrole">Manager</span>' : ''}
+          ${m.is_admin ? '<span class="mrole" style="background:rgba(226,75,74,.1);color:var(--blocked)">Admin</span>' : m.is_manager ? '<span class="mrole">Manager</span>' : ''}
         </div>
       `).join('');
       resultsEl.style.display = 'block';

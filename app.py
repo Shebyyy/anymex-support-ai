@@ -52,8 +52,9 @@ GITHUB_API    = "https://api.github.com"
 FILE_CONFIG        = "config.json"
 FILE_TODOS         = "todos.json"
 FILE_TODOS_ARCHIVE = "todos_archive.json"
-FILE_FORUM_LINKS   = "forum_links.json"   # maps forum thread id → todo id
-FILE_ACTIVITY_LOG  = "activity_log.json"  # web activity feed
+FILE_FORUM_LINKS   = "forum_links.json"
+FILE_ACTIVITY_LOG  = "activity_log.json"
+FILE_MEMBERS       = "members.json"       # guild member snapshot synced from Discord
 
 # Bot notification (triggers Discord board refresh after site changes)
 BOT_NOTIFY_URL  = os.environ.get("BOT_NOTIFY_URL")   # e.g. http://localhost:8081/notify
@@ -1124,6 +1125,10 @@ def callback():
         "member": member,
     })
 
+    # Keep members.json fresh for anyone who logs in
+    if member:
+        _upsert_member(user, member)
+
     resp = redirect(url_for("dashboard"))
     resp.set_cookie("sid", new_sid, max_age=60*60*24*30, httponly=True, samesite="Lax")
     return resp
@@ -1216,7 +1221,7 @@ def board():
     if tag_filter != "all":
         filtered = [t for t in filtered if tag_filter in t.get("tags", [])]
     if assignee_filter == "me" and current_uid:
-        filtered = [t for t in filtered if t.get("assigned_to_id") == current_uid]
+        filtered = [t for t in filtered if str(t.get("assigned_to_id", "")) == current_uid]
     elif assignee_filter == "unassigned":
         filtered = [t for t in filtered if not t.get("assigned_to_id")]
     if due_filter == "overdue":
@@ -1598,15 +1603,236 @@ def api_me():
         "member": get_session().get("member"),
     })
 
+# ══════════════════════════════════════════════════════════════════════════════
+# MEMBER DB  —  members.json stored on GitHub
+#
+# Schema of members.json:
+# {
+#   "last_synced": "2026-04-01T10:00:00",
+#   "guild_id": "123456789",
+#   "roles": {                          ← all guild roles for display
+#     "role_id": { "name": "Dev Team", "color": "#e74c3c", "position": 5 }
+#   },
+#   "members": {
+#     "user_id": {
+#       "id":           "123",
+#       "username":     "sheby",
+#       "global_name":  "Sheby",
+#       "nick":         "Sheby Dev",           ← server nickname
+#       "display_name": "Sheby Dev",           ← nick > global_name > username
+#       "avatar_url":   "https://cdn.discordapp.com/...",
+#       "roles":        ["role_id_1", "role_id_2"],
+#       "role_names":   ["Dev Team", "Moderator"],
+#       "is_admin":     false,
+#       "is_todo_role": true,                  ← has at least one configured todo role
+#       "joined_at":    "2024-01-15T08:30:00",
+#       "synced_at":    "2026-04-01T10:00:00"
+#     }
+#   }
+# }
+#
+# Sync is triggered:
+#   - Background thread on first /api/members/search call if DB is stale/empty
+#   - POST /api/members/sync  (admin only — manual force)
+#   - Automatically after login (updates the logged-in user's own record)
+# ══════════════════════════════════════════════════════════════════════════════
+
+MEMBERS_SYNC_TTL = 30 * 60   # re-sync from Discord every 30 minutes
+_members_syncing = False      # simple flag to avoid parallel syncs
+
+
+def _build_avatar_url(uid: str, avatar_hash: str | None) -> str:
+    if avatar_hash:
+        return f"https://cdn.discordapp.com/avatars/{uid}/{avatar_hash}.png?size=128"
+    idx = (int(uid) >> 22) % 6 if uid and uid.isdigit() else 0
+    return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
+
+
+def _sync_members_to_db():
+    """
+    Full guild member sync → writes to members.json on GitHub.
+    - Fetches all guild roles first (for name/color lookup)
+    - Paginates /guilds/{id}/members (1000/page) until done
+    - Stores rich member records with role names, todo-role flag, etc.
+    - Runs in a background thread; never blocks a request.
+    """
+    global _members_syncing
+    if _members_syncing:
+        return
+    _members_syncing = True
+    try:
+        _sync_members_to_db_inner()
+    except Exception as e:
+        print(f"[member_sync] Error: {e}")
+    finally:
+        _members_syncing = False
+
+
+def _sync_members_to_db_inner():
+    if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
+        return
+
+    # 1. Fetch all guild roles for name/color lookup
+    raw_roles = bot_get(f"/guilds/{DISCORD_GUILD_ID}/roles") or []
+    roles_map = {}
+    for r in raw_roles:
+        rid = str(r.get("id", ""))
+        if rid:
+            # Discord stores color as an int; convert to hex string
+            color_int = r.get("color", 0)
+            color_hex = f"#{color_int:06x}" if color_int else None
+            roles_map[rid] = {
+                "name":     r.get("name", rid),
+                "color":    color_hex,
+                "position": r.get("position", 0),
+                "hoist":    r.get("hoist", False),   # shown separately in member list
+            }
+
+    # 2. Load current config so we know which roles are "todo roles"
+    cfg, _ = gh_read(FILE_CONFIG)
+    todo_roles_set = set(str(r) for r in (cfg or {}).get("todo_roles", []))
+
+    # 3. Paginate through all guild members
+    raw_members = []
+    after = 0
+    while True:
+        page = bot_get(f"/guilds/{DISCORD_GUILD_ID}/members?limit=1000&after={after}")
+        if not page:
+            break
+        raw_members.extend(page)
+        if len(page) < 1000:
+            break
+        after = max(int((m.get("user") or {}).get("id", "0")) for m in page)
+
+    # 4. Build the members dict
+    now_iso = datetime.datetime.utcnow().isoformat()
+    members_out = {}
+    for m in raw_members:
+        user = m.get("user") or {}
+        if user.get("bot"):
+            continue
+        uid         = str(user.get("id", ""))
+        if not uid:
+            continue
+        username    = user.get("username", "")
+        global_name = user.get("global_name") or ""
+        nick        = m.get("nick") or ""
+        display_name = nick or global_name or username
+        avatar_url  = _build_avatar_url(uid, user.get("avatar"))
+        member_role_ids = [str(r) for r in (m.get("roles") or [])]
+        role_names  = [roles_map[r]["name"] for r in member_role_ids if r in roles_map]
+        perms       = int(m.get("permissions", 0) or 0)
+        is_admin    = bool(perms & 0x8)
+        is_todo     = is_admin or bool(todo_roles_set and set(member_role_ids) & todo_roles_set)
+
+        members_out[uid] = {
+            "id":           uid,
+            "username":     username,
+            "global_name":  global_name,
+            "nick":         nick,
+            "display_name": display_name,
+            "avatar_url":   avatar_url,
+            "roles":        member_role_ids,      # list of role ID strings
+            "role_names":   role_names,           # human names for display
+            "is_admin":     is_admin,
+            "is_todo_role": is_todo,
+            "joined_at":    m.get("joined_at", ""),
+            "synced_at":    now_iso,
+        }
+
+    # 5. Write to GitHub
+    db = {
+        "last_synced": now_iso,
+        "guild_id":    DISCORD_GUILD_ID,
+        "roles":       roles_map,
+        "members":     members_out,
+    }
+    existing, sha = gh_read(FILE_MEMBERS, force=True)
+    gh_write(FILE_MEMBERS, db, sha, f"Members: sync {len(members_out)} members")
+    print(f"[member_sync] Synced {len(members_out)} members, {len(roles_map)} roles")
+
+
+def _upsert_member(user_obj: dict, member_obj: dict):
+    """
+    Update a single member's record in members.json right after they log in.
+    Keeps the DB fresh for active users without waiting for the next full sync.
+    Runs in a background thread.
+    """
+    def _write():
+        try:
+            uid = str(user_obj.get("id", ""))
+            if not uid:
+                return
+            cfg, _ = gh_read(FILE_CONFIG)
+            todo_roles_set = set(str(r) for r in (cfg or {}).get("todo_roles", []))
+
+            db, sha = gh_read(FILE_MEMBERS, force=True)
+            db = db or {"last_synced": "", "guild_id": DISCORD_GUILD_ID,
+                        "roles": {}, "members": {}}
+            roles_map  = db.get("roles") or {}
+            members    = db.get("members") or {}
+
+            username    = user_obj.get("username", "")
+            global_name = user_obj.get("global_name") or ""
+            nick        = (member_obj or {}).get("nick") or ""
+            display_name = nick or global_name or username
+            avatar_url  = _build_avatar_url(uid, user_obj.get("avatar"))
+            member_role_ids = [str(r) for r in ((member_obj or {}).get("roles") or [])]
+            role_names  = [roles_map[r]["name"] for r in member_role_ids if r in roles_map]
+            perms       = int((member_obj or {}).get("permissions", 0) or 0)
+            is_admin    = bool(perms & 0x8)
+            is_todo     = is_admin or bool(todo_roles_set and set(member_role_ids) & todo_roles_set)
+
+            members[uid] = {
+                "id":           uid,
+                "username":     username,
+                "global_name":  global_name,
+                "nick":         nick,
+                "display_name": display_name,
+                "avatar_url":   avatar_url,
+                "roles":        member_role_ids,
+                "role_names":   role_names,
+                "is_admin":     is_admin,
+                "is_todo_role": is_todo,
+                "joined_at":    (member_obj or {}).get("joined_at", ""),
+                "synced_at":    datetime.datetime.utcnow().isoformat(),
+            }
+            db["members"] = members
+            gh_write(FILE_MEMBERS, db, sha, f"Members: upsert {username}")
+        except Exception as e:
+            print(f"[member_upsert] Failed: {e}")
+    _threading.Thread(target=_write, daemon=True).start()
+
+
+def _get_members_db() -> dict:
+    """
+    Return the members DB, triggering a background sync if stale or missing.
+    Always returns immediately with whatever is currently stored.
+    """
+    db, _ = gh_read(FILE_MEMBERS)
+    db = db or {}
+    last_synced = db.get("last_synced", "")
+    needs_sync = True
+    if last_synced:
+        try:
+            age = (datetime.datetime.utcnow() -
+                   datetime.datetime.fromisoformat(last_synced)).total_seconds()
+            needs_sync = age > MEMBERS_SYNC_TTL
+        except Exception:
+            needs_sync = True
+    if needs_sync and DISCORD_BOT_TOKEN and not _members_syncing:
+        _threading.Thread(target=_sync_members_to_db, daemon=True).start()
+    return db
+
+
 @app.route("/api/members/search")
 def api_members_search():
     """
-    Search only members who have a configured TODO role (or are admins).
-    Uses GET /guilds/{id}/roles/{role_id}/members for each configured TODO role,
-    so we only ever pull the exact set of people who can be assigned work —
-    never the full server member list.
+    Search guild members from the local members.json DB.
+    Returns only members flagged is_todo_role=true (has todo role or is admin).
+    Zero Discord API calls — purely a local JSON lookup.
 
-    ?q=<query>  — filter by username, global_name, or server nickname
+    ?q=<query>  — matches username, global_name, nick (display_name)
     Access: manager, admin, owner only.
     """
     sess = get_session()
@@ -1617,78 +1843,70 @@ def api_members_search():
     if not q:
         return jsonify([])
 
-    if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
-        return jsonify({"error": "Bot token or guild ID not configured"}), 503
+    db = _get_members_db()
+    members = db.get("members") or {}
 
-    cfg, _ = gh_read(FILE_CONFIG)
-    todo_roles = list((cfg or {}).get("todo_roles", []))
+    if not members:
+        # DB not synced yet — tell the client to try again shortly
+        return jsonify({"syncing": True, "results": []}), 202
 
-    # Fetch only members who hold a TODO role via the role-members endpoint.
-    # One API call per role — much cheaper and more precise than /members?limit=1000.
-    seen_ids: set = set()
-    candidates: list = []
-
-    for role_id in todo_roles:
-        role_members = bot_get(f"/guilds/{DISCORD_GUILD_ID}/roles/{role_id}/members?limit=1000")
-        if not role_members:
-            continue
-        for m in role_members:
-            user = m.get("user") or {}
-            if user.get("bot"):
-                continue
-            uid = str(user.get("id", ""))
-            if uid in seen_ids:
-                continue
-            seen_ids.add(uid)
-            candidates.append(m)
-
-    # If no TODO roles are configured at all, fall back to fetching admins only
-    # (avoids pulling the whole server; admins can still be assigned tasks).
-    if not todo_roles:
-        all_members = bot_get(f"/guilds/{DISCORD_GUILD_ID}/members?limit=1000") or []
-        for m in all_members:
-            user = m.get("user") or {}
-            if user.get("bot"):
-                continue
-            uid   = str(user.get("id", ""))
-            perms = int(m.get("permissions", 0))
-            if bool(perms & 0x8) and uid not in seen_ids:
-                seen_ids.add(uid)
-                candidates.append(m)
-
-    # Filter the role-member pool by the search query
     results = []
-    for m in candidates:
-        user         = m.get("user") or {}
-        uid          = str(user.get("id", ""))
-        username     = user.get("username", "")
-        global_name  = user.get("global_name") or ""
-        nick         = m.get("nick") or ""
-        display_name = nick or global_name or username
-
-        searchable = f"{username} {global_name} {nick}".lower()
+    for m in members.values():
+        if not m.get("is_todo_role"):
+            continue
+        searchable = f"{m.get('username','')} {m.get('global_name','')} {m.get('nick','')}".lower()
         if q not in searchable:
             continue
-
-        av = user.get("avatar")
-        avatar_url = (
-            f"https://cdn.discordapp.com/avatars/{uid}/{av}.png?size=64"
-            if av else
-            f"https://cdn.discordapp.com/embed/avatars/{(int(uid) >> 22) % 6 if uid else 0}.png"
-        )
-
         results.append({
-            "id":           uid,
-            "username":     username,
-            "display_name": display_name,
-            "avatar_url":   avatar_url,
-            "is_manager":   True,   # everyone in this pool holds the TODO role
+            "id":           m["id"],
+            "username":     m["username"],
+            "display_name": m["display_name"],
+            "avatar_url":   m["avatar_url"],
+            "role_names":   m.get("role_names", []),
+            "is_admin":     m.get("is_admin", False),
+            "is_manager":   True,
         })
-
         if len(results) >= 15:
             break
 
     return jsonify(results)
+
+
+@app.route("/api/members")
+def api_members_list():
+    """
+    Return all todo-role members from the DB (no search filter).
+    Used by the settings page to display the full assignable team.
+    Access: manager, admin, owner only.
+    """
+    sess = get_session()
+    if sess.get("access_level") not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    db = _get_members_db()
+    members = db.get("members") or {}
+    roles   = db.get("roles") or {}
+
+    todo_members = [m for m in members.values() if m.get("is_todo_role")]
+    todo_members.sort(key=lambda m: m.get("display_name", "").lower())
+
+    return jsonify({
+        "members":     todo_members,
+        "roles":       roles,
+        "last_synced": db.get("last_synced", ""),
+        "total":       len(members),
+    })
+
+
+@app.route("/api/members/sync", methods=["POST"])
+def api_members_sync():
+    """Force a full member sync from Discord. Admin only."""
+    if get_session().get("access_level") not in ("admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
+        return jsonify({"error": "Bot token or guild ID not configured"}), 503
+    _threading.Thread(target=_sync_members_to_db, daemon=True).start()
+    return jsonify({"ok": True, "message": "Member sync started in background"})
 
 
 @app.route("/api/todo/<int:todo_id>/assign", methods=["POST"])

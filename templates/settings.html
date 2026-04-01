@@ -53,6 +53,30 @@
   .settings-layout { grid-template-columns: 1fr; }
   .settings-nav { position: static; }
 }
+
+.member-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.member-card img {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--border);
+}
+.member-card .minfo { flex: 1; min-width: 0; }
+.member-card .mname { font-size: 0.875rem; font-weight: 600; }
+.member-card .muname { font-size: 0.75rem; color: var(--muted); }
+.member-card .roles-wrap { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.role-pill {
+  font-size: 0.65rem; font-weight: 700; padding: 1px 7px;
+  border-radius: 10px; font-family: var(--mono);
+  background: rgba(88,101,242,0.12); color: var(--accent2);
+  border: 1px solid rgba(88,101,242,0.2);
+}
+.role-pill.admin-pill {
+  background: rgba(226,75,74,0.1); color: var(--blocked);
+  border-color: rgba(226,75,74,0.2);
+}
 </style>
 {% endblock %}
 
@@ -70,6 +94,7 @@
     <a href="#reminders">Reminders</a>
     <div class="nav-section">Info</div>
     <a href="#access">Access Levels</a>
+    <a href="#members">Member DB</a>
     <a href="#db">Database</a>
   </nav>
 
@@ -183,6 +208,29 @@
       </div>
     </div>
 
+    <!-- Member DB -->
+    <div class="settings-card" id="members">
+      <div class="settings-card-head">
+        <h2>Member Database</h2>
+        <button class="btn btn-primary btn-sm" onclick="syncMembers(this)">↻ Sync Now</button>
+      </div>
+      <div class="settings-card-body">
+        <div class="settings-row" style="border-bottom:none;padding-bottom:12px">
+          <div class="info">
+            <strong>Last Synced</strong>
+            <small>Members are re-synced from Discord every 30 minutes automatically</small>
+          </div>
+          <div class="readonly-field" id="members-last-synced">Loading…</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;font-size:0.8rem;color:var(--muted)" id="members-stats"></div>
+
+        <!-- Team member list -->
+        <div id="members-list" style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+          <div style="font-size:0.8rem;color:var(--muted);padding:8px 0">Loading members…</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Access levels info -->
     <div class="settings-card" id="db">
       <div class="settings-card-head">
@@ -248,5 +296,73 @@ document.querySelectorAll('.settings-nav a').forEach(a => {
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 });
+
+// ── Member DB ────────────────────────────────────────────────────────────────
+async function loadMembers() {
+  try {
+    const res  = await fetch('/api/members');
+    const data = await res.json();
+
+    // Last synced
+    const ls = document.getElementById('members-last-synced');
+    if (data.last_synced) {
+      const dt    = new Date(data.last_synced + 'Z');
+      const delta = Math.floor((Date.now() - dt) / 1000);
+      ls.textContent = delta < 60 ? 'just now'
+        : delta < 3600 ? `${Math.floor(delta/60)}m ago`
+        : delta < 86400 ? `${Math.floor(delta/3600)}h ago`
+        : dt.toLocaleDateString();
+    } else {
+      ls.textContent = 'Never synced';
+    }
+
+    // Stats row
+    const stats = document.getElementById('members-stats');
+    const todoCount = (data.members || []).length;
+    stats.innerHTML = `
+      <span>👥 <strong>${data.total || 0}</strong> total members</span>
+      <span style="color:var(--border)">·</span>
+      <span>✅ <strong>${todoCount}</strong> with TODO role</span>
+    `;
+
+    // Member list
+    const listEl = document.getElementById('members-list');
+    if (!data.members || data.members.length === 0) {
+      listEl.innerHTML = '<div style="font-size:0.82rem;color:var(--muted);padding:8px 0">No members with TODO role found. Try syncing.</div>';
+      return;
+    }
+
+    listEl.innerHTML = data.members.map(m => `
+      <div class="member-card">
+        <img src="${m.avatar_url}" alt="" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
+        <div class="minfo">
+          <div class="mname">${m.display_name}${m.is_admin ? ' <span class="role-pill admin-pill">Admin</span>' : ''}</div>
+          <div class="muname">@${m.username}</div>
+          ${m.role_names && m.role_names.length ? `
+            <div class="roles-wrap">
+              ${m.role_names.map(r => `<span class="role-pill">${r}</span>`).join('')}
+            </div>` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch(e) {
+    document.getElementById('members-list').innerHTML =
+      '<div style="font-size:0.82rem;color:var(--blocked)">Failed to load members.</div>';
+  }
+}
+
+async function syncMembers(btn) {
+  btn.disabled = true; btn.textContent = 'Syncing…';
+  try {
+    await api('POST', '/api/members/sync', {});
+    toast('Sync started! Refresh in ~10 seconds to see updated members.');
+    setTimeout(() => { btn.disabled = false; btn.textContent = '↻ Sync Now'; loadMembers(); }, 8000);
+  } catch(e) {
+    toast(e.message, 'error');
+    btn.disabled = false; btn.textContent = '↻ Sync Now';
+  }
+}
+
+loadMembers();
 </script>
 {% endblock %}
