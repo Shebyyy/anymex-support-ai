@@ -2,7 +2,9 @@
 {% block title %}GitHub Issues — AnymeX{% endblock %}
 
 {% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <style>
+/* ── Page layout ── */
 .page-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 1.25rem; flex-wrap: wrap; gap: 12px;
@@ -13,15 +15,24 @@
 .channel-tabs {
   display: flex; gap: 4px; margin-bottom: 1.25rem;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; padding: 4px; width: fit-content;
+  border-radius: 10px; padding: 4px; width: fit-content; max-width: 100%; overflow-x: auto;
 }
 .channel-tab {
   padding: 7px 18px; border-radius: 7px; font-size: 0.85rem; font-weight: 600;
-  text-decoration: none; color: var(--muted); transition: all 0.15s;
+  text-decoration: none; color: var(--muted); transition: all 0.15s; white-space: nowrap;
 }
 .channel-tab:hover { color: var(--text); background: var(--surface2); }
 .channel-tab.active { background: var(--blocked); color: #fff; }
 
+.sync-info {
+  font-size: 0.75rem; color: var(--muted); font-family: var(--mono);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 14px; margin-bottom: 1rem;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.sync-info a { color: var(--accent2); text-decoration: none; }
+
+/* ── Filters ── */
 .filters-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
 .filter-input {
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -39,32 +50,53 @@
 .filter-select option { background: #1a1d27; }
 .results-info { font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; }
 
-.forum-grid { display: flex; flex-direction: column; gap: 10px; }
-.forum-post {
+/* ── Issue cards ── */
+.issues-list { display: flex; flex-direction: column; gap: 8px; }
+.issue-card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 1rem 1.25rem;
   display: flex; align-items: flex-start; gap: 14px;
-  cursor: pointer; transition: box-shadow 0.15s, transform 0.15s;
+  cursor: pointer; transition: box-shadow 0.15s, transform 0.15s, border-color 0.15s;
   border-left: 4px solid var(--blocked);
 }
-.forum-post:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.3); transform: translateY(-1px); }
-.forum-post.is-linked { border-left-color: var(--accent); }
-.forum-post .author-avatar {
+.issue-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.3); transform: translateY(-1px); border-color: var(--accent2); }
+.issue-card.is-linked { border-left-color: var(--accent); }
+.issue-card.is-closed { border-left-color: var(--done); opacity: 0.75; }
+
+/* Author avatar on card */
+.issue-author-avatar {
   width: 38px; height: 38px; border-radius: 50%;
-  border: 2px solid var(--border); flex-shrink: 0; background: var(--surface2);
+  border: 2px solid var(--border); flex-shrink: 0;
+  background: var(--surface2); object-fit: cover;
 }
-.forum-post-body { flex: 1; min-width: 0; }
-.forum-post-top { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
-.forum-post-top .post-title {
+.issue-num-fallback {
+  width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
+  background: var(--surface2); border: 2px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.65rem; color: var(--muted); font-weight: 700; font-family: var(--mono);
+}
+
+.issue-body { flex: 1; min-width: 0; }
+.issue-top { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+.issue-top .issue-title {
   font-size: 0.95rem; font-weight: 600; flex: 1; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.forum-post-preview {
+.issue-preview {
   font-size: 0.82rem; color: var(--muted); line-height: 1.5;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  margin-bottom: 8px;
 }
-.forum-post-meta { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 0.75rem; color: var(--muted); flex-wrap: wrap; }
-.forum-post-meta .author-name { color: var(--text); font-weight: 500; }
+.issue-meta { display: flex; align-items: center; gap: 10px; font-size: 0.75rem; color: var(--muted); flex-wrap: wrap; }
+.issue-meta .author-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--surface2); border-radius: 20px; padding: 2px 8px 2px 4px;
+  border: 1px solid var(--border);
+}
+.issue-meta .author-chip img {
+  width: 16px; height: 16px; border-radius: 50%;
+}
+.issue-meta .author-chip span { font-weight: 600; color: var(--text); }
 .reply-count {
   display: inline-flex; align-items: center; gap: 4px;
   background: var(--surface2); border-radius: 10px; padding: 2px 8px; font-size: 0.72rem;
@@ -73,26 +105,98 @@
   display: inline-flex; align-items: center; gap: 4px;
   background: rgba(88,101,242,0.12); color: var(--accent2);
   border-radius: 10px; padding: 2px 8px; font-size: 0.72rem; font-family: var(--mono);
+  cursor: pointer;
 }
-.tags-wrap { display: flex; gap: 4px; flex-wrap: wrap; }
-
-.thread-modal .modal { max-width: 700px; }
-.thread-header { padding-bottom: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
-.thread-header .post-title-lg { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; line-height: 1.3; }
-.thread-op {
-  background: var(--surface2); border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
-  font-size: 0.88rem; line-height: 1.6; border-left: 3px solid var(--blocked);
-  white-space: pre-wrap; word-break: break-word;
+.linked-todo-badge:hover { background: rgba(88,101,242,0.22); }
+.label-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 0.68rem; font-weight: 700; font-family: var(--mono);
+  border: 1px solid transparent;
 }
 
+/* ── Detail modal ── */
+.issue-modal .modal { max-width: 780px; }
+
+.issue-modal-header {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding-bottom: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem;
+}
+.issue-modal-avatar {
+  width: 48px; height: 48px; border-radius: 50%;
+  border: 2px solid var(--border); flex-shrink: 0;
+}
+.issue-modal-header h2 { font-size: 1.1rem; font-weight: 700; line-height: 1.35; margin-bottom: 6px; }
+.issue-modal-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.78rem; color: var(--muted); }
+.issue-modal-meta a { color: var(--accent2); text-decoration: none; }
+.issue-modal-meta a:hover { text-decoration: underline; }
+
+/* State badge */
+.state-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700;
+}
+.state-open   { background: rgba(29,158,117,0.12); color: var(--done); }
+.state-closed { background: rgba(107,114,128,0.12); color: var(--muted); }
+
+/* Markdown body */
+.md-body {
+  font-size: 0.88rem; line-height: 1.7; color: var(--text);
+  background: var(--surface2); border-radius: 10px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem;
+  border-left: 3px solid var(--blocked);
+  max-height: 360px; overflow-y: auto;
+  word-break: break-word;
+}
+.md-body h1, .md-body h2, .md-body h3 { font-family: var(--mono); margin: 1em 0 0.5em; color: var(--text); }
+.md-body h1 { font-size: 1.1rem; } .md-body h2 { font-size: 1rem; } .md-body h3 { font-size: 0.9rem; }
+.md-body p { margin: 0.6em 0; }
+.md-body ul, .md-body ol { margin: 0.5em 0; padding-left: 1.5em; }
+.md-body li { margin: 0.2em 0; }
+.md-body code {
+  background: rgba(88,101,242,0.1); color: var(--accent2);
+  border-radius: 4px; padding: 1px 5px;
+  font-family: var(--mono); font-size: 0.82em;
+}
+.md-body pre {
+  background: #0d0e12; border: 1px solid var(--border);
+  border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 0.75em 0;
+}
+.md-body pre code { background: none; color: var(--text); padding: 0; font-size: 0.82rem; }
+.md-body blockquote {
+  border-left: 3px solid var(--border); margin: 0.75em 0;
+  padding: 0.5em 1em; color: var(--muted);
+}
+.md-body a { color: var(--accent2); }
+.md-body img { max-width: 100%; border-radius: 6px; margin: 0.5em 0; }
+.md-body table { border-collapse: collapse; width: 100%; margin: 0.75em 0; font-size: 0.82rem; }
+.md-body th, .md-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.md-body th { background: var(--surface); font-weight: 700; }
+.md-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
+.md-body strong { color: var(--text); }
+
+/* Assignees row */
+.assignees-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.assignee-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 4px 10px 4px 6px;
+  font-size: 0.8rem; text-decoration: none; color: var(--text);
+  transition: border-color 0.15s;
+}
+.assignee-chip:hover { border-color: var(--accent2); }
+.assignee-chip img { width: 20px; height: 20px; border-radius: 50%; }
+
+/* Linked todo card */
 .linked-todo-card {
   background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px 14px; margin-bottom: 10px; border-left: 3px solid var(--accent);
 }
-.linked-todo-card .ltc-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 6px; }
+.linked-todo-card .ltc-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 6px; cursor: pointer; }
+.linked-todo-card .ltc-title:hover { color: var(--accent2); }
 .linked-todo-card .ltc-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-.todo-search-results { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; margin-top: 10px; }
+/* TODO search */
+.todo-search-results { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; margin-top: 10px; }
 .todo-search-item {
   background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
   padding: 10px 14px; cursor: pointer; transition: border-color 0.15s; border-left: 3px solid var(--border);
@@ -101,7 +205,6 @@
 .todo-search-item.selected { border-color: var(--accent); background: rgba(88,101,242,0.08); }
 .todo-search-item .tsi-title { font-size: 0.88rem; font-weight: 600; margin-bottom: 4px; }
 .todo-search-item .tsi-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.75rem; }
-
 .todo-confirm-card {
   background: var(--surface2); border: 1px solid var(--accent); border-radius: 10px;
   padding: 14px; margin: 12px 0; border-left: 4px solid var(--accent);
@@ -114,51 +217,17 @@
 .loading-dots::after { content: ''; animation: dots 1.2s steps(3,end) infinite; }
 @keyframes dots { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
 
-.sync-info {
-  font-size: 0.75rem; color: var(--muted); font-family: var(--mono);
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 14px; margin-bottom: 1rem;
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-}
-.sync-info a { color: var(--accent2); text-decoration: none; }
-.sync-info a:hover { text-decoration: underline; }
-
-/* Issues — mobile */
+/* Mobile */
 @media (max-width: 768px) {
-  .channel-tabs {
-    max-width: 100%;
-    overflow-x: auto;
-  }
-  .channel-tab {
-    padding: 7px 14px;
-    font-size: 0.8rem;
-    white-space: nowrap;
-  }
-  .filters-bar {
-    gap: 6px;
-  }
-  .filter-input {
-    min-width: 0;
-    flex: 1 1 100%;
-  }
-  .filter-select {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  .forum-post {
-    padding: 0.85rem 1rem;
-    gap: 10px;
-  }
-  .forum-post .author-avatar {
-    width: 30px;
-    height: 30px;
-  }
-  .forum-post-top .post-title {
-    font-size: 0.88rem;
-  }
-  .forum-post-meta {
-    gap: 6px;
-  }
+  .filters-bar { gap: 6px; }
+  .filter-input { min-width: 0; flex: 1 1 100%; }
+  .filter-select { flex: 1 1 auto; min-width: 0; }
+  .issue-card { padding: 0.85rem 1rem; gap: 10px; }
+  .issue-author-avatar, .issue-num-fallback { width: 32px; height: 32px; }
+  .issue-top .issue-title { font-size: 0.88rem; }
+  .issue-meta { gap: 6px; }
+  .md-body { max-height: 240px; }
+  .issue-modal .modal { max-width: 100%; }
 }
 </style>
 {% endblock %}
@@ -180,22 +249,24 @@
 
 {% if last_synced %}
 <div class="sync-info">
-  <span>↻ Last synced: {{ last_synced[:19] }} UTC</span>
+  <span>↻ Synced {{ last_synced[:19] }} UTC</span>
   <span style="color:var(--border)">·</span>
-  <span>{{ all_issues|length }} open issues in DB</span>
+  <span>{{ all_issues|length }} open issues</span>
+  <span style="color:var(--border)">·</span>
+  <a href="https://github.com/{{ repo }}/issues" target="_blank">↗ View on GitHub</a>
   {% if access_level in ('admin', 'owner') %}
-  <button class="btn btn-ghost btn-sm" onclick="syncIssues(this)" id="sync-btn">↻ Sync Now</button>
+  <button class="btn btn-ghost btn-sm" onclick="syncIssues(this)" id="sync-btn" style="margin-left:auto">↻ Sync Now</button>
   {% endif %}
 </div>
 {% else %}
 <div class="sync-info">
-  <span>⏳ Syncing issues from GitHub… refresh in a few seconds.</span>
+  <span>⏳ Syncing from GitHub… refresh in a few seconds.</span>
 </div>
 {% endif %}
 
 {% if issues %}
 <div class="filters-bar">
-  <input class="filter-input" type="text" id="search-input" placeholder="Search issues…" oninput="applyFilters()" value="{{ search }}" />
+  <input class="filter-input" type="text" id="search-input" placeholder="Search issues by title or author…" oninput="applyFilters()" value="{{ search }}" />
   {% if all_labels %}
   <select class="filter-select" id="label-filter" onchange="applyFilters()">
     <option value="all">All labels</option>
@@ -222,58 +293,92 @@
   <select class="filter-select" id="sort-select" onchange="applyFilters()">
     <option value="newest">Newest first</option>
     <option value="oldest">Oldest first</option>
+    <option value="updated">Recently updated</option>
     <option value="most-comments">Most comments</option>
-    <option value="least-comments">Least comments</option>
   </select>
   <button class="btn btn-ghost btn-sm" onclick="clearFilters()">✕ Clear</button>
 </div>
 <div class="results-info" id="filter-info">Showing all {{ issues|length }} issues</div>
 {% endif %}
 
-<div class="forum-grid" id="forum-grid">
+<!-- Issue Cards -->
+<div class="issues-list" id="issues-list">
 {% if issues %}
   {% for issue in issues %}
-  <div class="forum-post {% if issue.linked_todo_id %}is-linked{% endif %}"
+  <div class="issue-card {% if issue.linked_todo_id %}is-linked{% endif %}"
        data-id="{{ issue.number }}"
        data-title="{{ issue.title | lower }}"
+       data-author="{{ (issue.author or '') | lower }}"
        data-labels="{{ issue.labels | join(',') | lower if issue.labels else '' }}"
        data-linked="{{ 'linked' if issue.linked_todo_id else 'unlinked' }}"
        data-comments="{{ issue.comment_count }}"
        data-created="{{ issue.created_at or '' }}"
+       data-updated="{{ issue.updated_at or '' }}"
        data-platform="{{ issue.platform or '' }}"
        onclick="openIssueDetail({{ issue.number }})">
-    <div class="author-avatar" style="display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--muted);font-weight:700;font-family:var(--mono)">
-      #{{ issue.number }}
-    </div>
-    <div class="forum-post-body">
-      <div class="forum-post-top">
-        <span class="post-title">{{ issue.title }}</span>
-        {% if issue.linked_todo_id %}<span class="linked-todo-badge">✦ TODO #{{ issue.linked_todo_id }}</span>{% endif %}
+
+    <!-- Author avatar or issue number fallback -->
+    {% if issue.author_avatar %}
+    <img class="issue-author-avatar"
+      src="{{ issue.author_avatar }}"
+      alt="{{ issue.author }}"
+      onerror="this.outerHTML='<div class=\'issue-num-fallback\'>#{{ issue.number }}</div>'" />
+    {% else %}
+    <div class="issue-num-fallback">#{{ issue.number }}</div>
+    {% endif %}
+
+    <div class="issue-body">
+      <div class="issue-top">
+        <span class="issue-title">{{ issue.title }}</span>
+        {% if issue.linked_todo_id %}
+        <span class="linked-todo-badge" onclick="event.stopPropagation();openQuickView({{ issue.linked_todo_id }})">✦ TODO #{{ issue.linked_todo_id }}</span>
+        {% endif %}
         {% if issue.labels %}
-        <div class="tags-wrap">
-          {% for label in issue.labels[:4] %}
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          {% for label in issue.labels[:3] %}
           <span class="tag">{{ label }}</span>
           {% endfor %}
-          {% if issue.labels|length > 4 %}<span class="tag" style="opacity:0.6">+{{ issue.labels|length - 4 }}</span>{% endif %}
+          {% if issue.labels|length > 3 %}<span class="tag" style="opacity:0.6">+{{ issue.labels|length - 3 }}</span>{% endif %}
         </div>
         {% endif %}
       </div>
+
       {% if issue.body %}
-      <div class="forum-post-preview">{{ issue.body[:200] }}</div>
+      <div class="issue-preview">{{ issue.body | replace('\r\n', ' ') | replace('\n', ' ') | replace('#', '') | truncate(180) }}</div>
       {% endif %}
-      <div class="forum-post-meta">
-        {% if issue.assignees %}
-        <span class="author-name">👤 {{ issue.assignees | join(', ') }}</span>
-        {% else %}
-        <span style="color:var(--muted)">No assignee</span>
+
+      <div class="issue-meta">
+        <!-- Author -->
+        {% if issue.author %}
+        <a class="author-chip" href="{{ issue.author_url or ('https://github.com/' + issue.author) }}" target="_blank" onclick="event.stopPropagation()" style="text-decoration:none;color:inherit">
+          {% if issue.author_avatar %}
+          <img src="{{ issue.author_avatar }}" alt="{{ issue.author }}" onerror="this.style.display='none'" />
+          {% endif %}
+          <span>{{ issue.author }}</span>
+        </a>
         {% endif %}
-        <span>·</span>
+
+        <!-- Assignees -->
+        {% if issue.assignees %}
+        <span style="color:var(--muted)">→</span>
+        {% for assignee in issue.assignees[:2] %}
+        <span style="font-size:0.75rem;color:var(--text)">👤 {{ assignee }}</span>
+        {% endfor %}
+        {% endif %}
+
+        <span style="color:var(--border)">·</span>
+        <span>#{{ issue.number }}</span>
+        <span style="color:var(--border)">·</span>
         <span>{{ issue.created_at[:10] if issue.created_at else '—' }}</span>
+        {% if issue.updated_at and issue.updated_at != issue.created_at %}
+        <span style="color:var(--border)">·</span>
+        <span style="color:var(--muted)">updated {{ issue.updated_at[:10] }}</span>
+        {% endif %}
         <span class="reply-count">💬 {{ issue.comment_count }}</span>
         {% if issue.platform %}
         <span class="tag" style="background:rgba(186,117,23,0.12);color:var(--inprog)">{{ issue.platform }}</span>
         {% endif %}
-        <a href="{{ issue.html_url }}" target="_blank" style="color:var(--muted);text-decoration:none;font-size:0.72rem" onclick="event.stopPropagation()">↗ GitHub</a>
+        <a href="{{ issue.html_url }}" target="_blank" style="color:var(--muted);text-decoration:none;font-size:0.72rem;margin-left:auto" onclick="event.stopPropagation()">↗ GitHub</a>
       </div>
     </div>
   </div>
@@ -284,50 +389,82 @@
   <div class="empty card"><div class="emoji">⏳</div><p>Syncing issues from GitHub…</p></div>
 {% endif %}
 </div>
+
 <div class="empty" id="no-results" style="display:none">
   <div class="emoji">🔍</div><p>No issues match your filters.</p>
 </div>
 
-<!-- Issue Detail Modal -->
-<div class="modal-overlay thread-modal" id="thread-modal">
-  <div class="modal" onclick="event.stopPropagation()" style="max-width:700px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-      <h3 id="tm-title">GitHub Issue</h3>
-      <button class="btn btn-ghost btn-sm" onclick="closeModal('thread-modal')">✕</button>
+<!-- ── Issue Detail Modal ── -->
+<div class="modal-overlay issue-modal" id="issue-modal">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:780px">
+    <!-- Top bar -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:10px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="im-state-badge"></span>
+        <span style="font-family:var(--mono);font-size:0.8rem;color:var(--muted)" id="im-number"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <a id="im-github-link" href="" target="_blank" class="btn btn-ghost btn-sm">↗ GitHub</a>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('issue-modal').classList.remove('open')">✕</button>
+      </div>
     </div>
-    <div id="thread-loading" style="text-align:center;padding:2rem;color:var(--muted);display:none">
+
+    <div id="im-loading" style="text-align:center;padding:2rem;color:var(--muted)">
       Loading<span class="loading-dots"></span>
     </div>
-    <div id="thread-content" style="display:none">
-      <div class="thread-header">
-        <div class="post-title-lg" id="tm-post-title"></div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
-          <span style="font-size:0.82rem;font-weight:600;color:var(--accent2);font-family:var(--mono)" id="tm-issue-number"></span>
-          <span style="font-size:0.75rem;color:var(--muted)" id="tm-created-at"></span>
-          <a id="tm-github-link" href="" target="_blank" style="font-size:0.75rem;color:var(--accent2);text-decoration:none">↗ Open on GitHub</a>
-          <div id="tm-tags" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+
+    <div id="im-content" style="display:none">
+      <!-- Header: avatar + title + meta -->
+      <div class="issue-modal-header">
+        <img class="issue-modal-avatar" id="im-avatar" src="" alt="" onerror="this.style.display='none'" />
+        <div style="flex:1;min-width:0">
+          <h2 id="im-title"></h2>
+          <div class="issue-modal-meta">
+            <a id="im-author-link" href="" target="_blank"></a>
+            <span style="color:var(--border)">·</span>
+            <span id="im-created"></span>
+            <span id="im-updated-wrap" style="display:none">
+              <span style="color:var(--border)">· updated</span>
+              <span id="im-updated"></span>
+            </span>
+            <span style="color:var(--border)">·</span>
+            <span id="im-comments-count"></span>
+          </div>
+          <!-- Labels -->
+          <div id="im-labels" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px"></div>
         </div>
       </div>
-      <div class="thread-op" id="tm-op-text"></div>
 
-      <div style="font-size:0.75rem;color:var(--muted);margin-bottom:8px" id="tm-meta-row"></div>
+      <!-- Assignees -->
+      <div id="im-assignees-wrap" style="display:none;margin-bottom:0.75rem">
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Assigned to</div>
+        <div class="assignees-row" id="im-assignees"></div>
+      </div>
+
+      <!-- Markdown body -->
+      <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Description</div>
+      <div class="md-body" id="im-body"></div>
+
+      <!-- Platform tag -->
+      <div id="im-platform-wrap" style="display:none;margin-bottom:0.75rem">
+        <span class="tag" style="background:rgba(186,117,23,0.12);color:var(--inprog)" id="im-platform"></span>
+      </div>
 
       {% if access_level in ('manager', 'admin', 'owner') %}
-      <div style="border-top:1px solid var(--border);padding-top:1rem;margin-top:1rem">
-        <!-- Linked -->
-        <div id="tm-linked-block" style="display:none;margin-bottom:4px">
-          <div class="linked-todo-card" id="tm-linked-card"></div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <a href="/board" class="btn btn-ghost btn-sm">View on Board →</a>
-            <button class="btn btn-danger btn-sm" onclick="unlinkIssue()">Unlink</button>
-          </div>
+      <hr>
+      <!-- Linked TODO section -->
+      <div id="im-linked-block" style="display:none;margin-bottom:0.5rem">
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">🔗 Linked TODO</div>
+        <div class="linked-todo-card" id="im-linked-card"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          <button class="btn btn-danger btn-sm" onclick="unlinkIssue()">Unlink</button>
         </div>
-        <!-- Not linked -->
-        <div id="tm-unlinked-block" style="display:none">
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-primary btn-sm" onclick="importIssue()">✦ Import as TODO</button>
-            <button class="btn btn-ghost btn-sm" onclick="openLinkModal()">🔗 Link existing TODO</button>
-          </div>
+      </div>
+      <div id="im-unlinked-block" style="display:none">
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">No linked TODO</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="importIssue()">✦ Import as TODO</button>
+          <button class="btn btn-ghost btn-sm" onclick="openLinkModal()">🔗 Link existing TODO</button>
         </div>
       </div>
       {% endif %}
@@ -347,7 +484,7 @@
       <div class="form-group">
         <label>Search by title or ID</label>
         <input class="form-control" type="text" id="link-search-input"
-          placeholder="e.g. login crash, or #12…" oninput="searchTodos(this.value)" />
+          placeholder="e.g. login crash, or #12…" oninput="searchTodos(this.value)" autofocus />
       </div>
       <div id="link-search-results" class="todo-search-results">
         <p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1.5rem">Start typing to search TODOs…</p>
@@ -370,8 +507,8 @@
 const _ISSUES     = JSON.parse(document.getElementById('issues-data').textContent);
 const _ISSUES_MAP = Object.fromEntries(_ISSUES.map(i => [String(i.number), i]));
 let _currentIssue = null;
-let _selectedTodo  = null;
-let _allTodos      = null;
+let _selectedTodo = null;
+let _allTodos     = null;
 
 const STATUS_ICONS_MAP  = { todo:'○', in_progress:'◑', review_needed:'◇', blocked:'✕', done:'✓' };
 const STATUS_LABELS_MAP = { todo:'To Do', in_progress:'In Progress', review_needed:'Review Needed', blocked:'Blocked', done:'Done' };
@@ -379,29 +516,63 @@ const STATUS_COLOR_MAP  = { todo:'var(--todo)', in_progress:'var(--inprog)', rev
 const PRI_ICONS_MAP     = { low:'▽', medium:'◈', high:'▲' };
 const PRI_LABELS_MAP    = { low:'Low', medium:'Medium', high:'High' };
 
-document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', () => m.classList.remove('open')));
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-
-function fmtTime(iso) {
-  if (!iso) return '';
-  try { return new Date(iso).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
-  catch { return iso; }
+// Configure marked for safe rendering
+if (typeof marked !== 'undefined') {
+  marked.setOptions({ breaks: true, gfm: true });
 }
 
-// ── Filters + Sort ────────────────────────────────────────────────────────────
+document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', () => m.classList.remove('open')));
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open')); });
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+  catch { return iso.slice(0,10); }
+}
+
+function renderMarkdown(text) {
+  if (!text) return '<em style="color:var(--muted)">No description provided.</em>';
+  if (typeof marked !== 'undefined') {
+    try { return marked.parse(text); } catch {}
+  }
+  // Fallback: basic escaping with line breaks
+  return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+// ── Label color helper ────────────────────────────────────────────────────────
+const LABEL_COLORS = {
+  bug: ['#f85149','rgba(248,81,73,0.15)'],
+  enhancement: ['#3fb950','rgba(63,185,80,0.15)'],
+  feature: ['#3fb950','rgba(63,185,80,0.15)'],
+  documentation: ['#79c0ff','rgba(121,192,255,0.15)'],
+  question: ['#d2a8ff','rgba(210,168,255,0.15)'],
+  'help wanted': ['#e3b341','rgba(227,179,65,0.15)'],
+  'good first issue': ['#7ce38b','rgba(124,227,139,0.15)'],
+  invalid: ['#6b7280','rgba(107,114,128,0.15)'],
+  wontfix: ['#6b7280','rgba(107,114,128,0.15)'],
+  duplicate: ['#6b7280','rgba(107,114,128,0.15)'],
+};
+
+function labelPill(name) {
+  const [color, bg] = LABEL_COLORS[name.toLowerCase()] || ['var(--accent2)', 'rgba(88,101,242,0.1)'];
+  return `<span class="label-pill" style="color:${color};background:${bg};border-color:${color}30">${name}</span>`;
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────────
 function applyFilters() {
   const q        = (document.getElementById('search-input')?.value || '').toLowerCase();
   const label    = document.getElementById('label-filter')?.value || 'all';
   const linked   = document.getElementById('linked-filter')?.value || 'all';
   const platform = document.getElementById('platform-filter')?.value || 'all';
   const sort     = document.getElementById('sort-select')?.value || 'newest';
-  const grid     = document.getElementById('forum-grid');
-  const cards    = [...grid.querySelectorAll('.forum-post')];
+  const list     = document.getElementById('issues-list');
+  const cards    = [...list.querySelectorAll('.issue-card')];
   let visible    = 0;
 
   cards.forEach(card => {
     const cardLabels = (card.dataset.labels||'').split(',').filter(Boolean);
-    const show = (!q || (card.dataset.title||'').includes(q))
+    const show = (!q || (card.dataset.title||'').includes(q) || (card.dataset.author||'').includes(q))
               && (label === 'all' || cardLabels.includes(label))
               && (linked === 'all' || card.dataset.linked === linked)
               && (platform === 'all' || card.dataset.platform === platform);
@@ -410,12 +581,12 @@ function applyFilters() {
   });
 
   cards.filter(c => c.style.display !== 'none').sort((a, b) => {
-    if (sort === 'newest')         return (b.dataset.created||'') > (a.dataset.created||'') ? 1 : -1;
-    if (sort === 'oldest')         return (a.dataset.created||'') > (b.dataset.created||'') ? 1 : -1;
-    if (sort === 'most-comments')  return parseInt(b.dataset.comments||0) - parseInt(a.dataset.comments||0);
-    if (sort === 'least-comments') return parseInt(a.dataset.comments||0) - parseInt(b.dataset.comments||0);
+    if (sort === 'newest')        return (b.dataset.created||'') > (a.dataset.created||'') ? 1 : -1;
+    if (sort === 'oldest')        return (a.dataset.created||'') > (b.dataset.created||'') ? 1 : -1;
+    if (sort === 'updated')       return (b.dataset.updated||b.dataset.created||'') > (a.dataset.updated||a.dataset.created||'') ? 1 : -1;
+    if (sort === 'most-comments') return parseInt(b.dataset.comments||0) - parseInt(a.dataset.comments||0);
     return 0;
-  }).forEach(c => grid.appendChild(c));
+  }).forEach(c => list.appendChild(c));
 
   const total = cards.length;
   const fi = document.getElementById('filter-info');
@@ -426,8 +597,7 @@ function applyFilters() {
 
 function clearFilters() {
   ['search-input','label-filter','linked-filter','platform-filter','sort-select'].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
+    const el = document.getElementById(id); if (!el) return;
     el.value = el.tagName === 'SELECT' ? el.options[0].value : '';
   });
   applyFilters();
@@ -435,78 +605,131 @@ function clearFilters() {
 
 // ── Sync ──────────────────────────────────────────────────────────────────────
 async function syncIssues(btn) {
-  btn.disabled = true; btn.textContent = 'Syncing…';
+  btn.disabled = true; btn.textContent = '↻ Syncing…';
   try {
     await api('POST', '/api/issues/sync');
-    toast('Sync started! Refresh in ~10 seconds.');
-    setTimeout(() => { btn.disabled = false; btn.textContent = '↻ Sync Now'; location.reload(); }, 10000);
-  } catch(e) { toast(e.message, 'error'); btn.disabled = false; btn.textContent = '↻ Sync Now'; }
+    toast('Sync started! Refreshing in ~10 seconds.');
+    setTimeout(() => location.reload(), 10000);
+  } catch(e) {
+    toast(e.message, 'error');
+    btn.disabled = false; btn.textContent = '↻ Sync Now';
+  }
 }
 
-// ── Issue detail ───────────────────────────────────────────────────────────────
+// ── Issue detail ──────────────────────────────────────────────────────────────
 function openIssueDetail(issueNum) {
   _currentIssue = _ISSUES_MAP[String(issueNum)] || null;
   if (!_currentIssue) return;
 
-  document.getElementById('thread-modal').classList.add('open');
-  document.getElementById('thread-loading').style.display = 'block';
-  document.getElementById('thread-content').style.display = 'none';
-  document.getElementById('thread-loading').innerHTML = 'Loading<span class="loading-dots"></span>';
+  const modal = document.getElementById('issue-modal');
+  modal.classList.add('open');
+  document.getElementById('im-loading').style.display = 'block';
+  document.getElementById('im-content').style.display = 'none';
 
-  setTimeout(() => renderIssue(_currentIssue), 150);
+  setTimeout(() => renderIssue(_currentIssue), 80);
 }
 
-function renderIssue(data) {
-  document.getElementById('thread-loading').style.display = 'none';
-  document.getElementById('thread-content').style.display = 'block';
-  document.getElementById('tm-title').textContent       = `📦 Issue #${data.number}`;
-  document.getElementById('tm-post-title').textContent  = data.title;
-  document.getElementById('tm-issue-number').textContent = `#${data.number}`;
-  document.getElementById('tm-created-at').textContent  = fmtTime(data.created_at);
-  document.getElementById('tm-github-link').href        = data.html_url || '#';
-  document.getElementById('tm-op-text').textContent     = data.body || '(no description)';
+function renderIssue(d) {
+  document.getElementById('im-loading').style.display = 'none';
+  document.getElementById('im-content').style.display = 'block';
 
-  const metaParts = [];
-  metaParts.push(`💬 ${data.comment_count} comment${data.comment_count !== 1 ? 's' : ''}`);
-  if (data.assignees && data.assignees.length) metaParts.push(`👤 ${data.assignees.join(', ')}`);
-  if (data.platform) metaParts.push(`📱 ${data.platform}`);
-  document.getElementById('tm-meta-row').innerHTML = metaParts.join('<span style="color:var(--border)"> · </span>');
+  // Top bar
+  const state = d.state || 'open';
+  document.getElementById('im-state-badge').innerHTML =
+    `<span class="state-badge state-${state}">${state === 'open' ? '● Open' : '✓ Closed'}</span>`;
+  document.getElementById('im-number').textContent = `#${d.number}`;
+  document.getElementById('im-github-link').href = d.html_url || '#';
 
-  document.getElementById('tm-tags').innerHTML = (data.labels||[]).map(l => `<span class="tag">${l}</span>`).join('');
+  // Avatar + title
+  const avatarEl = document.getElementById('im-avatar');
+  if (d.author_avatar) { avatarEl.src = d.author_avatar; avatarEl.style.display = ''; }
+  else { avatarEl.style.display = 'none'; }
+  document.getElementById('im-title').textContent = d.title;
 
-  _currentIssue = data;
-  renderLinkedState(data.linked_todo_id);
+  // Author link
+  const authorLink = document.getElementById('im-author-link');
+  authorLink.href = d.author_url || `https://github.com/${d.author||''}`;
+  authorLink.textContent = d.author ? `@${d.author}` : 'Unknown';
+
+  // Dates
+  document.getElementById('im-created').textContent = `opened ${fmtDate(d.created_at)}`;
+  if (d.updated_at && d.updated_at !== d.created_at) {
+    document.getElementById('im-updated-wrap').style.display = '';
+    document.getElementById('im-updated').textContent = fmtDate(d.updated_at);
+  } else {
+    document.getElementById('im-updated-wrap').style.display = 'none';
+  }
+  document.getElementById('im-comments-count').textContent = `💬 ${d.comment_count} comment${d.comment_count !== 1 ? 's' : ''}`;
+
+  // Labels
+  document.getElementById('im-labels').innerHTML = (d.labels||[]).map(l => labelPill(l)).join('');
+
+  // Assignees
+  const assigneesWrap = document.getElementById('im-assignees-wrap');
+  const assigneesEl   = document.getElementById('im-assignees');
+  if (d.assignees && d.assignees.length) {
+    assigneesWrap.style.display = '';
+    assigneesEl.innerHTML = d.assignees.map((login, i) => {
+      const av = (d.assignee_avatars||[])[i] || '';
+      return `<a class="assignee-chip" href="https://github.com/${login}" target="_blank">
+        ${av ? `<img src="${av}" alt="${login}" onerror="this.style.display='none'" />` : ''}
+        <span>@${login}</span>
+      </a>`;
+    }).join('');
+  } else {
+    assigneesWrap.style.display = 'none';
+  }
+
+  // Markdown body
+  document.getElementById('im-body').innerHTML = renderMarkdown(d.body);
+
+  // Platform
+  const platWrap = document.getElementById('im-platform-wrap');
+  if (d.platform) {
+    platWrap.style.display = '';
+    document.getElementById('im-platform').textContent = `📱 ${d.platform}`;
+  } else { platWrap.style.display = 'none'; }
+
+  // Linked TODO
+  renderLinkedState(d.linked_todo_id, null);
 }
 
-function renderLinkedState(linkedId) {
-  const lb = document.getElementById('tm-linked-block');
-  const ub = document.getElementById('tm-unlinked-block');
+function renderLinkedState(linkedId, todoInfo) {
+  const lb = document.getElementById('im-linked-block');
+  const ub = document.getElementById('im-unlinked-block');
   if (!lb || !ub) return;
   if (linkedId) {
     lb.style.display = 'block'; ub.style.display = 'none';
-    document.getElementById('tm-linked-card').innerHTML = `
-      <div class="ltc-title">TODO #${linkedId}</div>
-      <div style="font-size:0.8rem;color:var(--muted)">This GitHub issue is linked to a TODO on the board.</div>
-      <a href="/board" class="btn btn-ghost btn-sm" style="margin-top:8px">View on Board →</a>
-    `;
+    const ti = todoInfo || {};
+    const s = ti.status || 'todo';
+    const p = ti.priority || 'medium';
+    document.getElementById('im-linked-card').innerHTML = `
+      <div class="ltc-title" onclick="openQuickView(${linkedId})">TODO #${linkedId}${ti.title ? ' — ' + ti.title : ''}</div>
+      <div class="ltc-meta">
+        <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
+        <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+        ${(ti.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}
+      </div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="openQuickView(${linkedId})">🔍 Quick View</button>`;
   } else {
     lb.style.display = 'none'; ub.style.display = 'block';
   }
 }
 
-// ── Import as TODO ─────────────────────────────────────────────────────────────
+// ── Import as TODO ────────────────────────────────────────────────────────────
 async function importIssue() {
   if (!_currentIssue) return;
   if (!confirm(`Import GitHub Issue #${_currentIssue.number} as a new TODO?\n\n"${_currentIssue.title}"`)) return;
   try {
     const data = await api('POST', `/api/issues/${_currentIssue.number}/import`);
-    toast(`Created TODO #${data.todo_id || 'new'} from issue #${_currentIssue.number}!`);
-    closeModal('thread-modal');
-    setTimeout(() => location.reload(), 700);
+    toast(`✦ Created TODO #${data.todo_id || 'new'} from issue #${_currentIssue.number}!`);
+    _currentIssue.linked_todo_id = data.todo_id;
+    renderLinkedState(data.todo_id, null);
+    setTimeout(() => location.reload(), 1200);
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// ── Link existing TODO ─────────────────────────────────────────────────────────
+// ── Link existing TODO ────────────────────────────────────────────────────────
 async function openLinkModal() {
   _selectedTodo = null;
   document.getElementById('link-step-search').style.display  = 'block';
@@ -516,32 +739,25 @@ async function openLinkModal() {
     '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1.5rem">Start typing to search TODOs…</p>';
   document.getElementById('link-todo-modal').classList.add('open');
   if (!_allTodos) {
-    try {
-      const r = await fetch('/api/todos');
-      _allTodos = await r.json();
-    } catch { _allTodos = []; }
+    try { _allTodos = await (await fetch('/api/todos')).json(); } catch { _allTodos = []; }
   }
 }
 
 function searchTodos(q) {
   q = q.trim().toLowerCase();
   const container = document.getElementById('link-search-results');
-  if (!_allTodos) { container.innerHTML = '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">Loading…</p>'; return; }
-  let results = q
+  if (!_allTodos) { container.innerHTML = '<p style="color:var(--muted);text-align:center;padding:1rem">Loading…</p>'; return; }
+  const results = (q
     ? _allTodos.filter(t => t.title.toLowerCase().includes(q) || String(t.id).includes(q.replace('#','')))
-    : _allTodos;
-  results = results.slice(0, 20);
-  if (!results.length) {
-    container.innerHTML = '<p style="font-size:0.82rem;color:var(--muted);text-align:center;padding:1rem">No TODOs found.</p>';
-    return;
-  }
+    : _allTodos).slice(0, 20);
+  if (!results.length) { container.innerHTML = '<p style="color:var(--muted);text-align:center;padding:1rem">No TODOs found.</p>'; return; }
   container.innerHTML = results.map(t => {
     const s = t.status||'todo'; const p = t.priority||'medium';
-    return `<div class="todo-search-item" style="border-left-color:${STATUS_COLOR_MAP[s]||'var(--accent)'}" onclick="selectTodo(${t.id}, this)">
+    return `<div class="todo-search-item" style="border-left-color:${STATUS_COLOR_MAP[s]}" onclick="selectTodo(${t.id}, this)">
       <div class="tsi-title">#${t.id} — ${t.title}</div>
       <div class="tsi-meta">
-        <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
-        <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+        <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]} ${STATUS_LABELS_MAP[s]}</span>
+        <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]} ${PRI_LABELS_MAP[p]}</span>
         ${(t.tags||[]).slice(0,3).map(tg=>`<span class="tag">${tg}</span>`).join('')}
       </div>
     </div>`;
@@ -558,11 +774,11 @@ function selectTodo(todoId, el) {
     <div class="tcc-id">TODO #${t.id}</div>
     <div class="tcc-title">${t.title}</div>
     <div class="tcc-meta">
-      <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
-      <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
+      <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]} ${STATUS_LABELS_MAP[s]}</span>
+      <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]} ${PRI_LABELS_MAP[p]}</span>
       ${(t.tags||[]).map(tg=>`<span class="tag">${tg}</span>`).join('')}
     </div>
-    ${t.ai_description?`<div class="tcc-desc">${t.ai_description}</div>`:''}`;
+    ${t.ai_description ? `<div class="tcc-desc">${t.ai_description}</div>` : ''}`;
   document.getElementById('link-step-search').style.display  = 'none';
   document.getElementById('link-step-confirm').style.display = 'block';
 }
@@ -582,33 +798,33 @@ async function confirmLink() {
     toast(`Linked to TODO #${_selectedTodo.id}!`);
     closeModal('link-todo-modal');
     _currentIssue.linked_todo_id = _selectedTodo.id;
-    renderLinkedState(_selectedTodo.id);
-    const card = document.querySelector(`.forum-post[data-id="${_currentIssue.number}"]`);
+    renderLinkedState(_selectedTodo.id, _selectedTodo);
+    const card = document.querySelector(`.issue-card[data-id="${_currentIssue.number}"]`);
     if (card) {
       card.classList.add('is-linked'); card.dataset.linked = 'linked';
-      const top = card.querySelector('.forum-post-top');
+      const top = card.querySelector('.issue-top');
       if (top && !top.querySelector('.linked-todo-badge')) {
         const badge = document.createElement('span');
         badge.className = 'linked-todo-badge';
         badge.textContent = `✦ TODO #${_selectedTodo.id}`;
+        badge.onclick = e => { e.stopPropagation(); openQuickView(_selectedTodo.id); };
         top.insertBefore(badge, top.children[1]);
       }
     }
-  } catch(e) { toast(e.message,'error'); }
+  } catch(e) { toast(e.message, 'error'); }
   finally { btn.disabled = false; btn.textContent = 'Confirm Link'; }
 }
 
-// ── Unlink ─────────────────────────────────────────────────────────────────────
 async function unlinkIssue() {
   if (!_currentIssue || !confirm('Remove the link between this issue and its TODO?')) return;
   try {
     await api('POST', `/api/issues/${_currentIssue.number}/link`, { todo_id: null });
     toast('Unlinked.');
     _currentIssue.linked_todo_id = null;
-    renderLinkedState(null);
-    const card = document.querySelector(`.forum-post[data-id="${_currentIssue.number}"]`);
-    if (card) { card.classList.remove('is-linked'); card.dataset.linked='unlinked'; card.querySelector('.linked-todo-badge')?.remove(); }
-  } catch(e) { toast(e.message,'error'); }
+    renderLinkedState(null, null);
+    const card = document.querySelector(`.issue-card[data-id="${_currentIssue.number}"]`);
+    if (card) { card.classList.remove('is-linked'); card.dataset.linked = 'unlinked'; card.querySelector('.linked-todo-badge')?.remove(); }
+  } catch(e) { toast(e.message, 'error'); }
 }
 </script>
 {% endblock %}
