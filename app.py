@@ -1376,7 +1376,9 @@ def api_todo_create():
 
     todos, sha = gh_read(FILE_TODOS, force=True)
     todos = todos or []
-    next_id = max((t["id"] for t in todos), default=0) + 1
+    _arch_for_id, _ = gh_read(FILE_TODOS_ARCHIVE)
+    _arch_for_id = _arch_for_id or []
+    next_id = max((t["id"] for t in todos + _arch_for_id), default=0) + 1
     user = get_session().get("user", {})
 
     new_todo = {
@@ -1786,15 +1788,10 @@ def _sync_members_to_db_inner():
             "synced_at":    now_iso,
         }
 
-    # 5. Write to GitHub
-    db = {
-        "last_synced": now_iso,
-        "guild_id":    DISCORD_GUILD_ID,
-        "roles":       roles_map,
-        "members":     members_out,
-    }
-    existing, sha = gh_read(FILE_MEMBERS, force=True)
-    gh_write(FILE_MEMBERS, db, sha, f"Members: sync {len(members_out)} members")
+    # 5. Write to GitHub — only write todo_members.json (small file).
+    # members.json is NOT written: with 1000s of guild members it exceeds
+    # GitHub's 1MB Contents API limit and breaks gh_read silently.
+    # All lookups use todo_members.json instead.
 
     # Also write a small todo_members.json with only todo-role members
     todo_only = [m for m in members_out.values() if m.get("is_todo_role")]
@@ -2810,7 +2807,9 @@ def api_issue_import(issue_number):
 
     todos, sha = gh_read(FILE_TODOS, force=True)
     todos = todos or []
-    next_id = max((t["id"] for t in todos), default=0) + 1
+    _arch_for_id2, _ = gh_read(FILE_TODOS_ARCHIVE)
+    _arch_for_id2 = _arch_for_id2 or []
+    next_id = max((t["id"] for t in todos + _arch_for_id2), default=0) + 1
     user = get_session().get("user", {})
 
     new_todo = {
@@ -3063,9 +3062,45 @@ def api_bot_health_report():
 
 @app.route("/member/<user_id>")
 def member_profile(user_id):
-    db, _ = gh_read(FILE_MEMBERS)
-    db = db or {}
-    member = (db.get("members") or {}).get(str(user_id))
+    # members.json can exceed GitHub's 1MB API limit (stores ALL guild members).
+    # Only look in todo_members.json (small file, only todo-role/admin members).
+    member = None
+
+    # 1. Check todo_members.json first (small, always readable)
+    tm_db, _ = gh_read(FILE_TODO_MEMBERS)
+    tm_list = (tm_db or {}).get("members") or []
+    member = next((m for m in tm_list if str(m.get("id","")) == str(user_id)), None)
+
+    # 2. If not found there, check if it's the currently logged-in user
+    #    (their data is in the session from login)
+    if not member:
+        sess = get_session()
+        sess_user = sess.get("user")
+        sess_member_obj = sess.get("member")
+        if sess_user and str(sess_user.get("id","")) == str(user_id):
+            uid = str(sess_user.get("id",""))
+            cfg, _ = gh_read(FILE_CONFIG)
+            todo_roles_set = set(str(r) for r in (cfg or {}).get("todo_roles", []))
+            member_role_ids = [str(r) for r in (sess_member_obj or {}).get("roles", [])]
+            perms = int((sess_member_obj or {}).get("permissions", 0) or 0)
+            is_admin = bool(perms & 0x8)
+            is_todo = is_admin or bool(todo_roles_set and set(member_role_ids) & todo_roles_set)
+            avatar = sess_user.get("avatar")
+            avatar_url = (f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png?size=128"
+                          if avatar else f"https://cdn.discordapp.com/embed/avatars/0.png")
+            member = {
+                "id":           uid,
+                "username":     sess_user.get("username",""),
+                "global_name":  sess_user.get("global_name",""),
+                "nick":         (sess_member_obj or {}).get("nick","") or "",
+                "display_name": (sess_user.get("global_name") or sess_user.get("username","")).strip(),
+                "avatar_url":   avatar_url,
+                "roles":        member_role_ids,
+                "role_names":   [],
+                "is_admin":     is_admin,
+                "is_todo_role": is_todo,
+            }
+
     if not member:
         abort(404)
 

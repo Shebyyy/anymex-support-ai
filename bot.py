@@ -1134,7 +1134,9 @@ class TodoConfirmView(discord.ui.View):
         async with aiohttp.ClientSession() as session:
             todos, sha = await gh_read_fresh(session, FILE_TODOS)
             todos = todos or []
-            all_ids = [t["id"] for t in todos]
+            arch_snap, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
+            arch_snap = arch_snap or []
+            all_ids = [t["id"] for t in todos + arch_snap]
             todo_id = (max(all_ids) + 1) if all_ids else 1
             # Merge all source messages
             combined_text  = "\n---\n".join(s["text"]  for s in self.sources if s.get("text"))
@@ -3443,10 +3445,6 @@ async def main():
     await bot.start(DISCORD_TOKEN)
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # FEATURE: HEALTH HEARTBEAT TASK
 # Writes bot status to bot_health.json every 5 minutes so the dashboard
@@ -3670,7 +3668,9 @@ async def recurring_todo_task():
     try:
         async with aiohttp.ClientSession() as session:
             todos, sha = await gh_read_fresh(session, FILE_TODOS)
+            _arch_for_recur, _ = await gh_read(session, FILE_TODOS_ARCHIVE)
         todos = todos or []
+        _arch_for_recur = _arch_for_recur or []
         now   = datetime.datetime.now(datetime.timezone.utc)
         new_todos = []
         changed   = False
@@ -3697,8 +3697,8 @@ async def recurring_todo_task():
             deltas = {"daily": datetime.timedelta(days=1), "weekly": datetime.timedelta(weeks=1), "monthly": datetime.timedelta(days=30)}
             next_next = (now + deltas.get(interval, datetime.timedelta(weeks=1))).isoformat()
 
-            all_ids = [x["id"] for x in todos] + [x["id"] for x in new_todos]
-            new_id  = max(all_ids) + 1
+            all_ids = [x["id"] for x in todos + _arch_for_recur] + [x["id"] for x in new_todos]
+            new_id  = max(all_ids) + 1 if all_ids else 1
             new_copy = {
                 k: v for k, v in t.items()
                 if k not in ("id", "status", "assigned_to_id", "assigned_to_name",
