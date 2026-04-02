@@ -71,12 +71,12 @@
     <span class="count">{{ assigned|length }}</span>
   </div>
   {% for t in assigned %}
-  <a class="todo-row" href="/board" style="border-left-color:{{ t.status_color }};text-decoration:none;color:inherit">
+  <div class="todo-row" style="border-left-color:{{ t.status_color }};cursor:pointer;text-decoration:none;color:inherit" onclick="openQuickView({{ t.id }})">
     <span class="id">#{{ t.id }}</span>
     <span class="title">{{ t.title }}</span>
     <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
     <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
-  </a>
+  </div>
   {% endfor %}
 </div>
 {% endif %}
@@ -88,7 +88,7 @@
     <span class="count">{{ completed|length }}</span>
   </div>
   {% for t in completed %}
-  <div class="todo-row" style="border-left-color:var(--done)">
+  <div class="todo-row" style="border-left-color:var(--done);cursor:pointer" onclick="openQuickView({{ t.id }})">
     <span class="id">#{{ t.id }}</span>
     <span class="title">{{ t.title }}</span>
     <span class="status-pill status-done">✓ Done</span>

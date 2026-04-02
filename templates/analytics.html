@@ -196,7 +196,7 @@ canvas { max-height: 240px; }
   {% if recent_done %}
   <div class="recent-list">
     {% for t in recent_done %}
-    <div class="recent-item">
+    <div class="recent-item" style="cursor:pointer" onclick="openQuickView({{ t.id }})">
       <span class="id">#{{ t.id }}</span>
       <span class="title">{{ t.title }}</span>
       <span class="status-pill status-done">✓ Done</span>

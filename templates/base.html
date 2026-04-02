@@ -393,6 +393,248 @@
 
 <div id="toast-container"></div>
 
+<!-- ── Global Quick-View Modal (available on every page) ── -->
+<div class="modal-overlay" id="gv-modal" onclick="this.classList.remove('open')">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:560px">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1rem;gap:10px">
+      <h3 id="gv-title" style="font-size:1rem;line-height:1.4;word-break:break-word"></h3>
+      <button class="btn btn-ghost btn-sm" style="flex-shrink:0" onclick="document.getElementById('gv-modal').classList.remove('open')">✕</button>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem">
+      <div id="gv-status"></div>
+      <div id="gv-priority"></div>
+      <div id="gv-public-badge"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Assigned To</div>
+        <div id="gv-assigned" style="font-size:0.9rem"></div>
+      </div>
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Added By</div>
+        <div id="gv-added" style="font-size:0.9rem"></div>
+      </div>
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Due Date</div>
+        <div id="gv-due" style="font-size:0.9rem"></div>
+      </div>
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Created</div>
+        <div id="gv-created" style="font-size:0.82rem;color:var(--muted)"></div>
+      </div>
+    </div>
+
+    <div id="gv-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.75rem"></div>
+
+    <div id="gv-desc-wrap" style="display:none;margin-bottom:0.75rem">
+      <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Description</div>
+      <div id="gv-desc" style="background:var(--surface2);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:10px 14px;font-size:0.82rem;color:var(--muted);font-style:italic"></div>
+    </div>
+
+    <div id="gv-extra" style="font-size:0.78rem;color:var(--muted);margin-bottom:0.75rem"></div>
+
+    <hr>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem">
+      <a id="gv-board-link" href="/board" class="btn btn-primary btn-sm">Open on Board →</a>
+      <button id="gv-watch-btn" class="btn btn-ghost btn-sm" onclick="gvToggleWatch()">👁 Watch</button>
+    </div>
+
+    <!-- Comments -->
+    <div id="gv-comments-section" style="display:none">
+      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">💬 Comments</div>
+      <div id="gv-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <input class="form-control" type="text" id="gv-comment-input" placeholder="Add a comment…" style="flex:1" onkeydown="if(event.key==='Enter')gvPostComment()" />
+        <button class="btn btn-primary btn-sm" onclick="gvPostComment()">Send</button>
+      </div>
+    </div>
+
+    <div id="gv-loading" style="text-align:center;padding:1.5rem;color:var(--muted);font-size:0.85rem;display:none">Loading…</div>
+  </div>
+</div>
+
+<script>
+// ── Global Quick-View ────────────────────────────────────────────────────────
+const GV_STATUS_ICONS  = {todo:'○',in_progress:'◑',review_needed:'◇',blocked:'✕',done:'✓'};
+const GV_STATUS_LABELS = {todo:'To Do',in_progress:'In Progress',review_needed:'Review Needed',blocked:'Blocked',done:'Done'};
+const GV_STATUS_CLASSES= {todo:'status-todo',in_progress:'status-in_progress',review_needed:'status-review_needed',blocked:'status-blocked',done:'status-done'};
+const GV_PRI_ICONS     = {low:'▽',medium:'◈',high:'▲'};
+const GV_PRI_LABELS    = {low:'Low',medium:'Medium',high:'High'};
+const GV_PRI_CLASSES   = {low:'pri-low',medium:'pri-medium',high:'pri-high'};
+
+let _gvCurrentId = null;
+const _gvCache   = {};
+
+async function openQuickView(todoId) {
+  _gvCurrentId = todoId;
+  const modal = document.getElementById('gv-modal');
+  modal.classList.add('open');
+
+  // Show loading if not cached
+  if (!_gvCache[todoId]) {
+    document.getElementById('gv-loading').style.display = 'block';
+    document.getElementById('gv-comments-section').style.display = 'none';
+    try {
+      const res = await fetch(`/api/todo/${todoId}`);
+      if (!res.ok) throw new Error('Not found');
+      _gvCache[todoId] = await res.json();
+    } catch(e) {
+      document.getElementById('gv-loading').textContent = 'Failed to load TODO.';
+      return;
+    }
+  }
+  document.getElementById('gv-loading').style.display = 'none';
+  _gvRender(_gvCache[todoId]);
+  _gvLoadComments(todoId);
+}
+
+function _gvRender(t) {
+  const status   = t.status || 'todo';
+  const pri      = t.priority || 'medium';
+  const isPublic = t.public !== false;
+
+  document.getElementById('gv-title').textContent = `#${t.id} — ${t.title}`;
+
+  document.getElementById('gv-status').innerHTML =
+    `<span class="status-pill ${GV_STATUS_CLASSES[status]}">${GV_STATUS_ICONS[status]||'○'} ${GV_STATUS_LABELS[status]||status}</span>`;
+  document.getElementById('gv-priority').innerHTML =
+    `<span class="pri-icon ${GV_PRI_CLASSES[pri]}">${GV_PRI_ICONS[pri]||'◈'} ${GV_PRI_LABELS[pri]||pri}</span>`;
+  document.getElementById('gv-public-badge').innerHTML =
+    `<span style="font-size:.72rem;padding:3px 8px;border-radius:10px;background:${isPublic?'rgba(29,158,117,0.12)':'rgba(107,114,128,0.1)'};color:${isPublic?'var(--done)':'var(--muted)'}">${isPublic?'🌐 Public':'🔒 Private'}</span>`;
+
+  // Assigned
+  const assignedName = t.assigned_to_name || (t.assigned_to_id ? `User #${t.assigned_to_id}` : null);
+  document.getElementById('gv-assigned').innerHTML = assignedName && t.assigned_to_id
+    ? `<a href="/member/${t.assigned_to_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${assignedName}</a>`
+    : `<span style="color:var(--muted)">Unassigned</span>`;
+
+  // Added by — resolve display name if stored value looks like a raw ID
+  const addedEl = document.getElementById('gv-added');
+  const rawAddedBy = t.added_by || '';
+  const isRawId = /^\d{10,}$/.test(rawAddedBy);
+  if (t.added_by_id) {
+    const displayName = (!isRawId && rawAddedBy) ? rawAddedBy : null;
+    if (displayName) {
+      addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${displayName}</a>`;
+    } else {
+      // Raw ID stored — try to resolve from members search
+      addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">Loading…</a>`;
+      fetch(`/api/members/search?q=${t.added_by_id}`)
+        .then(r => r.json())
+        .then(data => {
+          const members = Array.isArray(data) ? data : (data.results || []);
+          const match = members.find(m => String(m.id) === String(t.added_by_id));
+          const name = match ? (match.display_name || match.username) : `User #${t.added_by_id}`;
+          addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${name}</a>`;
+        })
+        .catch(() => {
+          addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">User #${t.added_by_id}</a>`;
+        });
+    }
+  } else {
+    addedEl.innerHTML = `<span style="color:var(--muted)">${rawAddedBy || '—'}</span>`;
+  }
+
+  // Due date
+  if (t.due_date) {
+    const urgency = t.due_urgency || 'normal';
+    const icon = urgency==='overdue'?'⚠ ':urgency==='today'?'🕐 ':'📅 ';
+    const label = t.due_label || t.due_date_fmt || (t.due_date||'').slice(0,10);
+    document.getElementById('gv-due').innerHTML =
+      `<span class="due-badge due-${urgency}">${icon}${label}</span>`;
+  } else {
+    document.getElementById('gv-due').innerHTML = `<span style="color:var(--muted);font-size:.82rem">No due date</span>`;
+  }
+
+  document.getElementById('gv-created').textContent = t.created_at_fmt || '—';
+
+  // Tags
+  document.getElementById('gv-tags').innerHTML = (t.tags||[]).map(tag=>`<span class="tag">${tag}</span>`).join('');
+
+  // Description
+  const desc = t.ai_description || t.description || '';
+  const dw = document.getElementById('gv-desc-wrap');
+  dw.style.display = desc ? 'block' : 'none';
+  if (desc) document.getElementById('gv-desc').textContent = desc;
+
+  // Extras
+  const extras = [];
+  if ((t.watcher_count||0)>0) extras.push(`👁 ${t.watcher_count} watcher${t.watcher_count!==1?'s':''}`);
+  if ((t.total_minutes||0)>0) extras.push(`⏱ ${(t.total_minutes/60).toFixed(1)}h logged`);
+  if (t.recur) extras.push('🔁 recurring');
+  document.getElementById('gv-extra').innerHTML = extras.join('<span style="color:var(--border);margin:0 6px">·</span>');
+
+  // Board link
+  document.getElementById('gv-board-link').href = `/board`;
+
+  // Watch button
+  const watchBtn = document.getElementById('gv-watch-btn');
+  const wc = (t.watchers||[]).length;
+  watchBtn.textContent = wc > 0 ? `👁 Watching (${wc})` : '👁 Watch';
+}
+
+async function _gvLoadComments(todoId) {
+  {% if user %}
+  const section = document.getElementById('gv-comments-section');
+  const list    = document.getElementById('gv-comments-list');
+  section.style.display = 'block';
+  list.innerHTML = '<p style="font-size:.8rem;color:var(--muted)">Loading comments…</p>';
+  try {
+    const comments = await (await fetch(`/api/todo/${todoId}/comments`)).json();
+    if (!comments.length) {
+      list.innerHTML = '<p style="font-size:.8rem;color:var(--muted)">No comments yet.</p>';
+    } else {
+      list.innerHTML = comments.map(c=>`
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:24px;height:24px;border-radius:50%;flex-shrink:0;border:1px solid var(--border)" />
+          <div style="flex:1;background:var(--surface2);border-radius:0 8px 8px 8px;padding:7px 10px">
+            <div style="font-size:.75rem;font-weight:700;color:var(--accent2);margin-bottom:3px">${c.user_name} <span style="font-weight:400;color:var(--muted)">${(c.ts||'').slice(0,10)}</span></div>
+            <div style="font-size:.83rem;line-height:1.5">${c.text}</div>
+          </div>
+        </div>`).join('');
+    }
+  } catch(e) { list.innerHTML = ''; }
+  {% endif %}
+}
+
+async function gvPostComment() {
+  const input = document.getElementById('gv-comment-input');
+  const text  = (input?.value||'').trim();
+  if (!text || !_gvCurrentId) return;
+  try {
+    const res = await fetch(`/api/todo/${_gvCurrentId}/comments`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text})
+    });
+    if (!res.ok) throw new Error('Failed');
+    input.value = '';
+    _gvLoadComments(_gvCurrentId);
+  } catch(e) { alert('Could not post comment.'); }
+}
+
+async function gvToggleWatch() {
+  if (!_gvCurrentId) return;
+  const btn = document.getElementById('gv-watch-btn');
+  const isWatching = btn.textContent.includes('Watching');
+  try {
+    const res = await fetch(`/api/todo/${_gvCurrentId}/watch`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action: isWatching?'unwatch':'watch'})
+    });
+    const data = await res.json();
+    const count = (data.watchers||[]).length;
+    btn.textContent = count>0 ? `👁 Watching (${count})` : '👁 Watch';
+  } catch(e) {}
+}
+
+// Close on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('gv-modal').classList.remove('open');
+});
+</script>
+
 <script>
 function toast(msg, type='success') {
   const el = document.createElement('div');

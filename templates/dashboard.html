@@ -135,7 +135,7 @@
   </div>
   {% if my_todos %}
     {% for t in my_todos %}
-    <div class="todo-row" style="border-left-color:{{ t.status_color }}">
+    <div class="todo-row" style="border-left-color:{{ t.status_color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
       <span class="id">#{{ t.id }}</span>
       <span class="title">{{ t.title }}</span>
       <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
@@ -159,7 +159,7 @@
   </div>
   {% if added_todos %}
     {% for t in added_todos[:10] %}
-    <div class="todo-row" style="border-left-color:{{ t.status_color }}">
+    <div class="todo-row" style="border-left-color:{{ t.status_color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
       <span class="id">#{{ t.id }}</span>
       <span class="title">{{ t.title }}</span>
       <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
@@ -189,7 +189,7 @@
     <a href="/board" class="btn btn-ghost btn-sm">Full Board →</a>
   </div>
   {% for t in active_todos[:5] %}
-  <div class="todo-row" style="border-left-color:{{ t.status_color }}">
+  <div class="todo-row" style="border-left-color:{{ t.status_color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
     <span class="id">#{{ t.id }}</span>
     <span class="title">{{ t.title }}</span>
     <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>

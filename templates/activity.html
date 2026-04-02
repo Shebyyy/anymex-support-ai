@@ -97,7 +97,7 @@
         <span class="feed-user">{{ e.user_name }}</span>
         <span class="feed-action">{{ e.action }}</span>
         {% if e.todo_id %}
-        <span class="feed-todo">#{{ e.todo_id }}{% if e.todo_title %} — {{ e.todo_title[:40] }}{% endif %}</span>
+        <span class="feed-todo" style="cursor:pointer" onclick="openQuickView({{ e.todo_id }})">#{{ e.todo_id }}{% if e.todo_title %} — {{ e.todo_title[:40] }}{% endif %}</span>
         {% endif %}
         <span class="feed-ts">{{ e.ts_fmt }}</span>
       </div>

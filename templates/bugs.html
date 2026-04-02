@@ -254,7 +254,7 @@
     <div class="forum-post-body">
       <div class="forum-post-top">
         <span class="post-title">{{ post.title }}</span>
-        {% if post.linked_todo_id %}<span class="linked-todo-badge">✦ TODO #{{ post.linked_todo_id }}</span>{% endif %}
+        {% if post.linked_todo_id %}<span class="linked-todo-badge" style="cursor:pointer" onclick="event.stopPropagation();openQuickView({{ post.linked_todo_id }})">✦ TODO #{{ post.linked_todo_id }}</span>{% endif %}
         {% if post.tags %}<div class="tags-wrap">{% for tag in post.tags[:3] %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
       </div>
       {% if post.preview %}<div class="forum-post-preview">{{ post.preview }}</div>{% endif %}
@@ -525,13 +525,14 @@ function renderLinkedState(linkedId, todoInfo) {
     const s  = ti.status || 'todo';
     const p  = ti.priority || 'medium';
     document.getElementById('tm-linked-card').innerHTML = `
-      <div class="ltc-title">TODO #${linkedId} — ${ti.title||'…'}</div>
+      <div class="ltc-title" style="cursor:pointer" onclick="openQuickView(${linkedId})">TODO #${linkedId} — ${ti.title||'…'}</div>
       <div class="ltc-meta">
         <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
         <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
         ${(ti.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}
       </div>
-      ${ti.ai_description?`<div style="font-size:0.8rem;color:var(--muted);margin-top:6px;font-style:italic">${ti.ai_description}</div>`:''}`;
+      ${ti.ai_description?`<div style="font-size:0.8rem;color:var(--muted);margin-top:6px;font-style:italic">${ti.ai_description}</div>`:''}
+      <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="openQuickView(${linkedId})">🔍 Quick View</button></div>`;
   } else {
     lb.style.display = 'none'; ub.style.display = 'block';
   }

@@ -171,7 +171,7 @@
 {% if todos %}
 <div class="todo-list">
   {% for t in todos[:8] %}
-  <div class="todo-item" style="border-left-color:{{ t.status_color }}">
+  <div class="todo-item" style="border-left-color:{{ t.status_color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
     <span class="id">#{{ t.id }}</span>
     <span class="title">{{ t.title }}</span>
     <div class="meta">

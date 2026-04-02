@@ -62,7 +62,7 @@
       <span class="count">{{ results.todos|length }}</span>
     </div>
     {% for t in results.todos[:10] %}
-    <div class="result-item" style="border-left-color:{{ t.status_color }}">
+    <div class="result-item" style="border-left-color:{{ t.status_color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
       <span class="id">#{{ t.id }}</span>
       <span class="title">{{ t.title }}</span>
       <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
@@ -79,7 +79,7 @@
       <span class="count">{{ results.archive|length }}</span>
     </div>
     {% for t in results.archive[:5] %}
-    <div class="result-item" style="border-left-color:var(--done)">
+    <div class="result-item" style="border-left-color:var(--done);cursor:pointer" onclick="openQuickView({{ t.id }})">
       <span class="id">#{{ t.id }}</span>
       <span class="title">{{ t.title }}</span>
       <span class="status-pill status-done">✓ Done</span>

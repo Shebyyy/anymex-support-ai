@@ -51,7 +51,7 @@
     <div class="rm-col-body">
       {% if by_status[status] %}
         {% for t in by_status[status] %}
-        <div class="rm-card" style="border-left-color:{{ color }}">
+        <div class="rm-card" style="border-left-color:{{ color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
           <div class="title">{{ t.title }}</div>
           <div class="meta">
             <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
@@ -74,7 +74,7 @@
 </div>
 <div style="display:flex;flex-direction:column;gap:8px">
   {% for t in public_done %}
-  <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--done)">
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--done);cursor:pointer" onclick="openQuickView({{ t.id }})">
     <span style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">#{{ t.id }}</span>
     <span style="flex:1;font-size:.88rem">{{ t.title }}</span>
     <span class="status-pill status-done">✓ Done</span>
