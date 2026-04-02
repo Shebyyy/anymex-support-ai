@@ -609,7 +609,14 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 function viewTodoById(id) {
   const t = _TODOS_MAP[id];
   if (!t) return;
+  _currentViewId = id;
   viewTodo(t);
+  loadComments(id);
+  const watchBtn = document.getElementById('vm-watch-btn');
+  if (watchBtn) {
+    const watchers = t.watchers || [];
+    watchBtn.textContent = watchers.length > 0 ? `👁 Watching (${watchers.length})` : '👁 Watch';
+  }
 }
 
 function viewTodo(t) {
@@ -915,20 +922,6 @@ document.addEventListener('click', e => {
 
 // ── Watch / Comments / Time ────────────────────────────────────────────────────
 let _currentViewId = null;
-
-// Hook into viewTodoById to load extra data
-const _origViewTodoById = viewTodoById;
-function viewTodoById(id) {
-  _origViewTodoById(id);
-  _currentViewId = id;
-  const t = _TODOS_MAP[id];
-  loadComments(id);
-  const watchBtn = document.getElementById('vm-watch-btn');
-  if (watchBtn && t) {
-    const watchers = t.watchers || [];
-    watchBtn.textContent = watchers.length > 0 ? `👁 Watching (${watchers.length})` : '👁 Watch';
-  }
-}
 
 async function togglePublic() {
   if (!_currentViewId) return;
