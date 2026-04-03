@@ -319,7 +319,7 @@ def _web_log_activity(action: str, todo: dict, user: dict, extra: str = ""):
     todo_id_val = todo.get('id', '?')
     embed = {
         "title":       f"📋 TODO #{todo_id_val} — {title_str}",
-        "url":         f"{SITE_URL}/board#todo-{todo_id_val}",
+        "url":         f"{SITE_URL}/todo/{todo_id_val}",
         "description": desc,
         "color":       color,
         "footer":      {"text": f"By {user_name} (web dashboard)"},
@@ -1316,6 +1316,29 @@ def board():
         due_filter=due_filter, search=search,
         user=sess.get("user"), access_level=sess.get("access_level", "public"),
         current_user_id=current_uid,
+    )
+
+@app.route("/todo/<int:todo_id>")
+def todo_page(todo_id):
+    sess      = get_session()
+    user      = sess.get("user")
+    level     = sess.get("access_level", "public")
+    current_uid = str(user.get("id", "")) if user else ""
+
+    todos, _   = gh_read(FILE_TODOS)
+    archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+    all_todos  = list(todos or []) + list(archive or [])
+    raw = next((t for t in all_todos if t.get("id") == todo_id), None)
+    if not raw:
+        abort(404)
+    todo = enrich_todo(raw)
+
+    comments, _ = gh_read(FILE_COMMENTS)
+    comments    = (comments or {}).get(str(todo_id), [])
+
+    return render_template("todo_page.html",
+        todo=todo, comments=comments,
+        user=user, access_level=level, current_user_id=current_uid,
     )
 
 @app.route("/analytics")
@@ -3441,10 +3464,6 @@ def enrich_todo(t):
 # ══════════════════════════════════════════════════════════════════════════════
 # ENHANCED ANALYTICS — add burndown + velocity data
 # ══════════════════════════════════════════════════════════════════════════════
-
-# /analytics already exists; extend it with new data by overriding its view
-# We patch the existing route by re-registering with a new function
-app.view_functions.pop("analytics", None)
 
 @app.route("/analytics")
 @login_required
