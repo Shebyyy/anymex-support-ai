@@ -957,6 +957,16 @@ document.addEventListener('click', e => {
 // ── Watch / Comments / Time ────────────────────────────────────────────────────
 let _currentViewId = null;
 
+// Auto-open todo from URL hash e.g. /board#todo-123 (legacy links)
+window.addEventListener('DOMContentLoaded', () => {
+  const m = window.location.hash.match(/^#todo-(\d+)$/);
+  if (m) {
+    const id = parseInt(m[1]);
+    // Wait a tick for _TODOS_MAP to be populated
+    setTimeout(() => { if (_TODOS_MAP[id]) viewTodoById(id); }, 50);
+  }
+});
+
 async function togglePublic() {
   if (!_currentViewId) return;
   const t = _TODOS_MAP[_currentViewId];
