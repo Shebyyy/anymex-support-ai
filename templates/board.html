@@ -326,7 +326,7 @@
       <span class="tag">{{ tag }}</span>
     {% endfor %}
     {% if t.get('assigned_to_name') or t.get('assigned_to_id') %}
-    <a class="assignee-chip" href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;cursor:pointer">👤 {{ t.assigned_to_name or ('User #' + (t.assigned_to_id|string)) }}</a>
+    <a class="assignee-chip" href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;cursor:pointer">👤 {{ t.assigned_to_name or 'Member' }}</a>
     {% endif %}
     {% if t.get('due_urgency') and t.due_urgency != 'done' %}
     <span class="due-badge due-{{ t.due_urgency }}">
@@ -411,6 +411,9 @@
     <!-- Tags -->
     <div id="vm-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.75rem"></div>
 
+    <!-- Deep links row (Discord thread, site link) -->
+    <div id="vm-links-row" style="display:none;gap:6px;flex-wrap:wrap;margin-bottom:0.75rem"></div>
+
     <!-- AI description -->
     <div id="vm-desc-wrap" style="display:none;margin-bottom:0.75rem">
       <label style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Description</label>
@@ -434,11 +437,23 @@
 
     <!-- Comments -->
     <div id="vm-comments-section">
-      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">💬 Comments</div>
-      <div id="vm-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px">
-        <input class="form-control" type="text" id="vm-comment-input" placeholder="Add a comment…" style="flex:1" onkeydown="if(event.key==='Enter')postComment()" />
-        <button class="btn btn-primary btn-sm" onclick="postComment()">Send</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:0.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">💬 Comments</div>
+        <div id="vm-comment-count" style="font-size:0.72rem;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:10px"></div>
+      </div>
+      <div id="vm-comments-list" style="display:flex;flex-direction:column;gap:0;margin-bottom:14px"></div>
+      <!-- Reply-to indicator bar (hidden until Reply clicked) -->
+      <div id="vm-reply-bar" style="display:none;align-items:center;gap:8px;padding:5px 10px;margin-bottom:6px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--accent)">
+        <span id="vm-reply-label" style="font-size:0.78rem;color:var(--muted);flex:1"></span>
+        <button onclick="cancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.8rem;line-height:1;padding:2px 4px" title="Cancel reply">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <div style="flex:1">
+          <textarea class="form-control" id="vm-comment-input" placeholder="Write a comment… (Enter to send, Shift+Enter for new line)" rows="2"
+            style="resize:none;line-height:1.5;border-radius:10px"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();postComment()}"></textarea>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="postComment()" style="height:38px;padding:0 14px;border-radius:10px" title="Send">↑</button>
       </div>
     </div>
     {% endif %}
@@ -636,7 +651,7 @@ function viewTodo(t) {
 
   // Assigned-to — clickable member profile link + assign/unassign button
   const assignedEl = document.getElementById('vm-assigned');
-  const assignedName = t.assigned_to_name || (t.assigned_to_id ? `User #${t.assigned_to_id}` : null);
+  const assignedName = t.assigned_to_name || (t.assigned_to_id ? 'Member' : null);
   let assignedHtml = assignedName && t.assigned_to_id
     ? `<a href="/member/${t.assigned_to_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${assignedName}</a>`
     : '<span style="color:var(--muted)">Unassigned</span>';
@@ -649,12 +664,16 @@ function viewTodo(t) {
   }
   assignedEl.innerHTML = assignedHtml;
 
-  // Added By — clickable if we have added_by_id
+  // Added By — show display name (resolved from members DB), link to profile
   const addedEl = document.getElementById('vm-added');
-  if (t.added_by_id) {
-    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${t.added_by || 'User #' + t.added_by_id}</a>`;
+  const addedName = t.added_by_display || t.added_by || null;
+  if (t.added_by_id && addedName) {
+    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${addedName}</a>`;
+  } else if (t.added_by_id) {
+    // Name not in members DB yet — show linked ID
+    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">Member</a>`;
   } else {
-    addedEl.textContent = t.added_by || '—';
+    addedEl.textContent = addedName || '—';
   }
 
   // Due date
@@ -683,6 +702,21 @@ function viewTodo(t) {
   document.getElementById('vm-tags').innerHTML = (t.tags || []).map(tag =>
     `<span class="tag">${tag}</span>`
   ).join('');
+
+  // Discord + Site deep links
+  const linksRow = document.getElementById('vm-links-row');
+  if (linksRow) {
+    const linkParts = [];
+    if (t.discord_thread_url) {
+      linkParts.push(`<a href="${t.discord_thread_url}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:var(--accent2);text-decoration:none;font-size:0.8rem;padding:3px 8px;border-radius:6px;background:rgba(88,101,242,0.1);border:1px solid rgba(88,101,242,0.2)" title="Open Discord thread"><svg width=14 height=14 viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.12 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.12 12.69-11.43 12.69z"/></svg>Discord Thread</a>`);
+    }
+    if (linkParts.length > 0) {
+      linksRow.style.display = 'flex';
+      linksRow.innerHTML = linkParts.join('');
+    } else {
+      linksRow.style.display = 'none';
+    }
+  }
 
   // Description
   const descWrap = document.getElementById('vm-desc-wrap');
@@ -746,7 +780,7 @@ function editTodo(t) {
   if (t.assigned_to_id) {
     _setAssignee({
       id: t.assigned_to_id,
-      display_name: t.assigned_to_name || `User #${t.assigned_to_id}`,
+      display_name: t.assigned_to_name || 'Member',
       avatar_url: `https://cdn.discordapp.com/embed/avatars/0.png`,
     });
   }
@@ -942,33 +976,157 @@ async function togglePublic() {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-async function loadComments(todoId) {
-  const list = document.getElementById('vm-comments-list');
-  if (!list) return;
+function _relativeTime(isoStr) {
+  if (!isoStr) return '';
   try {
-    const comments = await (await fetch(`/api/todo/${todoId}/comments`)).json();
-    if (!comments.length) {
-      list.innerHTML = '<p style="font-size:0.8rem;color:var(--muted)">No comments yet.</p>';
-    } else {
-      list.innerHTML = comments.map(c => `
-        <div style="display:flex;gap:8px;align-items:flex-start">
-          <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:24px;height:24px;border-radius:50%;flex-shrink:0;border:1px solid var(--border)" />
-          <div style="flex:1;background:var(--surface2);border-radius:0 8px 8px 8px;padding:7px 10px">
-            <div style="font-size:0.75rem;font-weight:700;color:var(--accent2);margin-bottom:3px">${c.user_name}</div>
-            <div style="font-size:0.83rem;line-height:1.5">${c.text}</div>
-          </div>
-        </div>`).join('');
+    const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+    if (diff < 60)    return 'just now';
+    if (diff < 3600)  return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    const d = new Date(isoStr);
+    return d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+  } catch(e) { return ''; }
+}
+
+function _escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Comments with threaded replies ──────────────────────────────────────────
+let _replyingTo = null; // { id, user_name } of comment being replied to
+
+function _renderComment(c, todoId, depth) {
+  // depth: 0 = top-level, 1+ = nested. Cap indent at depth 3.
+  const indentPx = Math.min(depth, 3) * 32;
+  const indent = indentPx > 0 ? `margin-left:${indentPx}px;` : '';
+  const avatarSize = depth === 0 ? '28px' : '22px';
+  const isDeleted = c.deleted;
+
+  if (isDeleted) {
+    // Tombstone — keep placeholder so child replies still have context
+    return `<div class="comment-item" data-cid="${c.id}"
+        style="display:flex;gap:10px;align-items:flex-start;padding:6px 0 4px;${indent}">
+      <div style="width:${avatarSize};height:${avatarSize};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div>
+      <div style="flex:1;min-width:0">
+        <span style="font-size:0.8rem;color:var(--muted);font-style:italic">[comment deleted]</span>
+      </div>
+    </div>`;
+  }
+
+  const canDelete = CURRENT_UID === c.user_id || ['manager','admin','owner'].includes(ACCESS_LEVEL);
+  const deleteBtn = canDelete
+    ? `<button data-cid="${c.id}" data-tid="${todoId}"
+         onclick="deleteComment(this.dataset.tid, this.dataset.cid)"
+         title="Delete" class="del-comment-btn"
+         style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">✕</button>`
+    : '';
+  // Reply button on any comment (not just top-level)
+  const replyBtn = `<button onclick="startReply('${c.id}','${_escHtml(c.user_name)}')"
+       class="reply-btn"
+       style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">↩ Reply</button>`;
+  return `<div class="comment-item" data-cid="${c.id}"
+      style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${indent}"
+      onmouseenter="this.querySelectorAll('.del-comment-btn,.reply-btn').forEach(b=>b.style.opacity=1)"
+      onmouseleave="this.querySelectorAll('.del-comment-btn,.reply-btn').forEach(b=>b.style.opacity=0)">
+    <img src="${c.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}"
+      style="width:${avatarSize};height:${avatarSize};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px" />
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+        <span style="font-size:${depth === 0 ? '0.8' : '0.77'}rem;font-weight:700;color:var(--text)">${_escHtml(c.user_name)}</span>
+        <span style="font-size:0.71rem;color:var(--muted)">${_relativeTime(c.ts)}</span>
+        ${replyBtn}
+        ${deleteBtn}
+      </div>
+      <div style="font-size:0.83rem;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word">${_escHtml(c.text)}</div>
+    </div>
+  </div>`;
+}
+
+async function loadComments(todoId) {
+  const list    = document.getElementById('vm-comments-list');
+  const countEl = document.getElementById('vm-comment-count');
+  if (!list) return;
+  _replyingTo = null;
+  _resetReplyBar();
+  try {
+    const all = await (await fetch(`/api/todo/${todoId}/comments`)).json();
+    // Count only top-level for display, but show total
+    const topLevel = all.filter(c => !c.reply_to);
+    const replyCount = all.length - topLevel.length;
+    if (countEl) {
+      const label = all.length
+        ? `${topLevel.length} comment${topLevel.length !== 1 ? 's' : ''}${replyCount ? ` · ${replyCount} repl${replyCount !== 1 ? 'ies' : 'y'}` : ''}`
+        : '';
+      countEl.textContent = label;
     }
+    if (!all.length) {
+      list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:0.82rem">
+        <div style="font-size:1.4rem;margin-bottom:4px">💬</div>No comments yet — be the first!</div>`;
+      return;
+    }
+    // Build parent → children map for unlimited nesting
+    const childMap = {};
+    all.forEach(c => {
+      if (c.reply_to) {
+        (childMap[c.reply_to] = childMap[c.reply_to] || []).push(c);
+      }
+    });
+    function _renderThread(c, depth) {
+      let h = _renderComment(c, todoId, depth);
+      (childMap[c.id] || []).forEach(child => { h += _renderThread(child, depth + 1); });
+      return h;
+    }
+    let html = '';
+    topLevel.forEach((c, i) => {
+      html += `<div style="${i > 0 ? 'border-top:1px solid var(--border)' : ''}">`;
+      html += _renderThread(c, 0);
+      html += `</div>`;
+    });
+    list.innerHTML = html;
   } catch(e) { if(list) list.innerHTML = ''; }
+}
+
+function startReply(commentId, userName) {
+  _replyingTo = { id: commentId, user_name: userName };
+  const bar = document.getElementById('vm-reply-bar');
+  const label = document.getElementById('vm-reply-label');
+  if (bar) bar.style.display = 'flex';
+  if (label) label.textContent = `Replying to ${userName}`;
+  const input = document.getElementById('vm-comment-input');
+  if (input) { input.placeholder = `Reply to ${userName}…`; input.focus(); }
+}
+
+function cancelReply() {
+  _replyingTo = null;
+  _resetReplyBar();
+}
+
+function _resetReplyBar() {
+  const bar = document.getElementById('vm-reply-bar');
+  const input = document.getElementById('vm-comment-input');
+  if (bar) bar.style.display = 'none';
+  if (input) input.placeholder = 'Write a comment… (Enter to send, Shift+Enter for new line)';
+}
+
+async function deleteComment(todoId, commentId) {
+  if (!confirm('Delete this comment? If it has replies, it will appear as [deleted].')) return;
+  try {
+    await api('DELETE', `/api/todo/${todoId}/comments/${commentId}`);
+    loadComments(todoId);
+  } catch(e) { toast(e.message, 'error'); }
 }
 
 async function postComment() {
   const input = document.getElementById('vm-comment-input');
   const text = (input?.value || '').trim();
   if (!text || !_currentViewId) return;
+  const body = { text };
+  if (_replyingTo) body.reply_to = _replyingTo.id;
   try {
-    await api('POST', `/api/todo/${_currentViewId}/comments`, { text });
+    await api('POST', `/api/todo/${_currentViewId}/comments`, body);
     input.value = '';
+    _replyingTo = null;
+    _resetReplyBar();
     loadComments(_currentViewId);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -1008,5 +1166,45 @@ async function deleteFromView(id) {
     delete _TODOS_MAP[todoId];
   } catch(e) { toast(e.message, 'error'); }
 }
+
+// ── Auto-open TODO from ?highlight= URL param (e.g. from Discord link) ──────
+(async function _handleHighlight() {
+  const params = new URLSearchParams(window.location.search);
+  const hid = parseInt(params.get('highlight'), 10);
+  if (!hid) return;
+  // Remove param from URL without reload
+  const url = new URL(window.location.href);
+  url.searchParams.delete('highlight');
+  window.history.replaceState({}, '', url);
+
+  if (_TODOS_MAP[hid]) {
+    // Active todo — open normally
+    viewTodoById(hid);
+    const card = document.querySelector(`.todo-card[data-id="${hid}"]`);
+    if (card) card.scrollIntoView({behavior:'smooth', block:'center'});
+  } else {
+    // Archived / not on this board — fetch from API
+    try {
+      const res = await fetch(`/api/todo/${hid}`);
+      if (!res.ok) throw new Error('Not found');
+      const t = await res.json();
+      _currentViewId = hid;
+      viewTodo(t);
+      loadComments(hid);
+      const watchBtn = document.getElementById('vm-watch-btn');
+      if (watchBtn) {
+        const wc = (t.watchers || []).length;
+        watchBtn.textContent = wc > 0 ? `👁 Watching (${wc})` : '👁 Watch';
+        // Completed todos — hide watch/edit/delete actions
+        if (t.status === 'done') {
+          const vmActions = document.getElementById('vm-actions');
+          if (vmActions) vmActions.style.display = 'none';
+        }
+      }
+    } catch(e) {
+      toast(`TODO #${hid} not found`, 'error');
+    }
+  }
+})();
 </script>
 {% endblock %}

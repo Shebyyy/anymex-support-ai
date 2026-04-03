@@ -30,6 +30,8 @@ app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI  = os.environ.get("DISCORD_REDIRECT_URI", "http://localhost:5000/callback")
+# Derive the public site URL from the OAuth redirect URI (strip /callback)
+SITE_URL = os.environ.get("SITE_URL") or DISCORD_REDIRECT_URI.replace("/callback", "").rstrip("/")
 DISCORD_GUILD_ID      = os.environ.get("DISCORD_GUILD_ID")   # your server ID
 
 DISCORD_API   = "https://discord.com/api/v10"
@@ -56,6 +58,30 @@ FILE_FORUM_LINKS   = "forum_links.json"
 FILE_ACTIVITY_LOG  = "activity_log.json"
 FILE_MEMBERS       = "members.json"       # guild member snapshot synced from Discord
 FILE_TODO_MEMBERS  = "todo_members.json"  # only is_todo_role=true members (small, always readable)
+
+# Member lookup cache (populated lazily from todo_members.json)
+_member_name_cache: dict = {}
+_member_cache_ts: float = 0
+_MEMBER_CACHE_TTL = 5 * 60  # 5 min
+
+def _resolve_user_display(user_id: str) -> str | None:
+    """
+    Look up a user's display name from todo_members.json.
+    Returns None if not found (caller should fall back to raw field).
+    """
+    global _member_name_cache, _member_cache_ts
+    if not user_id:
+        return None
+    now = time.time()
+    if now - _member_cache_ts > _MEMBER_CACHE_TTL:
+        try:
+            db, _ = gh_read(FILE_TODO_MEMBERS)
+            members = (db or {}).get("members") or []
+            _member_name_cache = {str(m["id"]): m.get("display_name") or m.get("global_name") or m.get("username") for m in members if m.get("id")}
+            _member_cache_ts = now
+        except Exception:
+            pass
+    return _member_name_cache.get(str(user_id))
 
 # ── New feature files ────────────────────────────────────────────────────────
 FILE_COMMENTS       = "todo_comments.json"       # #1  Comments on TODOs
@@ -290,8 +316,10 @@ def _web_log_activity(action: str, todo: dict, user: dict, extra: str = ""):
     if extra:
         desc += "\n" + extra
 
+    todo_id_val = todo.get('id', '?')
     embed = {
-        "title":       f"📋 TODO #{todo.get('id', '?')} — {title_str}",
+        "title":       f"📋 TODO #{todo_id_val} — {title_str}",
+        "url":         f"{SITE_URL}/board#todo-{todo_id_val}",
         "description": desc,
         "color":       color,
         "footer":      {"text": f"By {user_name} (web dashboard)"},
@@ -1362,6 +1390,10 @@ def api_todo_get(todo_id):
     todos, _ = gh_read(FILE_TODOS)
     todo = next((t for t in (todos or []) if t["id"] == todo_id), None)
     if not todo:
+        # Also check archive — completed TODOs live there
+        archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+        todo = next((t for t in (archive or []) if t["id"] == todo_id), None)
+    if not todo:
         return jsonify({"error": "Not found"}), 404
     return jsonify(enrich_todo(todo))
 
@@ -2222,7 +2254,8 @@ def server_error(e):
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FEATURE #1 — TODO COMMENTS
-# Schema: { "todo_id": [{ id, user_id, user_name, user_avatar, text, ts }] }
+# Schema: { "todo_id": [{ id, user_id, user_name, user_avatar, text, ts, reply_to? }] }
+# reply_to: parent comment id (None for top-level comments)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/todo/<int:todo_id>/comments", methods=["GET"])
@@ -2238,6 +2271,7 @@ def api_comments_post(todo_id):
         return jsonify({"error": "Login required"}), 401
     data = request.json or {}
     text = (data.get("text") or "").strip()[:1000]
+    reply_to = data.get("reply_to") or None   # parent comment id, if this is a reply
     if not text:
         return jsonify({"error": "Text required"}), 400
 
@@ -2246,6 +2280,11 @@ def api_comments_post(todo_id):
     key = str(todo_id)
     thread = comments.get(key, [])
     user = sess["user"]
+
+    # Validate parent exists if replying
+    if reply_to and not any(c["id"] == reply_to for c in thread):
+        return jsonify({"error": "Parent comment not found"}), 404
+
     new_comment = {
         "id":          secrets.token_hex(8),
         "user_id":     str(user.get("id", "")),
@@ -2254,6 +2293,9 @@ def api_comments_post(todo_id):
         "text":        text,
         "ts":          datetime.datetime.utcnow().isoformat() + "Z",
     }
+    if reply_to:
+        new_comment["reply_to"] = reply_to
+
     thread.append(new_comment)
     comments[key] = thread
     ok = gh_write(FILE_COMMENTS, comments, sha, f"Comment on TODO #{todo_id} by {user.get('username','?')}")
@@ -2261,7 +2303,8 @@ def api_comments_post(todo_id):
         # Log to activity
         todos, _ = gh_read(FILE_TODOS)
         todo = next((t for t in (todos or []) if t["id"] == todo_id), {"id": todo_id, "title": "Unknown", "status": "todo"})
-        _web_log_activity("💬 Comment Added", todo, user, extra=text[:60])
+        action = "💬 Reply Added" if reply_to else "💬 Comment Added"
+        _web_log_activity(action, todo, user, extra=text[:60])
     return jsonify(new_comment), 201
 
 @app.route("/api/todo/<int:todo_id>/comments/<comment_id>", methods=["DELETE"])
@@ -2282,7 +2325,19 @@ def api_comments_delete(todo_id, comment_id):
     # Only author or manager+ can delete
     if comment["user_id"] != str(user.get("id")) and level not in ("manager", "admin", "owner"):
         return jsonify({"error": "Forbidden"}), 403
-    thread = [c for c in thread if c["id"] != comment_id]
+    # Soft-delete: keep comment as a tombstone if it has replies, so threads aren't orphaned.
+    # Hard-delete only if no replies exist.
+    has_replies = any(c.get("reply_to") == comment_id for c in thread)
+    if has_replies:
+        for c in thread:
+            if c["id"] == comment_id:
+                c["deleted"] = True
+                c["text"] = ""
+                c.pop("user_name", None)
+                c.pop("user_avatar", None)
+                break
+    else:
+        thread = [c for c in thread if c["id"] != comment_id]
     comments[key] = thread
     gh_write(FILE_COMMENTS, comments, sha, f"Delete comment on TODO #{todo_id}")
     return jsonify({"ok": True})
@@ -3353,6 +3408,33 @@ def enrich_todo(t):
     # Time total
     t["total_minutes"]    = sum(l.get("minutes",0) for l in t.get("time_logs",[]))
     # Comment count (loaded lazily — just flag)
+
+    # ── Resolve added_by display name from todo_members.json ──
+    added_by_id = t.get("added_by_id")
+    if added_by_id:
+        resolved = _resolve_user_display(str(added_by_id))
+        if resolved:
+            t["added_by_display"] = resolved
+        else:
+            raw = t.get("added_by") or ""
+            t["added_by_display"] = raw if raw and raw != "web" else None
+    else:
+        t["added_by_display"] = t.get("added_by") or None
+
+    # ── Resolve assigned_to display name if missing ──
+    assigned_id = t.get("assigned_to_id")
+    if assigned_id and not t.get("assigned_to_name"):
+        resolved = _resolve_user_display(str(assigned_id))
+        if resolved:
+            t["assigned_to_name"] = resolved
+
+    # ── Discord deep link for linked forum thread ──
+    linked_thread = t.get("linked_forum_thread_id")
+    if linked_thread and DISCORD_GUILD_ID:
+        t["discord_thread_url"] = f"https://discord.com/channels/{DISCORD_GUILD_ID}/{linked_thread}"
+    else:
+        t["discord_thread_url"] = None
+
     return t
 
 

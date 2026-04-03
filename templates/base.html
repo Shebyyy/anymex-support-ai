@@ -320,7 +320,7 @@
   </style>
   {% block head %}{% endblock %}
 </head>
-<body>
+<body data-uid="{{ user.id if user else '' }}" data-level="{{ access_level or 'public' }}">
 
 <nav>
   <a class="nav-brand" href="/">
@@ -438,16 +438,26 @@
     <hr>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem">
       <a id="gv-board-link" href="/board" class="btn btn-primary btn-sm">Open on Board →</a>
+      <a id="gv-changelog-link" href="/changelog" class="btn btn-ghost btn-sm" style="display:none">📋 View in Changelog →</a>
       <button id="gv-watch-btn" class="btn btn-ghost btn-sm" onclick="gvToggleWatch()">👁 Watch</button>
     </div>
 
     <!-- Comments -->
     <div id="gv-comments-section" style="display:none">
-      <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">💬 Comments</div>
-      <div id="gv-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px">
-        <input class="form-control" type="text" id="gv-comment-input" placeholder="Add a comment…" style="flex:1" onkeydown="if(event.key==='Enter')gvPostComment()" />
-        <button class="btn btn-primary btn-sm" onclick="gvPostComment()">Send</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:0.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">💬 Comments</div>
+        <div id="gv-comment-count" style="font-size:0.72rem;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:10px"></div>
+      </div>
+      <div id="gv-comments-list" style="display:flex;flex-direction:column;gap:0;margin-bottom:14px"></div>
+      <div id="gv-reply-bar" style="display:none;align-items:center;gap:8px;padding:5px 10px;margin-bottom:6px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--accent)">
+        <span id="gv-reply-label" style="font-size:0.77rem;color:var(--muted);flex:1"></span>
+        <button onclick="gvCancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.8rem;line-height:1;padding:2px 4px" title="Cancel">✕</button>
+      </div>
+      <div id="gv-comment-input-wrap" style="display:flex;gap:8px;align-items:flex-end">
+        <textarea class="form-control" id="gv-comment-input" placeholder="Write a comment… (Enter to send)" rows="2"
+          style="flex:1;resize:none;border-radius:10px;line-height:1.5"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();gvPostComment()}"></textarea>
+        <button class="btn btn-primary btn-sm" onclick="gvPostComment()" style="height:38px;padding:0 14px;border-radius:10px" title="Send">↑</button>
       </div>
     </div>
 
@@ -487,7 +497,7 @@ async function openQuickView(todoId) {
   }
   document.getElementById('gv-loading').style.display = 'none';
   _gvRender(_gvCache[todoId]);
-  _gvLoadComments(todoId);
+  _gvLoadComments(todoId, _gvCache[todoId].status === 'done');
 }
 
 function _gvRender(t) {
@@ -505,7 +515,7 @@ function _gvRender(t) {
     `<span style="font-size:.72rem;padding:3px 8px;border-radius:10px;background:${isPublic?'rgba(29,158,117,0.12)':'rgba(107,114,128,0.1)'};color:${isPublic?'var(--done)':'var(--muted)'}">${isPublic?'🌐 Public':'🔒 Private'}</span>`;
 
   // Assigned
-  const assignedName = t.assigned_to_name || (t.assigned_to_id ? `User #${t.assigned_to_id}` : null);
+  const assignedName = t.assigned_to_name || (t.assigned_to_id ? 'Member' : null);
   document.getElementById('gv-assigned').innerHTML = assignedName && t.assigned_to_id
     ? `<a href="/member/${t.assigned_to_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${assignedName}</a>`
     : `<span style="color:var(--muted)">Unassigned</span>`;
@@ -567,50 +577,172 @@ function _gvRender(t) {
   document.getElementById('gv-extra').innerHTML = extras.join('<span style="color:var(--border);margin:0 6px">·</span>');
 
   // Board link
-  document.getElementById('gv-board-link').href = `/board`;
+  const boardLink = document.getElementById('gv-board-link');
+  const changelogLink = document.getElementById('gv-changelog-link');
+  boardLink.href = `/board?highlight=${t.id}`;
+  if (t.status === 'done') {
+    boardLink.textContent = 'Open on Board →';
+    if (changelogLink) changelogLink.style.display = 'inline-flex';
+  } else {
+    boardLink.textContent = 'Open on Board →';
+    if (changelogLink) changelogLink.style.display = 'none';
+  }
 
-  // Watch button
+  // Watch button — hide for completed todos
   const watchBtn = document.getElementById('gv-watch-btn');
   const wc = (t.watchers||[]).length;
   watchBtn.textContent = wc > 0 ? `👁 Watching (${wc})` : '👁 Watch';
+  watchBtn.style.display = (t.status === 'done') ? 'none' : '';
 }
 
-async function _gvLoadComments(todoId) {
-  {% if user %}
-  const section = document.getElementById('gv-comments-section');
-  const list    = document.getElementById('gv-comments-list');
-  section.style.display = 'block';
-  list.innerHTML = '<p style="font-size:.8rem;color:var(--muted)">Loading comments…</p>';
+function _gvRelTime(isoStr) {
+  if (!isoStr) return '';
   try {
-    const comments = await (await fetch(`/api/todo/${todoId}/comments`)).json();
-    if (!comments.length) {
-      list.innerHTML = '<p style="font-size:.8rem;color:var(--muted)">No comments yet.</p>';
-    } else {
-      list.innerHTML = comments.map(c=>`
-        <div style="display:flex;gap:8px;align-items:flex-start">
-          <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:24px;height:24px;border-radius:50%;flex-shrink:0;border:1px solid var(--border)" />
-          <div style="flex:1;background:var(--surface2);border-radius:0 8px 8px 8px;padding:7px 10px">
-            <div style="font-size:.75rem;font-weight:700;color:var(--accent2);margin-bottom:3px">${c.user_name} <span style="font-weight:400;color:var(--muted)">${(c.ts||'').slice(0,10)}</span></div>
-            <div style="font-size:.83rem;line-height:1.5">${c.text}</div>
-          </div>
-        </div>`).join('');
+    const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+    if (diff < 60)    return 'just now';
+    if (diff < 3600)  return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return new Date(isoStr).toLocaleDateString(undefined, {month:'short', day:'numeric'});
+  } catch(e) { return ''; }
+}
+function _gvEsc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let _gvReplyingTo = null;
+
+function _gvRenderComment(c, todoId, isDone, depth) {
+  const GV_UID   = document.body.dataset.uid   || '';
+  const GV_LEVEL = document.body.dataset.level || 'public';
+  const indentPx = Math.min(depth, 3) * 28;
+  const indent = indentPx > 0 ? `margin-left:${indentPx}px;` : '';
+  const avatarSize = depth === 0 ? '26px' : '20px';
+  const isDeleted = c.deleted;
+
+  if (isDeleted) {
+    return `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;${indent}">
+      <div style="width:${avatarSize};height:${avatarSize};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div>
+      <span style="font-size:.8rem;color:var(--muted);font-style:italic;padding-top:2px">[comment deleted]</span>
+    </div>`;
+  }
+
+  const canDel = (GV_UID === c.user_id || ['manager','admin','owner'].includes(GV_LEVEL)) && !isDone;
+  const delBtn = canDel
+    ? `<button data-cid="${c.id}" data-tid="${todoId}" onclick="gvDeleteComment(this.dataset.tid,this.dataset.cid)"
+         title="Delete" class="gv-del-btn"
+         style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">✕</button>`
+    : '';
+  const replyBtn = !isDone
+    ? `<button onclick="gvStartReply('${c.id}','${_gvEsc(c.user_name)}')"
+         class="gv-reply-btn"
+         style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.71rem;padding:0 2px;opacity:0;transition:opacity .15s">↩ Reply</button>`
+    : '';
+  return `<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;${indent}"
+      onmouseenter="this.querySelectorAll('.gv-del-btn,.gv-reply-btn').forEach(b=>b.style.opacity=1)"
+      onmouseleave="this.querySelectorAll('.gv-del-btn,.gv-reply-btn').forEach(b=>b.style.opacity=0)">
+    <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}"
+      style="width:${avatarSize};height:${avatarSize};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px"/>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:baseline;gap:5px;margin-bottom:3px;flex-wrap:wrap">
+        <span style="font-size:.78rem;font-weight:700;color:var(--text)">${_gvEsc(c.user_name)}</span>
+        <span style="font-size:.7rem;color:var(--muted)">${_gvRelTime(c.ts)}</span>
+        ${replyBtn}${delBtn}
+      </div>
+      <div style="font-size:.82rem;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word">${_gvEsc(c.text)}</div>
+    </div>
+  </div>`;
+}
+
+async function _gvLoadComments(todoId, isDone) {
+  {% if user %}
+  const section   = document.getElementById('gv-comments-section');
+  const list      = document.getElementById('gv-comments-list');
+  const countEl   = document.getElementById('gv-comment-count');
+  const inputWrap = document.getElementById('gv-comment-input-wrap');
+  section.style.display = 'block';
+  _gvReplyingTo = null;
+  const replyBar = document.getElementById('gv-reply-bar');
+  if (replyBar) replyBar.style.display = 'none';
+  if (inputWrap) inputWrap.style.display = isDone ? 'none' : 'flex';
+  list.innerHTML = '<p style="font-size:.8rem;color:var(--muted)">Loading…</p>';
+  try {
+    const all = await (await fetch(`/api/todo/${todoId}/comments`)).json();
+    const topLevel   = all.filter(c => !c.reply_to);
+    const replyCount = all.length - topLevel.length;
+    if (countEl) {
+      const label = all.length
+        ? `${topLevel.length} comment${topLevel.length!==1?'s':''}${replyCount?` · ${replyCount} repl${replyCount!==1?'ies':'y'}`:''}`
+        : '';
+      countEl.textContent = label;
     }
-  } catch(e) { list.innerHTML = ''; }
+    if (!all.length) {
+      list.innerHTML = `<div style="text-align:center;padding:16px 0;color:var(--muted);font-size:.82rem">
+        <div style="font-size:1.3rem;margin-bottom:4px">💬</div>${isDone?'No comments.':'No comments yet.'}</div>`;
+      return;
+    }
+    const childMap = {};
+    all.forEach(c => { if (c.reply_to) { (childMap[c.reply_to] = childMap[c.reply_to]||[]).push(c); } });
+    function _gvRenderThread(c, depth) {
+      let h = _gvRenderComment(c, todoId, isDone, depth);
+      (childMap[c.id]||[]).forEach(child => { h += _gvRenderThread(child, depth + 1); });
+      return h;
+    }
+    let html = '';
+    topLevel.forEach((c, i) => {
+      html += `<div style="${i>0?'border-top:1px solid var(--border)':''}">`;
+      html += _gvRenderThread(c, 0);
+      html += '</div>';
+    });
+    list.innerHTML = html;
+  } catch(e) { if(list) list.innerHTML = ''; }
   {% endif %}
+}
+
+function gvStartReply(commentId, userName) {
+  _gvReplyingTo = { id: commentId, user_name: userName };
+  const bar   = document.getElementById('gv-reply-bar');
+  const label = document.getElementById('gv-reply-label');
+  if (bar)   bar.style.display = 'flex';
+  if (label) label.textContent = `Replying to ${userName}`;
+  const input = document.getElementById('gv-comment-input');
+  if (input) { input.placeholder = `Reply to ${userName}…`; input.focus(); }
+}
+
+function gvCancelReply() {
+  _gvReplyingTo = null;
+  const bar   = document.getElementById('gv-reply-bar');
+  const input = document.getElementById('gv-comment-input');
+  if (bar)   bar.style.display = 'none';
+  if (input) input.placeholder = 'Write a comment… (Enter to send)';
+}
+
+async function gvDeleteComment(todoId, commentId) {
+  if (!confirm('Delete this comment? If it has replies, it will appear as [deleted].')) return;
+  try {
+    const res = await fetch(`/api/todo/${todoId}/comments/${commentId}`, {method:'DELETE'});
+    if (!res.ok) throw new Error('Failed');
+    _gvLoadComments(todoId, false);
+  } catch(e) { alert('Could not delete comment.'); }
 }
 
 async function gvPostComment() {
   const input = document.getElementById('gv-comment-input');
   const text  = (input?.value||'').trim();
   if (!text || !_gvCurrentId) return;
+  const body = { text };
+  if (_gvReplyingTo) body.reply_to = _gvReplyingTo.id;
   try {
     const res = await fetch(`/api/todo/${_gvCurrentId}/comments`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({text})
+      body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error('Failed');
     input.value = '';
-    _gvLoadComments(_gvCurrentId);
+    _gvReplyingTo = null;
+    const bar = document.getElementById('gv-reply-bar');
+    if (bar) bar.style.display = 'none';
+    const t = _gvCache[_gvCurrentId];
+    _gvLoadComments(_gvCurrentId, t && t.status === 'done');
   } catch(e) { alert('Could not post comment.'); }
 }
 
