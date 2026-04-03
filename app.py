@@ -319,7 +319,7 @@ def _web_log_activity(action: str, todo: dict, user: dict, extra: str = ""):
     todo_id_val = todo.get('id', '?')
     embed = {
         "title":       f"📋 TODO #{todo_id_val} — {title_str}",
-        "url":         f"{SITE_URL}/board#todo-{todo_id_val}",
+        "url":         f"{SITE_URL}/todo/{todo_id_val}",
         "description": desc,
         "color":       color,
         "footer":      {"text": f"By {user_name} (web dashboard)"},
@@ -1317,6 +1317,45 @@ def board():
         user=sess.get("user"), access_level=sess.get("access_level", "public"),
         current_user_id=current_uid,
     )
+
+
+@app.route("/todo/<int:todo_id>")
+def todo_page(todo_id):
+    """Dedicated page for a single TODO — linked from Discord embeds."""
+    try:
+        todos, _   = gh_read(FILE_TODOS)
+        archive, _ = gh_read(FILE_TODOS_ARCHIVE)
+
+        # Search active todos first, then archive
+        todo = next((t for t in (todos or []) if t.get("id") == todo_id), None)
+        if not todo:
+            todo = next((t for t in (archive or []) if t.get("id") == todo_id), None)
+        if not todo:
+            return render_template("error.html", message=f"TODO #{todo_id} not found."), 404
+
+        todo = enrich_todo(todo)
+
+        # All active todos for sidebar navigation (newest first)
+        all_todos = sorted(
+            [enrich_todo(t) for t in (todos or [])],
+            key=lambda t: t.get("id", 0),
+            reverse=True,
+        )
+
+        sess = get_session()
+        current_uid = str(sess.get("user", {}).get("id", "")) if sess.get("user") else ""
+
+        return render_template(
+            "todo_page.html",
+            todo=todo,
+            all_todos=all_todos,
+            user=sess.get("user"),
+            access_level=sess.get("access_level", "public"),
+            current_user_id=current_uid,
+        )
+    except Exception as e:
+        print(f"[todo_page] Error loading todo #{todo_id}: {e}")
+        return render_template("error.html", message="Something went wrong loading this TODO."), 500
 
 @app.route("/analytics")
 @login_required
