@@ -60,28 +60,37 @@ FILE_MEMBERS       = "members.json"       # guild member snapshot synced from Di
 FILE_TODO_MEMBERS  = "todo_members.json"  # only is_todo_role=true members (small, always readable)
 
 # Member lookup cache (populated lazily from todo_members.json)
-_member_name_cache: dict = {}
-_member_cache_ts: float = 0
+_member_name_cache: dict     = {}   # id -> display_name (nick > global_name > username)
+_member_username_cache: dict = {}   # id -> raw discord username (stable @handle)
+_member_cache_ts: float      = 0
 _MEMBER_CACHE_TTL = 5 * 60  # 5 min
 
-def _resolve_user_display(user_id: str) -> str | None:
-    """
-    Look up a user's display name from todo_members.json.
-    Returns None if not found (caller should fall back to raw field).
-    """
-    global _member_name_cache, _member_cache_ts
-    if not user_id:
-        return None
+def _load_member_cache() -> None:
+    global _member_name_cache, _member_username_cache, _member_cache_ts
     now = time.time()
     if now - _member_cache_ts > _MEMBER_CACHE_TTL:
         try:
             db, _ = gh_read(FILE_TODO_MEMBERS)
             members = (db or {}).get("members") or []
-            _member_name_cache = {str(m["id"]): m.get("display_name") or m.get("global_name") or m.get("username") for m in members if m.get("id")}
+            _member_name_cache     = {str(m["id"]): m.get("display_name") or m.get("global_name") or m.get("username") for m in members if m.get("id")}
+            _member_username_cache = {str(m["id"]): m.get("username") for m in members if m.get("id")}
             _member_cache_ts = now
         except Exception:
             pass
+
+def _resolve_user_display(user_id: str) -> str | None:
+    """Look up display name (nick > global_name > username) from todo_members.json."""
+    if not user_id:
+        return None
+    _load_member_cache()
     return _member_name_cache.get(str(user_id))
+
+def _resolve_user_username(user_id: str) -> str | None:
+    """Look up the stable Discord username (@handle) from todo_members.json."""
+    if not user_id:
+        return None
+    _load_member_cache()
+    return _member_username_cache.get(str(user_id))
 
 # ── New feature files ────────────────────────────────────────────────────────
 FILE_COMMENTS       = "todo_comments.json"       # #1  Comments on TODOs
@@ -3448,24 +3457,28 @@ def enrich_todo(t):
     t["total_minutes"]    = sum(l.get("minutes",0) for l in t.get("time_logs",[]))
     # Comment count (loaded lazily — just flag)
 
-    # ── Resolve added_by display name from todo_members.json ──
+    # ── Resolve added_by display name + username from todo_members.json ──
     added_by_id = t.get("added_by_id")
     if added_by_id:
-        resolved = _resolve_user_display(str(added_by_id))
-        if resolved:
-            t["added_by_display"] = resolved
-        else:
-            raw = t.get("added_by") or ""
-            t["added_by_display"] = raw if raw and raw != "web" else None
+        resolved_display  = _resolve_user_display(str(added_by_id))
+        resolved_username = _resolve_user_username(str(added_by_id))
+        raw = t.get("added_by") or ""
+        t["added_by_display"]  = resolved_display  or (raw if raw and raw != "web" else None)
+        t["added_by_username"] = resolved_username or (raw if raw and not raw.isdigit() else None)
     else:
-        t["added_by_display"] = t.get("added_by") or None
+        t["added_by_display"]  = t.get("added_by") or None
+        t["added_by_username"] = t.get("added_by") or None
 
-    # ── Resolve assigned_to display name if missing ──
+    # ── Resolve assigned_to display name + username if missing ──
     assigned_id = t.get("assigned_to_id")
-    if assigned_id and not t.get("assigned_to_name"):
-        resolved = _resolve_user_display(str(assigned_id))
-        if resolved:
-            t["assigned_to_name"] = resolved
+    if assigned_id:
+        if not t.get("assigned_to_name"):
+            resolved = _resolve_user_display(str(assigned_id))
+            if resolved:
+                t["assigned_to_name"] = resolved
+        t["assigned_to_username"] = _resolve_user_username(str(assigned_id))
+    else:
+        t["assigned_to_username"] = None
 
     # ── Discord deep link for linked forum thread ──
     linked_thread = t.get("linked_forum_thread_id")
