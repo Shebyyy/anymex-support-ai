@@ -1217,7 +1217,9 @@ function _renderComment(c, todoId, depth) {
   const reactions = c.reactions || {};
   const reactChips = Object.entries(reactions).map(([emoji, users]) => {
     const mine = users.includes(CURRENT_UID);
-    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="vmToggleReaction('${todoId}','${c.id}','${emoji}')">${emoji} <span class="r-count">${users.length}</span></span>`;
+    const formattedEmoji = emoji.startsWith('<') ? `<img src="https://cdn.discordapp.com/emojis/${emoji.match(/:(\d+)>/)?.[1]}.${emoji.startsWith('<a:')?'gif':'png'}?v=1" alt="${emoji.split(':')[1]}" style="width:16px;height:16px;vertical-align:-3px;display:inline-block;pointer-events:none">` : emoji;
+    const safeEmoji = emoji.replace(/'/g, "\\'");
+    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="vmToggleReaction('${todoId}','${c.id}','${safeEmoji}')">${formattedEmoji} <span class="r-count">${users.length}</span></span>`;
   }).join('');
   const addReactBtn = `<span class="reaction-add-btn" onclick="vmOpenEmojiPicker(this,'${todoId}','${c.id}')" title="Add reaction">😊</span>`;
   const reactionRow = `<div class="reaction-row">${reactChips}${addReactBtn}</div>`;

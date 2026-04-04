@@ -81,8 +81,8 @@ function createMentionController() {
       const val    = ta.value;
       const pos    = ta.selectionStart;
       const before = val.slice(0, pos);
-      const m      = before.match(/@([\w.]*)$/);
-      if (!m) { _close(); return; }
+      const m      = before.match(/(?:^|\s)@([^@\n]{0,30})$/);
+      if (!m || m[1].endsWith(' ')) { _close(); return; }
       _query  = m[1];
       _active = true;
       clearTimeout(_debounce);
@@ -95,13 +95,14 @@ function createMentionController() {
     });
     ta.addEventListener('keydown', e => {
       if (!_active || !_results.length) return;
-      if (e.key === 'ArrowDown')  { e.preventDefault(); _idx = (_idx + 1) % _results.length; _render(); }
-      if (e.key === 'ArrowUp')    { e.preventDefault(); _idx = (_idx - 1 + _results.length) % _results.length; _render(); }
+      if (e.key === 'ArrowDown')  { e.preventDefault(); e.stopImmediatePropagation(); _idx = (_idx + 1) % _results.length; _render(); }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); e.stopImmediatePropagation(); _idx = (_idx - 1 + _results.length) % _results.length; _render(); }
       if (e.key === 'Enter' || e.key === 'Tab') {
-        if (_active && _results.length) { e.preventDefault(); e.stopPropagation(); _insert(_results[_idx]); }
+        // stopImmediatePropagation blocks the inline onkeydown submit handler from running
+        e.preventDefault(); e.stopImmediatePropagation(); _insert(_results[_idx]);
       }
-      if (e.key === 'Escape') _close();
-    });
+      if (e.key === 'Escape') { e.preventDefault(); _close(); }
+    }, { capture: true });
     ta.addEventListener('blur', () => setTimeout(_close, 160));
   }
 

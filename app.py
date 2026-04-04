@@ -2087,6 +2087,7 @@ def api_emojis_sync():
 
 
 
+@app.route("/api/notifications/mentions")
 def api_notifications_mentions():
     """
     Poll endpoint for @mention notifications.
@@ -2157,6 +2158,7 @@ def api_notify_mentions(todo_id):
 
 
 
+@app.route("/api/todo/<int:todo_id>/assign", methods=["POST"])
 def api_todo_assign(todo_id):
     """
     Self-assign / unassign endpoint for users with the TODO role (manager).
@@ -2494,6 +2496,74 @@ def api_comments_delete(todo_id, comment_id):
     comments[key] = thread
     gh_write(FILE_COMMENTS, comments, sha, f"Delete comment on TODO #{todo_id}")
     return jsonify({"ok": True})
+
+@app.route("/api/todo/<int:todo_id>/comments/<comment_id>/react", methods=["POST"])
+def api_comments_react(todo_id, comment_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    user = sess["user"]
+    uid = str(user.get("id"))
+    data = request.json or {}
+    emoji = data.get("emoji")
+    if not emoji:
+        return jsonify({"error": "Emoji required"}), 400
+
+    comments, sha = gh_read(FILE_COMMENTS, force=True)
+    comments = comments or {}
+    key = str(todo_id)
+    thread = comments.get(key, [])
+    comment = next((c for c in thread if c["id"] == comment_id), None)
+    if not comment:
+        return jsonify({"error": "Not found"}), 404
+
+    reactions = comment.get("reactions") or {}
+    users_with_emoji = reactions.get(emoji, [])
+    
+    if uid in users_with_emoji:
+        users_with_emoji.remove(uid)
+        if not users_with_emoji:
+            reactions.pop(emoji, None)
+        else:
+            reactions[emoji] = users_with_emoji
+    else:
+        users_with_emoji.append(uid)
+        reactions[emoji] = users_with_emoji
+
+    comment["reactions"] = reactions
+    gh_write(FILE_COMMENTS, comments, sha, f"React to comment on TODO #{todo_id}")
+    return jsonify({"ok": True, "reactions": reactions})
+
+@app.route("/api/todo/<int:todo_id>/comments/<comment_id>", methods=["PATCH"])
+def api_comments_patch(todo_id, comment_id):
+    sess = get_session()
+    if "user" not in sess:
+        return jsonify({"error": "Login required"}), 401
+    user = sess["user"]
+    uid = str(user.get("id"))
+    level = sess.get("access_level", "public")
+
+    data = request.json or {}
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "Text required"}), 400
+
+    comments, sha = gh_read(FILE_COMMENTS, force=True)
+    comments = comments or {}
+    key = str(todo_id)
+    thread = comments.get(key, [])
+    comment = next((c for c in thread if c["id"] == comment_id), None)
+    if not comment:
+        return jsonify({"error": "Not found"}), 404
+        
+    if comment["user_id"] != uid and level not in ("manager", "admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    comment["text"] = text
+    comment["edited"] = True
+    gh_write(FILE_COMMENTS, comments, sha, f"Edit comment on TODO #{todo_id}")
+    return jsonify({"ok": True})
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
