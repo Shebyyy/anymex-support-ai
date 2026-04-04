@@ -108,6 +108,7 @@ FILE_GITHUB_ISSUES  = "github_issues.json"       # #14 GitHub issues mirror
 FILE_ISSUE_LINKS    = "github_issue_links.json"  # #14 GitHub issue → TODO links
 FILE_RELEASES       = "releases.json"            # #22 Release notes
 FILE_BOT_HEALTH     = "bot_health.json"          # #25 Bot health monitor
+FILE_GUILD_EMOJIS   = "guild_emojis.json"        # Discord server custom emojis cache
 
 # GitHub repo to mirror issues from (AnymeX main repo)
 ANYMEX_OWNER = os.environ.get("ANYMEX_OWNER", "RyanYuuki")
@@ -1363,6 +1364,13 @@ def todo_page(todo_id):
         sess = get_session()
         current_uid = str(sess.get("user", {}).get("id", "")) if sess.get("user") else ""
 
+        # Load members for @mention autocomplete
+        members_db = _get_todo_members_db()
+        assignable_members = sorted(
+            members_db.get("members") or [],
+            key=lambda m: m.get("display_name", "").lower()
+        )
+
         return render_template(
             "todo_page.html",
             todo=todo,
@@ -1370,6 +1378,7 @@ def todo_page(todo_id):
             user=sess.get("user"),
             access_level=sess.get("access_level", "public"),
             current_user_id=current_uid,
+            assignable_members=assignable_members,
         )
     except Exception as e:
         print(f"[todo_page] Error loading todo #{todo_id}: {e}")
@@ -1777,6 +1786,9 @@ def api_me():
 MEMBERS_SYNC_TTL = 30 * 60   # re-sync from Discord every 30 minutes
 _members_syncing = False      # simple flag to avoid parallel syncs
 
+EMOJI_SYNC_TTL   = 10 * 24 * 60 * 60  # re-sync guild emojis every 10 days
+_emoji_syncing   = False
+
 
 def _build_avatar_url(uid: str, avatar_hash: str | None) -> str:
     if avatar_hash:
@@ -2060,7 +2072,176 @@ def api_members_sync():
     return jsonify({"ok": True, "message": "Member sync started in background"})
 
 
-@app.route("/api/todo/<int:todo_id>/assign", methods=["POST"])
+@app.route("/api/emojis")
+def api_guild_emojis():
+    """
+    Return all custom emojis from the Discord guild.
+    Stored persistently in guild_emojis.json (GitHub-backed DB).
+    Re-syncs from Discord only when data is older than EMOJI_SYNC_TTL (10 days).
+    No auth required — used client-side for the emoji picker.
+    """
+    db, _ = gh_read(FILE_GUILD_EMOJIS)
+    db = db or {}
+
+    last_synced = db.get("last_synced", "")
+    needs_sync  = True
+    if last_synced:
+        try:
+            age = (datetime.datetime.utcnow() -
+                   datetime.datetime.fromisoformat(last_synced)).total_seconds()
+            needs_sync = age > EMOJI_SYNC_TTL
+        except Exception:
+            needs_sync = True
+
+    # Kick off a background sync if stale, but still return cached data immediately
+    if needs_sync and DISCORD_BOT_TOKEN and DISCORD_GUILD_ID and not _emoji_syncing:
+        import threading as _t2
+        _t2.Thread(target=_sync_emojis_to_db, daemon=True).start()
+
+    return jsonify({"emojis": db.get("emojis", []), "last_synced": last_synced})
+
+
+def _sync_emojis_to_db():
+    """Fetch guild emojis from Discord and persist to guild_emojis.json."""
+    global _emoji_syncing
+    if _emoji_syncing:
+        return
+    _emoji_syncing = True
+    try:
+        _sync_emojis_to_db_inner()
+    except Exception as e:
+        print(f"[emoji_sync] Error: {e}")
+    finally:
+        _emoji_syncing = False
+
+
+def _sync_emojis_to_db_inner():
+    global _emoji_syncing
+    print("[emoji_sync] Fetching guild emojis from Discord…")
+    raw = bot_get(f"/guilds/{DISCORD_GUILD_ID}/emojis")
+    if raw is None:
+        print("[emoji_sync] Discord returned None — skipping write")
+        return
+
+    emojis = []
+    for e in (raw or []):
+        if not e.get("id") or not e.get("name"):
+            continue
+        animated = e.get("animated", False)
+        ext = "gif" if animated else "png"
+        emojis.append({
+            "id":       e["id"],
+            "name":     e["name"],
+            "animated": animated,
+            "url":      f"https://cdn.discordapp.com/emojis/{e['id']}.{ext}?size=32&quality=lossless",
+            "code":     f"<{'a' if animated else ''}:{e['name']}:{e['id']}>",
+        })
+
+    db, sha = gh_read(FILE_GUILD_EMOJIS, force=True)
+    db = db or {}
+
+    # Only write if anything actually changed (avoids unnecessary GitHub commits)
+    old_ids = {em["id"] for em in db.get("emojis", [])}
+    new_ids = {em["id"] for em in emojis}
+    if old_ids == new_ids and db.get("emojis"):
+        # Update only the timestamp, no emoji changes
+        db["last_synced"] = datetime.datetime.utcnow().isoformat()
+        gh_write(FILE_GUILD_EMOJIS, db, sha, "Emojis: heartbeat (no changes)")
+        print(f"[emoji_sync] No changes — {len(emojis)} emojis unchanged")
+        return
+
+    db["emojis"]      = emojis
+    db["last_synced"] = datetime.datetime.utcnow().isoformat()
+    db["guild_id"]    = DISCORD_GUILD_ID
+    gh_write(FILE_GUILD_EMOJIS, db, sha,
+             f"Emojis: sync {len(emojis)} guild emojis (+{len(new_ids-old_ids)} -{len(old_ids-new_ids)})")
+    print(f"[emoji_sync] Wrote {len(emojis)} emojis to {FILE_GUILD_EMOJIS}")
+
+
+
+@app.route("/api/emojis/sync", methods=["POST"])
+def api_emojis_sync():
+    """Force a guild emoji re-sync from Discord. Admin only."""
+    if get_session().get("access_level") not in ("admin", "owner"):
+        return jsonify({"error": "Forbidden"}), 403
+    if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
+        return jsonify({"error": "Bot token or guild ID not configured"}), 503
+    import threading as _t3
+    _t3.Thread(target=_sync_emojis_to_db, daemon=True).start()
+    return jsonify({"ok": True, "message": "Emoji sync started in background"})
+
+
+
+def api_notifications_mentions():
+    """
+    Poll endpoint for @mention notifications.
+    Returns mentions for the logged-in user since the given timestamp.
+    ?since=<unix_ms>
+    """
+    sess = get_session()
+    uid = str(sess.get("user", {}).get("id", "")) if sess.get("user") else ""
+    if not uid:
+        return jsonify({"mentions": []})
+    # In a full implementation this would query a notifications table.
+    # For now returns empty so the poller doesn't error.
+    return jsonify({"mentions": []})
+
+
+@app.route("/api/todo/<int:todo_id>/notify-mentions", methods=["POST"])
+def api_notify_mentions(todo_id):
+    """
+    Called client-side after a comment is posted with @mentions.
+    Fires bot DM notifications to mentioned users.
+    """
+    sess = get_session()
+    if not sess.get("user"):
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    usernames = data.get("usernames", [])
+    comment_text = data.get("comment_text", "")
+    if not usernames or not DISCORD_BOT_TOKEN:
+        return jsonify({"ok": True, "notified": 0})
+
+    # Look up user IDs from todo_members.json
+    db = _get_todo_members_db()
+    members = db.get("members") or []
+    notified = 0
+    sender = sess.get("user", {}).get("global_name") or sess.get("user", {}).get("username", "Someone")
+    for uname in usernames:
+        member = next((m for m in members if m.get("username", "").lower() == uname.lower()), None)
+        if not member:
+            continue
+        member_id = member.get("id")
+        if not member_id:
+            continue
+        try:
+            # Open DM channel
+            dm_resp = _requests.post(
+                "https://discord.com/api/v10/users/@me/channels",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"},
+                json={"recipient_id": str(member_id)},
+                timeout=5,
+            )
+            if dm_resp.status_code in (200, 201):
+                dm_channel_id = dm_resp.json().get("id")
+                todo_url = f"{request.host_url.rstrip('/')}/todo/{todo_id}"
+                msg = (f"🔔 **{_html.escape(sender)}** mentioned you in TODO #{todo_id}\n"
+                       f"> {_html.escape(comment_text[:120])}{'…' if len(comment_text)>120 else ''}\n"
+                       f"{todo_url}")
+                _requests.post(
+                    f"https://discord.com/api/v10/channels/{dm_channel_id}/messages",
+                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"},
+                    json={"content": msg},
+                    timeout=5,
+                )
+                notified += 1
+        except Exception as e:
+            print(f"[notify_mentions] DM to {uname} failed: {e}")
+
+    return jsonify({"ok": True, "notified": notified})
+
+
+
 def api_todo_assign(todo_id):
     """
     Self-assign / unassign endpoint for users with the TODO role (manager).

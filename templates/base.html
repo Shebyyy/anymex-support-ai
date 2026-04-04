@@ -206,6 +206,7 @@
     }
     .toast.success { border-color: var(--done); }
     .toast.error   { border-color: var(--blocked); }
+    .toast.info    { border-color: var(--accent); }
     @keyframes slideIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: none; } }
 
     /* ── Modal ── */
@@ -394,6 +395,11 @@
 </main>
 
 <div id="toast-container"></div>
+
+{# Embedded member list for instant @mention autocomplete — no API call needed #}
+{% if assignable_members is defined and assignable_members %}
+<script id="mention-members-data" type="application/json">{{ assignable_members | tojson }}</script>
+{% endif %}
 
 <!-- ── Global Quick-View Modal (available on every page) ── -->
 <div class="modal-overlay" id="gv-modal" onclick="this.classList.remove('open')">
@@ -864,8 +870,10 @@ function _escapeHtml(s) {
 function renderMarkdown(text) {
   if (!text || typeof marked === 'undefined') return _escapeHtml(text || '');
   try {
-    // Highlight @mentions before markdown parse
-    const withMentions = String(text).replace(/@([\w.]+)/g, '<span class="mention">@$1</span>');
+    // Decode HTML entities that may have been stored (e.g. from dataset.raw)
+    const decoded = text.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+    // Highlight @mentions before markdown parse (username or display.name format)
+    const withMentions = decoded.replace(/@([\w.]+)/g, '<span class="mention">@$1</span>');
     return marked.parse(withMentions);
   } catch(e) { return _escapeHtml(text); }
 }
@@ -885,13 +893,38 @@ function attachKbShortcuts(taId, wrapFn) {
 }
 
 // ─── @mention autocomplete ──────────────────────────────────────────────────
-// Returns a controller; call .attach(textarea, wrapContainer, onInsert)
+// Embedded member list injected by the server — instant, no API call needed.
+// Falls back to /api/members/search if not available.
+const _MENTION_MEMBERS = (function() {
+  try {
+    const el = document.getElementById('mention-members-data');
+    if (el) return JSON.parse(el.textContent);
+  } catch(e) {}
+  return null; // will use API fallback
+})();
+
 function createMentionController() {
   let _active = false, _idx = 0, _results = [], _query = '', _ta = null, _container = null, _onInsert = null;
 
+  // Search: uses embedded JSON first (instant), falls back to API
   async function _search(q) {
+    const lower = q.toLowerCase();
+    if (_MENTION_MEMBERS && _MENTION_MEMBERS.length) {
+      // Instant local search — username, display_name, nick, global_name all matched
+      return _MENTION_MEMBERS.filter(m => {
+        const hay = [
+          m.username        || '',
+          m.display_name    || '',
+          m.global_name     || '',
+          m.nick            || '',
+        ].join(' ').toLowerCase();
+        return hay.includes(lower);
+      }).slice(0, 8);
+    }
+    // API fallback (when member data wasn't embedded)
     try {
-      const res = await fetch(`/api/members/search?q=${encodeURIComponent(q)}`);
+      const url = q ? `/api/members/search?q=${encodeURIComponent(q)}` : `/api/members/search?q=a`;
+      const res  = await fetch(url);
       const data = await res.json();
       return Array.isArray(data) ? data : (data.results || []);
     } catch { return []; }
@@ -900,11 +933,20 @@ function createMentionController() {
   function _render() {
     let el = _container.querySelector('.mention-dropdown');
     if (!_results.length) { if (el) el.remove(); return; }
-    if (!el) { el = document.createElement('div'); el.className = 'mention-dropdown'; _container.appendChild(el); }
-    el.innerHTML = _results.map((m,i) => `
-      <div class="mention-item ${i===_idx?'active':''}" data-i="${i}">
-        <img src="${m.avatar_url||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"/>
-        <div><div class="m-name">${_escapeHtml(m.display_name)}</div><div class="m-uname">@${_escapeHtml(m.username)}</div></div>
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'mention-dropdown';
+      _container.appendChild(el);
+    }
+    el.innerHTML = _results.map((m, i) => `
+      <div class="mention-item ${i === _idx ? 'active' : ''}" data-i="${i}">
+        <img src="${m.avatar_url || 'https://cdn.discordapp.com/embed/avatars/0.png'}"
+             onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"/>
+        <div>
+          <div class="m-name">${_escapeHtml(m.display_name || m.username)}</div>
+          <div class="m-uname">@${_escapeHtml(m.username)}</div>
+        </div>
+        ${m.is_admin ? '<span class="m-badge admin">Admin</span>' : m.is_manager ? '<span class="m-badge mgr">Manager</span>' : ''}
       </div>`).join('');
     el.querySelectorAll('.mention-item').forEach(item => {
       item.addEventListener('mousedown', e => { e.preventDefault(); _insert(_results[+item.dataset.i]); });
@@ -913,11 +955,11 @@ function createMentionController() {
 
   function _insert(m) {
     if (!_ta) return;
-    const val = _ta.value;
-    const pos = _ta.selectionStart;
+    const val   = _ta.value;
+    const pos   = _ta.selectionStart;
     const before = val.slice(0, pos);
-    const atPos = before.lastIndexOf('@');
-    const after = val.slice(pos);
+    const atPos  = before.lastIndexOf('@');
+    const after  = val.slice(pos);
     _ta.value = before.slice(0, atPos) + '@' + m.username + ' ' + after;
     const newPos = atPos + m.username.length + 2;
     _ta.selectionStart = _ta.selectionEnd = newPos;
@@ -935,28 +977,33 @@ function createMentionController() {
   let _debounce;
   function attach(ta, container, onInsert) {
     _ta = ta; _container = container; _onInsert = onInsert;
-    ta.addEventListener('input', async () => {
-      const val = ta.value, pos = ta.selectionStart;
+    ta.addEventListener('input', () => {
+      const val    = ta.value;
+      const pos    = ta.selectionStart;
       const before = val.slice(0, pos);
-      const m = before.match(/@([\w.]*)$/);
+      const m      = before.match(/@([\w.]*)$/);
       if (!m) { _close(); return; }
-      _query = m[1]; _active = true;
+      _query  = m[1];
+      _active = true;
       clearTimeout(_debounce);
+      // Show immediately for bare "@", debounce typed queries
+      const delay = _query.length === 0 ? 0 : 180;
       _debounce = setTimeout(async () => {
-        _results = (await _search(_query)).slice(0, 6);
-        _idx = 0; _render();
-      }, 220);
+        _results = await _search(_query);
+        _idx = 0;
+        _render();
+      }, delay);
     });
     ta.addEventListener('keydown', e => {
       if (!_active || !_results.length) return;
-      if (e.key === 'ArrowDown')  { e.preventDefault(); _idx = (_idx+1) % _results.length; _render(); }
-      if (e.key === 'ArrowUp')    { e.preventDefault(); _idx = (_idx-1+_results.length) % _results.length; _render(); }
+      if (e.key === 'ArrowDown')  { e.preventDefault(); _idx = (_idx + 1) % _results.length; _render(); }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); _idx = (_idx - 1 + _results.length) % _results.length; _render(); }
       if (e.key === 'Enter' || e.key === 'Tab') {
         if (_active && _results.length) { e.preventDefault(); e.stopPropagation(); _insert(_results[_idx]); }
       }
       if (e.key === 'Escape') _close();
     });
-    ta.addEventListener('blur', () => setTimeout(_close, 150));
+    ta.addEventListener('blur', () => setTimeout(_close, 160));
   }
 
   return { attach };
@@ -964,6 +1011,18 @@ function createMentionController() {
 
 // ─── Emoji reactions ────────────────────────────────────────────────────────
 const QUICK_EMOJIS = ['👍','❤️','🔥','✅','😂','😮','🎉','👀'];
+
+// Full emoji set organized by category (Discord-style)
+const EMOJI_CATEGORIES = [
+  { label: '⚡ Quick', emojis: ['👍','❤️','🔥','✅','😂','😮','🎉','👀','💯','🙏','👏','🤝'] },
+  { label: '😀 Faces', emojis: ['😀','😁','😂','🤣','😃','😄','😅','😆','😊','😇','🙂','🙃','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥸','😎','🤓','🧐','😕','😟','🙁','☹️','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿'] },
+  { label: '👍 Hands', emojis: ['👍','👎','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👋','🤚','🖐️','✋','🖖','👏','🙌','🤲','🤜','🤛','✊','👊','🤝','🙏','✍️','💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🫀','🫁','🧠','🦷','🦴','👀','👁','👅','👄','💋'] },
+  { label: '❤️ Hearts', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','❤️‍🔥','❤️‍🩹','💔','💕','💞','💓','💗','💖','💘','💝','💟','♥️','💌','💋'] },
+  { label: '🎉 Celebrate', emojis: ['🎉','🎊','🥳','🎈','🎁','🎀','🥂','🍾','🎆','🎇','✨','⭐','🌟','💫','🏆','🥇','🥈','🥉','🏅','🎖','🎗','🎫','🎟','🎪','🎭','🎨','🎬','🎤','🎧','🎼','🎹','🎸','🎺','🎻','🥁','🎷'] },
+  { label: '🔥 Hype', emojis: ['🔥','💥','⚡','🌊','🌪','🌈','☀️','⭐','🌙','❄️','💨','🌸','🌺','🍀','🌿','🦋','🐉','🦄','👑','💎','🚀','💡','🔑','⚔️','🛡','🎯','💯','✅','❌','⚠️','🆙','🆒','🆕','🔝','💢','💬','💭','🗯'] },
+  { label: '🐶 Animals', emojis: ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐔','🐧','🐦','🦆','🦅','🦉','🦇','🐺','🐗','🦝','🦙','🦘','🦡','🦨','🦦','🦥','🐿','🦔','🐾','🐲','🐉','🌵','🎄','🌲','🌳','🐬','🐋','🦈','🐙','🦑','🦐','🦞','🦀','🦞'] },
+  { label: '🍕 Food', emojis: ['🍕','🍔','🌮','🌯','🥙','🧆','🍳','🥞','🧇','🥓','🍖','🍗','🥩','🍠','🥚','🧀','🥗','🥘','🍲','🍜','🍝','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥮','🍡','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥤','🧃','☕','🍵','🧋','🍺','🍻','🥂','🍷'] },
+];
 
 function renderReactions(reactions, commentId, currentUid, onToggle) {
   if (!reactions || !Object.keys(reactions).length) return '';
@@ -978,22 +1037,236 @@ function renderReactions(reactions, commentId, currentUid, onToggle) {
   return chips;
 }
 
-function openEmojiPicker(anchorEl, commentId, onPick) {
-  document.querySelectorAll('.emoji-picker-popup').forEach(p=>p.remove());
-  const picker = document.createElement('div');
-  picker.className = 'emoji-picker-popup';
-  QUICK_EMOJIS.forEach(emoji => {
-    const span = document.createElement('span');
-    span.textContent = emoji;
-    span.title = emoji;
-    span.onclick = (e) => { e.stopPropagation(); onPick(commentId, emoji); picker.remove(); };
-    picker.appendChild(span);
-  });
-  const rect = anchorEl.getBoundingClientRect();
-  picker.style.cssText = `position:fixed;top:${rect.top - 52}px;left:${rect.left}px`;
-  document.body.appendChild(picker);
-  setTimeout(() => document.addEventListener('click', () => picker.remove(), {once:true}), 10);
+// Cache for Discord server emojis — persists for the browser session
+let _discordEmojisCache = null;
+async function _loadDiscordEmojis() {
+  if (_discordEmojisCache !== null) return _discordEmojisCache;
+
+  // Try sessionStorage first (survives page navigation, cleared on tab close)
+  try {
+    const stored = sessionStorage.getItem('anymex_guild_emojis');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // sessionStorage copy is valid for 1 hour
+      if (parsed._ts && (Date.now() - parsed._ts) < 3600000) {
+        _discordEmojisCache = parsed.emojis || [];
+        return _discordEmojisCache;
+      }
+    }
+  } catch(e) {}
+
+  // Fetch from server (which reads from persistent guild_emojis.json)
+  try {
+    const res  = await fetch('/api/emojis');
+    const data = await res.json();
+    _discordEmojisCache = data.emojis || [];
+    // Store in sessionStorage for this browser session
+    try {
+      sessionStorage.setItem('anymex_guild_emojis', JSON.stringify({
+        emojis: _discordEmojisCache,
+        _ts: Date.now(),
+      }));
+    } catch(e) {}
+  } catch(e) {
+    _discordEmojisCache = [];
+  }
+  return _discordEmojisCache;
 }
+// Preload on page load so picker opens instantly
+_loadDiscordEmojis();
+
+function openEmojiPicker(anchorEl, commentId, onPick) {
+  document.querySelectorAll('.emoji-picker-popup').forEach(p => p.remove());
+
+  const picker = document.createElement('div');
+  picker.className = 'emoji-picker-popup emoji-picker-full';
+
+  // Search bar
+  const searchWrap = document.createElement('div');
+  searchWrap.className = 'ep-search-wrap';
+  const searchInput = document.createElement('input');
+  searchInput.placeholder = '🔍 Search emojis…';
+  searchInput.className = 'ep-search';
+  searchWrap.appendChild(searchInput);
+  picker.appendChild(searchWrap);
+
+  // Category tabs (will add Discord tab if server has emojis)
+  const tabs = document.createElement('div');
+  tabs.className = 'ep-tabs';
+  picker.appendChild(tabs);
+
+  // Grid area
+  const grid = document.createElement('div');
+  grid.className = 'ep-grid';
+  picker.appendChild(grid);
+
+  // Build all categories including Discord server emojis
+  let _allCategories = [...EMOJI_CATEGORIES];
+  let _activeCatIdx  = 0;
+
+  function _renderTabBar() {
+    tabs.innerHTML = '';
+    _allCategories.forEach((cat, ci) => {
+      const tab = document.createElement('button');
+      tab.className = 'ep-tab' + (ci === _activeCatIdx ? ' active' : '');
+      tab.title = cat.label;
+      // Discord server category uses an img, others use emoji char
+      if (cat.serverEmojis) {
+        tab.innerHTML = '<span style="font-size:.7rem;font-weight:700">Server</span>';
+      } else {
+        tab.textContent = cat.emojis[0];
+      }
+      tab.onclick = (e) => {
+        e.stopPropagation();
+        _activeCatIdx = ci;
+        _renderTabBar();
+        _renderCategory(ci);
+      };
+      tabs.appendChild(tab);
+    });
+  }
+
+  function _renderCategory(ci) {
+    const cat = _allCategories[ci];
+    grid.innerHTML = '';
+    if (cat.serverEmojis) {
+      // Discord custom emojis — rendered as <img>
+      cat.serverEmojis.forEach(e => {
+        const span = document.createElement('span');
+        span.className = 'ep-emoji ep-discord-emoji';
+        span.title     = `:${e.name}:`;
+        span.innerHTML = `<img src="${e.url}" alt=":${e.name}:" style="width:22px;height:22px;object-fit:contain;display:block">`;
+        span.onclick   = (ev) => { ev.stopPropagation(); onPick(commentId, e.animated ? `<a:${e.name}:${e.id}>` : `<:${e.name}:${e.id}>`); picker.remove(); };
+        grid.appendChild(span);
+      });
+      if (!cat.serverEmojis.length) {
+        grid.innerHTML = '<div style="padding:16px;font-size:.8rem;color:var(--muted);text-align:center">No server emojis found</div>';
+      }
+    } else {
+      cat.emojis.forEach(emoji => {
+        const span = document.createElement('span');
+        span.className   = 'ep-emoji';
+        span.textContent = emoji;
+        span.title       = emoji;
+        span.onclick     = (e) => { e.stopPropagation(); onPick(commentId, emoji); picker.remove(); };
+        grid.appendChild(span);
+      });
+    }
+  }
+
+  // Search across all categories
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.toLowerCase().trim();
+    if (!q) { _renderCategory(_activeCatIdx); return; }
+    grid.innerHTML = '';
+    // Unicode emojis
+    const allUnicode = _allCategories.filter(c => !c.serverEmojis).flatMap(c => c.emojis);
+    [...new Set(allUnicode)].forEach(emoji => {
+      const span = document.createElement('span');
+      span.className   = 'ep-emoji';
+      span.textContent = emoji;
+      span.onclick     = (e) => { e.stopPropagation(); onPick(commentId, emoji); picker.remove(); };
+      grid.appendChild(span);
+    });
+    // Discord emojis matching name
+    const serverCat = _allCategories.find(c => c.serverEmojis);
+    if (serverCat) {
+      serverCat.serverEmojis.filter(e => e.name.toLowerCase().includes(q)).forEach(e => {
+        const span = document.createElement('span');
+        span.className = 'ep-emoji ep-discord-emoji';
+        span.title     = `:${e.name}:`;
+        span.innerHTML = `<img src="${e.url}" alt=":${e.name}:" style="width:22px;height:22px;object-fit:contain;display:block">`;
+        span.onclick   = (ev) => { ev.stopPropagation(); onPick(commentId, e.animated ? `<a:${e.name}:${e.id}>` : `<:${e.name}:${e.id}>`); picker.remove(); };
+        grid.appendChild(span);
+      });
+    }
+  });
+
+  // Inject Discord server emojis if available
+  const discordEmojis = _discordEmojisCache || [];
+  if (discordEmojis.length > 0) {
+    _allCategories = [
+      { label: '🖥 Server', serverEmojis: discordEmojis },
+      ...EMOJI_CATEGORIES,
+    ];
+    _activeCatIdx = 0;
+  }
+  _renderTabBar();
+  _renderCategory(_activeCatIdx);
+
+  // Async: if emojis not yet loaded, load then refresh
+  if (_discordEmojisCache === null) {
+    _loadDiscordEmojis().then(emojis => {
+      if (!emojis.length) return;
+      _allCategories = [
+        { label: '🖥 Server', serverEmojis: emojis },
+        ...EMOJI_CATEGORIES,
+      ];
+      _renderTabBar();
+      _renderCategory(_activeCatIdx);
+    });
+  }
+
+  // Smart positioning
+  document.body.appendChild(picker);
+  const rect = anchorEl.getBoundingClientRect();
+  const ph   = picker.offsetHeight || 300;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const top  = spaceBelow > ph + 10 ? rect.bottom + 6 : rect.top - ph - 6;
+  let left   = rect.left;
+  if (left + 300 > window.innerWidth) left = window.innerWidth - 310;
+  picker.style.cssText += `;position:fixed;top:${Math.max(8,top)}px;left:${Math.max(8,left)}px`;
+
+  searchInput.focus();
+  setTimeout(() => document.addEventListener('click', (e) => { if (!picker.contains(e.target)) picker.remove(); }, { once: true }), 10);
+}
+
+// ─── @mention notifications ─────────────────────────────────────────────────
+// Request push permission once on load (used for mention alerts)
+function _requestNotifPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+_requestNotifPermission();
+
+function notifyMention(mentionedBy, todoTitle, todoId) {
+  // In-app toast
+  toast(`🔔 ${mentionedBy} mentioned you in TODO #${todoId}`, 'info');
+  // Browser push notification — clicking opens the specific TODO
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      const todoUrl = `${window.location.origin}/todo/${todoId}`;
+      const n = new Notification(`${mentionedBy}`, {
+        body: `${todoTitle}`,
+        icon: '/favicon.ico',
+        tag: `anymex-mention-${todoId}`,
+        requireInteraction: false,
+      });
+      n.onclick = () => {
+        window.focus();
+        window.location.href = todoUrl;
+        n.close();
+      };
+      setTimeout(() => n.close(), 10000);
+    } catch(e) {}
+  }
+}
+
+// Poll for new mention notifications every 60s
+(function startMentionPoller() {
+  let _lastCheck = Date.now();
+  async function _poll() {
+    try {
+      const r = await fetch(`/api/notifications/mentions?since=${_lastCheck}`);
+      if (!r.ok) return;
+      const data = await r.json();
+      _lastCheck = Date.now();
+      (data.mentions || []).forEach(m => notifyMention(m.mentioned_by, m.todo_title, m.todo_id));
+    } catch(e) {}
+  }
+  setInterval(_poll, 60000);
+})();
 
 // ─── Paste image → base64 helper ────────────────────────────────────────────
 function attachPasteImage(ta, previewContainer, onImageChange) {
@@ -1106,19 +1379,46 @@ function hasUnread(todoId, latestTs) {
 }
 .reaction-add-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-/* Emoji picker popup */
-.emoji-picker-popup {
-  position: absolute; z-index: 300;
+/* Emoji picker popup — full Discord-style */
+.emoji-picker-popup { position: fixed; z-index: 9000; }
+.emoji-picker-full {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; padding: 8px;
-  box-shadow: 0 8px 30px rgba(0,0,0,.5);
-  display: flex; gap: 4px; flex-wrap: wrap; max-width: 200px;
+  border-radius: 12px; padding: 0; width: 300px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.65);
+  overflow: hidden; display: flex; flex-direction: column;
+  max-height: 320px;
 }
-.emoji-picker-popup span {
-  font-size: 1.1rem; cursor: pointer; padding: 3px 5px; border-radius: 5px;
-  transition: background .1s; line-height: 1;
+.ep-search-wrap { padding: 8px 10px 6px; border-bottom: 1px solid var(--border); }
+.ep-search {
+  width: 100%; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 5px 9px;
+  font-size: .8rem; font-family: var(--sans); outline: none;
 }
-.emoji-picker-popup span:hover { background: var(--surface2); }
+.ep-search:focus { border-color: var(--accent); }
+.ep-tabs {
+  display: flex; gap: 2px; padding: 5px 8px; border-bottom: 1px solid var(--border);
+  overflow-x: auto; flex-shrink: 0;
+}
+.ep-tabs::-webkit-scrollbar { display: none; }
+.ep-tab {
+  background: transparent; border: none; cursor: pointer; padding: 4px 5px;
+  border-radius: 5px; font-size: .95rem; line-height: 1; transition: background .1s;
+  flex-shrink: 0;
+}
+.ep-tab:hover { background: var(--surface2); }
+.ep-tab.active { background: rgba(88,101,242,0.18); }
+.ep-grid {
+  display: flex; flex-wrap: wrap; gap: 1px; padding: 7px 8px;
+  overflow-y: auto; flex: 1;
+}
+.ep-emoji {
+  font-size: 1.15rem; cursor: pointer; padding: 4px; border-radius: 5px;
+  transition: background .1s; line-height: 1; user-select: none;
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+}
+.ep-emoji:hover { background: var(--surface2); transform: scale(1.15); }
+.ep-discord-emoji img { pointer-events: none; }
 
 /* ══════════════════════════════════════
    @MENTION AUTOCOMPLETE
@@ -1137,6 +1437,12 @@ function hasUnread(todoId, latestTs) {
 .mention-item img { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; }
 .mention-item .m-name { font-size: .82rem; font-weight: 600; color: var(--text); }
 .mention-item .m-uname { font-size: .7rem; color: var(--muted); font-family: var(--mono); }
+.mention-item .m-badge {
+  margin-left: auto; font-size: .62rem; padding: 1px 6px; border-radius: 4px;
+  font-weight: 700; letter-spacing: .03em; flex-shrink: 0;
+}
+.mention-item .m-badge.admin { background: rgba(226,75,74,.12); color: var(--blocked); }
+.mention-item .m-badge.mgr  { background: rgba(29,158,117,.12); color: var(--done); }
 
 /* ══════════════════════════════════════
    COMMENT EDIT MODE
