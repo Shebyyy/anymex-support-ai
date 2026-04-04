@@ -1922,7 +1922,16 @@ def api_members_search():
 
     q = request.args.get("q", "").strip().lower()
     if not q:
-        return jsonify([])
+        db = _get_todo_members_db()
+        members = db.get("members") or []
+        return jsonify([{
+            "id":           m["id"],
+            "username":     m["username"],
+            "display_name": m["display_name"],
+            "avatar_url":   m["avatar_url"],
+            "is_admin":     m.get("is_admin", False),
+            "is_manager":   True,
+        } for m in members[:15]])
 
     db = _get_todo_members_db()
     members = db.get("members") or []
@@ -2494,6 +2503,37 @@ def api_comments_delete(todo_id, comment_id):
     comments[key] = thread
     gh_write(FILE_COMMENTS, comments, sha, f"Delete comment on TODO #{todo_id}")
     return jsonify({"ok": True})
+
+
+@app.route("/api/todo/<int:todo_id>/comments/<comment_id>/react", methods=["POST"])
+@login_required
+def api_comment_react(todo_id, comment_id):
+    """Toggle an emoji reaction on a comment. Writes to FILE_COMMENTS."""
+    sess = get_session()
+    uid = str(sess["user"].get("id", ""))
+    emoji = (request.json or {}).get("emoji", "").strip()
+    if not emoji or not uid:
+        return jsonify({"error": "Bad request"}), 400
+
+    comments, sha = gh_read(FILE_COMMENTS, force=True)
+    comments = comments or {}
+    thread = comments.get(str(todo_id), [])
+
+    for c in thread:
+        if c["id"] == comment_id:
+            reactions = c.setdefault("reactions", {})
+            users = reactions.setdefault(emoji, [])
+            if uid in users:
+                users.remove(uid)   # toggle off
+            else:
+                users.append(uid)   # toggle on
+            if not users:
+                del reactions[emoji]
+            gh_write(FILE_COMMENTS, comments, sha,
+                     f"Reaction {emoji} on comment {comment_id} by {sess['user'].get('username', '?')}")
+            return jsonify({"ok": True, "reactions": c["reactions"]})
+
+    return jsonify({"error": "Comment not found"}), 404
 
 
 # ══════════════════════════════════════════════════════════════════════════════

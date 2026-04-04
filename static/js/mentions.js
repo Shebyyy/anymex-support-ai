@@ -23,7 +23,7 @@ function createMentionController() {
       }).slice(0, 8);
     }
     try {
-      const url = q ? `/api/members/search?q=${encodeURIComponent(q)}` : `/api/members/search?q=a`;
+      const url = `/api/members/search?q=${encodeURIComponent(q || '')}`;
       const res  = await fetch(url);
       const data = await res.json();
       return Array.isArray(data) ? data : (data.results || []);
