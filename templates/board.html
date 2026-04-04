@@ -561,25 +561,54 @@
       <button class="btn btn-danger btn-sm" id="vm-delete-btn" onclick="deleteFromView()">🗑 Delete</button>
       {% endif %}
     </div>
-    <div id="vm-comments-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div style="font-size:0.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">💬 Comments</div>
-        <div id="vm-comment-count" style="font-size:0.72rem;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:10px"></div>
-      </div>
-      <div id="vm-comments-list" style="display:flex;flex-direction:column;gap:0;margin-bottom:14px"></div>
-      <div id="vm-reply-bar" style="display:none;align-items:center;gap:8px;padding:5px 10px;margin-bottom:6px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--accent)">
-        <span id="vm-reply-label" style="font-size:0.78rem;color:var(--muted);flex:1"></span>
-        <button onclick="cancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.8rem;line-height:1;padding:2px 4px">✕</button>
-      </div>
-      <div style="display:flex;gap:8px;align-items:flex-end">
-        <div style="flex:1">
-          <textarea class="form-control" id="vm-comment-input" placeholder="Write a comment… (Enter to send, Shift+Enter for new line)" rows="2"
-            style="resize:none;line-height:1.5;border-radius:10px"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();postComment()}"></textarea>
+      <div id="vm-comments-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-size:0.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">💬 Comments</div>
+          <div id="vm-comment-count" style="font-size:0.72rem;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:10px"></div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="postComment()" style="height:38px;padding:0 14px;border-radius:10px">↑</button>
+        <!-- Comment search -->
+        <div class="comment-search-bar" style="margin-bottom:4px">
+          <input class="comment-search-input" id="vm-comment-search" type="text"
+            placeholder="🔍 Search comments…" oninput="vmOnSearchInput()" />
+        </div>
+        <div id="vm-comments-list" style="display:flex;flex-direction:column;gap:0;margin-bottom:14px"></div>
+        <div id="vm-reply-bar" style="display:none;align-items:center;gap:8px;padding:5px 10px;margin-bottom:6px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--accent)">
+          <span id="vm-reply-label" style="font-size:0.78rem;color:var(--muted);flex:1"></span>
+          <button onclick="cancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.8rem;line-height:1;padding:2px 4px">✕</button>
+        </div>
+        <!-- Polished comment input box -->
+        <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;transition:border-color .15s;position:relative" onfocusin="this.style.borderColor='var(--accent)'" onfocusout="this.style.borderColor='var(--border)'">
+          <!-- image paste preview -->
+          <div id="vm-img-preview" style="padding:0 11px"></div>
+          <div id="vm-preview-pane" class="md-preview-pane md-body" style="padding:9px 11px;display:none"></div>
+          <textarea class="form-control" id="vm-comment-input"
+            placeholder="Write a comment… **bold**, _italic_, `code`, @mention"
+            rows="2"
+            style="resize:none;line-height:1.5;border:none;border-radius:0;background:transparent;outline:none;padding:9px 11px;font-size:.84rem;color:var(--text);font-family:var(--sans);width:100%"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();postComment()}"
+            oninput="vmUpdatePreview()"></textarea>
+          <div style="display:flex;align-items:center;gap:4px;padding:4px 8px 6px;border-top:1px solid var(--border)">
+            <button class="tp-tool-btn" title="Bold (Ctrl+B)" onclick="vmWrap('**','**')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background .1s,color .1s">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M3.5 2h4a2.5 2.5 0 010 5H3.5V2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M3.5 7h4.5a2.5 2.5 0 010 5H3.5V7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="tp-tool-btn" title="Italic (Ctrl+I)" onclick="vmWrap('_','_')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background .1s,color .1s">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><line x1="9" y1="2" x2="5" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="6" y1="2" x2="11" y2="2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="3" y1="12" x2="8" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            </button>
+            <button class="tp-tool-btn" title="Code (Ctrl+`)" onclick="vmWrap('\`','\`')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background .1s,color .1s">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><polyline points="4,4 1,7 4,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="10,4 13,7 10,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div style="width:1px;height:13px;background:var(--border);margin:0 2px"></div>
+            <button id="vm-preview-btn" class="md-preview-toggle" onclick="vmTogglePreview()" title="Toggle preview" style="font-size:.68rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;border:none;background:transparent;transition:background .1s,color .1s">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z" stroke="currentColor" stroke-width="1.1"/><circle cx="6" cy="6" r="1.5" stroke="currentColor" stroke-width="1.1"/></svg>
+              Preview
+            </button>
+            <span style="margin-left:auto;font-size:.68rem;color:var(--muted)">↵ send · ⇧↵ newline</span>
+            <button onclick="postComment()" title="Send comment" style="width:28px;height:28px;border-radius:50%;border:none;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background .15s,transform .1s;margin-left:4px" onmouseover="this.style.background='var(--accent2)'" onmouseout="this.style.background='var(--accent)'" onmousedown="this.style.transform='scale(0.93)'" onmouseup="this.style.transform=''">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 11V2M2 6l4.5-4.5L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
     {% endif %}
   </div>
 </div>
@@ -678,47 +707,7 @@ function setView(v) {
   if (v === 'kanban') _buildKanban();
 }
 
-function _buildKanban() {
-  const cols   = ['todo','in_progress','review_needed','blocked'];
-  const groups = { todo:[], in_progress:[], review_needed:[], blocked:[] };
-  _TODOS.forEach(t => { if (groups[t.status]) groups[t.status].push(t); });
-
-  cols.forEach(status => {
-    const body  = document.getElementById('k-col-' + status);
-    const count = document.getElementById('k-count-' + status);
-    const col   = body.closest('.kanban-col');
-    const items = groups[status];
-    count.textContent = items.length;
-    if (col) col.style.display = items.length ? '' : 'none';
-    if (!items.length) { body.innerHTML = ''; return; }
-    body.innerHTML = items.map((t, i) => {
-      const tags = (t.tags||[]).slice(0,2).map(tg=>`<span class="tag">${tg}</span>`).join('');
-      const due  = t.due_urgency && t.due_urgency !== 'done'
-        ? `<span class="due-badge due-${t.due_urgency}">${t.due_label}</span>` : '';
-      const assignee = t.assigned_to_id
-        ? `<a href="/member/${t.assigned_to_id}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
-            <img src="${t.assigned_to_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
-            <span style="display:flex;flex-direction:column;line-height:1">
-              <span style="font-size:.62rem;font-weight:600;color:var(--text)">${t.assigned_to_name||t.assigned_to_username||'Member'}</span>
-              ${t.assigned_to_username?`<span style="font-size:.56rem;color:var(--muted);font-family:var(--mono)">@${t.assigned_to_username}</span>`:''}
-            </span>
-          </a>` : '';
-      const desc = t.ai_description
-        ? `<div class="kanban-card-desc">${t.ai_description}</div>` : '';
-      return `<div class="kanban-card" style="animation-delay:${i*0.04}s" onclick="viewTodoById(${t.id})">
-        <div class="kanban-card-id" style="display:flex;align-items:center;gap:6px">#${t.id}${t.auto_generated?' <span class="ai-badge" style="vertical-align:middle">✦ AI</span>':''}<span style="margin-left:auto">${assignee}</span></div>
-        <div class="kanban-card-title">${t.title}</div>
-        ${desc}
-        <div class="kanban-card-footer">
-          <span class="pri-icon pri-${t.priority||'medium'}" style="font-size:0.75rem">${PRI_ICONS[t.priority||'medium']}</span>
-          ${tags}${due}
-        </div>
-      </div>`;
-    }).join('');
-  });
-}
-
-// Init view
+// ── Init view ────────────────────────────────────────────────────────────────
 setView(_currentView);
 
 // ── Bulk selection ────────────────────────────────────────────────────────────
@@ -905,6 +894,7 @@ function viewTodo(t) {
   if (publicBtn) { publicBtn.textContent = isPublic?'🌐 Public (hide)':'🔒 Private (publish)'; publicBtn.style.color = isPublic?'var(--done)':'var(--muted)'; }
 
   document.getElementById('view-modal').classList.add('open');
+  _vmResetPreview();
 }
 
 // ── Add / Edit modal ──────────────────────────────────────────────────────────
@@ -1113,7 +1103,7 @@ function _renderComment(c, todoId, depth) {
         <span style="font-size:.71rem;color:var(--muted)">${_relativeTime(c.ts)}</span>
         ${replyBtn}${delBtn}
       </div>
-      <div style="font-size:.83rem;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word">${_esc(c.text)}</div>
+      <div class="md-body">${renderMarkdown(c.text)}</div>
     </div>
   </div>`;
 }
@@ -1151,7 +1141,176 @@ function _resetReplyBar() {
   const bar = document.getElementById('vm-reply-bar');
   const inp = document.getElementById('vm-comment-input');
   if (bar) bar.style.display='none';
-  if (inp) inp.placeholder='Write a comment… (Enter to send, Shift+Enter for new line)';
+  if (inp) inp.placeholder='Write a comment… **bold**, _italic_, `code`, @mention';
+}
+
+// ── Board popup markdown helpers ──
+let _vmPreviewMode = false;
+let _vmPastedImg   = null;
+
+function vmWrap(before, after) {
+  const ta = document.getElementById('vm-comment-input');
+  if (!ta || ta.style.display === 'none') return;
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  const sel = ta.value.slice(s, e) || 'text';
+  ta.value = ta.value.slice(0,s) + before + sel + after + ta.value.slice(e);
+  ta.focus();
+  ta.selectionStart = s + before.length;
+  ta.selectionEnd   = s + before.length + sel.length;
+  vmUpdatePreview();
+}
+
+function vmUpdatePreview() {
+  const inp  = document.getElementById('vm-comment-input');
+  const pane = document.getElementById('vm-preview-pane');
+  if (!pane || !_vmPreviewMode) return;
+  pane.innerHTML = renderMarkdown(inp?.value || '');
+}
+
+function vmTogglePreview() {
+  _vmPreviewMode = !_vmPreviewMode;
+  const inp  = document.getElementById('vm-comment-input');
+  const pane = document.getElementById('vm-preview-pane');
+  const btn  = document.getElementById('vm-preview-btn');
+  if (!pane || !inp) return;
+  if (_vmPreviewMode) {
+    pane.style.display = 'block';
+    pane.innerHTML = renderMarkdown(inp.value || '');
+    inp.style.display = 'none';
+    if (btn) btn.classList.add('active');
+  } else {
+    pane.style.display = 'none';
+    inp.style.display = '';
+    inp.focus();
+    if (btn) btn.classList.remove('active');
+  }
+}
+
+function _vmResetPreview() {
+  if (_vmPreviewMode) vmTogglePreview();
+  _vmPastedImg = null;
+  const prev = document.getElementById('vm-img-preview');
+  if (prev) prev.innerHTML = '';
+}
+
+// ── Comment search ────────────────────────────────────────────────────────────
+let _vmSearchTimer;
+function vmOnSearchInput() {
+  clearTimeout(_vmSearchTimer);
+  _vmSearchTimer = setTimeout(() => loadComments(_currentViewId), 280);
+}
+
+// ── Comment rendering ─────────────────────────────────────────────────────────
+let _vmEditingId = null;
+
+function _renderComment(c, todoId, depth) {
+  const indent = Math.min(depth,3)*32;
+  const sz     = depth===0?'28px':'22px';
+  if (c.deleted) return `<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0 4px;${indent?'margin-left:'+indent+'px':''}"><div style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div><span style="font-size:.8rem;color:var(--muted);font-style:italic">[comment deleted]</span></div>`;
+  const canDel  = CURRENT_UID===c.user_id||['manager','admin','owner'].includes(ACCESS_LEVEL);
+  const canEdit = CURRENT_UID===c.user_id;
+  const delBtn  = canDel  ? `<button data-cid="${c.id}" data-tid="${todoId}" onclick="deleteComment(this.dataset.tid,this.dataset.cid)" class="del-comment-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">✕</button>` : '';
+  const editBtn = canEdit ? `<button onclick="vmStartEdit('${c.id}',${todoId})" class="edit-comment-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">✏️</button>` : '';
+  const replyBtn= `<button onclick="startReply('${c.id}','${_esc(c.user_name)}')" class="reply-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">↩ Reply</button>`;
+
+  // Reactions
+  const reactions = c.reactions || {};
+  const reactChips = Object.entries(reactions).map(([emoji, users]) => {
+    const mine = users.includes(CURRENT_UID);
+    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="vmToggleReaction('${todoId}','${c.id}','${emoji}')">${emoji} <span class="r-count">${users.length}</span></span>`;
+  }).join('');
+  const addReactBtn = `<span class="reaction-add-btn" onclick="vmOpenEmojiPicker(this,'${todoId}','${c.id}')" title="Add reaction">😊</span>`;
+  const reactionRow = `<div class="reaction-row">${reactChips}${addReactBtn}</div>`;
+  const imgHtml = c.image_data ? `<div style="margin-top:5px"><img src="${c.image_data}" style="max-height:100px;max-width:180px;border-radius:7px;border:1px solid var(--border);display:block"/></div>` : '';
+
+  return `<div id="vmc-wrap-${c.id}" style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${indent?'margin-left:'+indent+'px':''}" onmouseenter="this.querySelectorAll('.del-comment-btn,.reply-btn,.edit-comment-btn').forEach(b=>b.style.opacity=1)" onmouseleave="this.querySelectorAll('.del-comment-btn,.reply-btn,.edit-comment-btn').forEach(b=>b.style.opacity=0)">
+    <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px"/>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+        <span style="font-size:${depth===0?'0.8':'0.77'}rem;font-weight:700;color:var(--text)">${_esc(c.user_name)}</span>
+        <span style="font-size:.71rem;color:var(--muted)" title="${c.ts}">${_relativeTime(c.ts)}</span>
+        ${c.edited?'<span style="font-size:.68rem;color:var(--muted);font-style:italic">(edited)</span>':''}
+        ${replyBtn}${editBtn}${delBtn}
+      </div>
+      <div id="vmc-body-${c.id}" class="md-body" data-raw="${_esc(c.text)}">${renderMarkdown(c.text)}</div>
+      ${imgHtml}
+      ${reactionRow}
+    </div>
+  </div>`;
+}
+
+async function loadComments(todoId) {
+  const list    = document.getElementById('vm-comments-list');
+  const countEl = document.getElementById('vm-comment-count');
+  if (!list) return;
+  _replyingTo = null; _resetReplyBar();
+  const search = document.getElementById('vm-comment-search')?.value?.toLowerCase() || '';
+  try {
+    const all      = await (await fetch(`/api/todo/${todoId}/comments`)).json();
+    let filtered   = search ? all.filter(c=>(c.text||'').toLowerCase().includes(search)||(c.user_name||'').toLowerCase().includes(search)) : all;
+    const topLevel = all.filter(c=>!c.reply_to);
+    const fTop     = filtered.filter(c=>!c.reply_to);
+    const repCount = all.length - topLevel.length;
+    if (countEl) countEl.textContent = all.length ? `${topLevel.length} comment${topLevel.length!==1?'s':''}${repCount?` · ${repCount} repl${repCount!==1?'ies':'y'}`:'' }` : '';
+    if (!filtered.length) {
+      list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:.82rem"><div style="font-size:1.4rem;margin-bottom:4px">💬</div>${search?'No comments match your search.':'No comments yet — be the first!'}</div>`;
+      return;
+    }
+    const childMap = {};
+    all.forEach(c => { if (c.reply_to) { (childMap[c.reply_to]=childMap[c.reply_to]||[]).push(c); } });
+    function thread(c, d) { let h=_renderComment(c,todoId,d); (childMap[c.id]||[]).forEach(ch=>{ h+=thread(ch,d+1); }); return h; }
+    list.innerHTML = fTop.map((c,i)=>`<div style="${i>0?'border-top:1px solid var(--border)':''}">${thread(c,0)}</div>`).join('');
+
+    // Unread badge on view-modal trigger cards
+    if (all.length) {
+      const latestTs = all.reduce((mx,c)=>c.ts>mx?c.ts:mx,'');
+      markCommentsRead(todoId, Date.now());
+    }
+  } catch(e) { if(list) list.innerHTML=''; }
+}
+
+// ── Comment edit ──────────────────────────────────────────────────────────────
+async function vmStartEdit(commentId, todoId) {
+  const bodyEl = document.getElementById(`vmc-body-${commentId}`);
+  if (!bodyEl) return;
+  const rawText = bodyEl.dataset.raw || bodyEl.innerText;
+  bodyEl.innerHTML = `
+    <textarea class="comment-edit-area" id="vm-edit-ta-${commentId}">${_esc(rawText)}</textarea>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <button class="btn btn-primary btn-sm" onclick="vmSaveEdit('${commentId}',${todoId})">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="vmCancelEdit('${commentId}','${_esc(rawText)}')">Cancel</button>
+    </div>`;
+  const ta = document.getElementById(`vm-edit-ta-${commentId}`);
+  if (ta) { ta.style.height = ta.scrollHeight+'px'; ta.focus(); ta.selectionStart=ta.value.length; }
+}
+
+async function vmSaveEdit(commentId, todoId) {
+  const ta = document.getElementById(`vm-edit-ta-${commentId}`);
+  const text = ta?.value?.trim();
+  if (!text) return;
+  try {
+    const r = await api('PATCH',`/api/todo/${todoId}/comments/${commentId}`,{text});
+    loadComments(todoId);
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function vmCancelEdit(commentId, rawText) {
+  const bodyEl = document.getElementById(`vmc-body-${commentId}`);
+  if (bodyEl) bodyEl.innerHTML = renderMarkdown(decodeURIComponent(rawText.replace(/&#(\d+);/g,(_,c)=>String.fromCharCode(c))));
+}
+
+// ── Reactions (board popup) ───────────────────────────────────────────────────
+async function vmToggleReaction(todoId, commentId, emoji) {
+  try {
+    await api('POST',`/api/todo/${todoId}/comments/${commentId}/react`,{emoji});
+    loadComments(todoId);
+  } catch(e) {}
+}
+
+function vmOpenEmojiPicker(btn, todoId, commentId) {
+  openEmojiPicker(btn, commentId, async (cid, emoji) => {
+    await vmToggleReaction(todoId, cid, emoji);
+  });
 }
 
 async function deleteComment(todoId, commentId) {
@@ -1163,13 +1322,118 @@ async function deleteComment(todoId, commentId) {
 async function postComment() {
   const inp  = document.getElementById('vm-comment-input');
   const text = (inp?.value||'').trim();
-  if (!text || !_currentViewId) return;
+  if (!text && !_vmPastedImg || !_currentViewId) return;
   const body = {text};
   if (_replyingTo) body.reply_to = _replyingTo.id;
+  if (_vmPastedImg) body.image_data = _vmPastedImg.data;
+
+  // Optimistic insert
+  const list = document.getElementById('vm-comments-list');
+  const fakeId = 'vm-opt-' + Date.now();
+  const fakeHtml = `<div id="vmc-wrap-${fakeId}" style="opacity:.45;border-top:1px solid var(--border)">
+    <div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);flex-shrink:0"></div>
+      <div style="flex:1"><div class="md-body">${renderMarkdown(text)}</div></div>
+    </div></div>`;
+  list?.insertAdjacentHTML('beforeend', fakeHtml);
+  list && (list.scrollTop = list.scrollHeight);
+
+  inp.value=''; _replyingTo=null; _resetReplyBar();
+  if (_vmPreviewMode) vmTogglePreview();
+  _vmPastedImg = null;
+  const prev = document.getElementById('vm-img-preview');
+  if (prev) prev.innerHTML = '';
+
   try {
     await api('POST',`/api/todo/${_currentViewId}/comments`,body);
-    inp.value=''; _replyingTo=null; _resetReplyBar(); loadComments(_currentViewId);
-  } catch(e) { toast(e.message,'error'); }
+    loadComments(_currentViewId);
+  } catch(e) {
+    document.getElementById(`vmc-wrap-${fakeId}`)?.remove();
+    toast(e.message,'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// DRAG & DROP KANBAN
+// ═══════════════════════════════════════════════════
+let _dragId = null;
+
+function _buildKanban() {
+  const cols   = ['todo','in_progress','review_needed','blocked'];
+  const groups = { todo:[], in_progress:[], review_needed:[], blocked:[] };
+  _TODOS.forEach(t => { if (groups[t.status]) groups[t.status].push(t); });
+
+  cols.forEach(status => {
+    const body  = document.getElementById('k-col-' + status);
+    const count = document.getElementById('k-count-' + status);
+    const col   = body.closest('.kanban-col');
+    const items = groups[status];
+    count.textContent = items.length;
+    if (col) col.style.display = items.length ? '' : 'none';
+    if (!items.length) { body.innerHTML = ''; _setupDropZone(body, status); return; }
+    body.innerHTML = items.map((t, i) => {
+      const tags = (t.tags||[]).slice(0,2).map(tg=>`<span class="tag">${tg}</span>`).join('');
+      const due  = t.due_urgency && t.due_urgency !== 'done'
+        ? `<span class="due-badge due-${t.due_urgency}">${t.due_label}</span>` : '';
+      const assignee = t.assigned_to_id
+        ? `<a href="/member/${t.assigned_to_id}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
+            <img src="${t.assigned_to_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
+            <span style="display:flex;flex-direction:column;line-height:1">
+              <span style="font-size:.62rem;font-weight:600;color:var(--text)">${t.assigned_to_name||t.assigned_to_username||'Member'}</span>
+              ${t.assigned_to_username?`<span style="font-size:.56rem;color:var(--muted);font-family:var(--mono)">@${t.assigned_to_username}</span>`:''}
+            </span>
+          </a>` : '';
+      const desc = t.ai_description
+        ? `<div class="kanban-card-desc">${t.ai_description}</div>` : '';
+      return `<div class="kanban-card" draggable="true" data-id="${t.id}" style="animation-delay:${i*0.04}s"
+        onclick="viewTodoById(${t.id})"
+        ondragstart="onKanbanDragStart(event,${t.id})"
+        ondragend="onKanbanDragEnd(event)">
+        <div class="kanban-card-id" style="display:flex;align-items:center;gap:6px">#${t.id}${t.auto_generated?' <span class="ai-badge" style="vertical-align:middle">✦ AI</span>':''}<span style="margin-left:auto">${assignee}</span></div>
+        <div class="kanban-card-title">${t.title}</div>
+        ${desc}
+        <div class="kanban-card-footer">
+          <span class="pri-icon pri-${t.priority||'medium'}" style="font-size:0.75rem">${PRI_ICONS[t.priority||'medium']}</span>
+          ${tags}${due}
+        </div>
+      </div>`;
+    }).join('');
+    _setupDropZone(body, status);
+  });
+}
+
+function _setupDropZone(el, status) {
+  el.addEventListener('dragover', e => {
+    e.preventDefault(); el.classList.add('drag-over');
+  });
+  el.addEventListener('dragleave', e => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
+  });
+  el.addEventListener('drop', async e => {
+    e.preventDefault(); el.classList.remove('drag-over');
+    if (!_dragId) return;
+    const todo = _TODOS_MAP[_dragId];
+    if (!todo || todo.status === status) return;
+    // Optimistic update
+    todo.status = status;
+    _buildKanban();
+    try {
+      await api('PATCH', `/api/todo/${_dragId}`, {status});
+      toast(`Moved to ${STATUS_LABELS[status]}`);
+    } catch(e) { toast(e.message,'error'); setTimeout(()=>location.reload(),800); }
+    _dragId = null;
+  });
+}
+
+function onKanbanDragStart(e, id) {
+  _dragId = id;
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function onKanbanDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.kanban-col-body').forEach(b=>b.classList.remove('drag-over'));
 }
 
 // ── Misc ──────────────────────────────────────────────────────────────────────
@@ -1178,6 +1442,40 @@ document.addEventListener('click', e => {
   const wrap = document.getElementById('em-assign-input-wrap');
   if (wrap && !wrap.contains(e.target)) document.getElementById('em-member-results').style.display='none';
 });
+
+// Init comment input features when view modal opens
+(function initCommentInput() {
+  // We re-init after modal is opened (lazy — first time viewTodo is called)
+  const origViewTodo = window.viewTodo;
+  // Keyboard shortcuts + @mention + paste — wire up once
+  let _commentInputInited = false;
+  function _initInput() {
+    if (_commentInputInited) return;
+    const ta = document.getElementById('vm-comment-input');
+    if (!ta) return;
+    _commentInputInited = true;
+    // Keyboard shortcuts
+    attachKbShortcuts(ta, vmWrap);
+    // @mention
+    const container = ta.closest('[style*="position:relative"]') || ta.parentElement;
+    const mc = createMentionController();
+    mc.attach(ta, container, vmUpdatePreview);
+    // Image paste
+    const prevEl = document.getElementById('vm-img-preview');
+    attachPasteImage(ta, prevEl, (data, type) => {
+      _vmPastedImg = data ? {data, type} : null;
+    });
+  }
+  // Hook into view modal open
+  document.getElementById('view-modal')?.addEventListener('transitionend', _initInput);
+  document.getElementById('view-modal')?.addEventListener('animationend', _initInput);
+  // Fallback: init after short delay when modal first opens
+  const origViewTodoById = window.viewTodoById;
+  window.viewTodoById = function(id) {
+    origViewTodoById(id);
+    setTimeout(_initInput, 100);
+  };
+})();
 
 // Auto-open from ?highlight= URL param
 (async function() {

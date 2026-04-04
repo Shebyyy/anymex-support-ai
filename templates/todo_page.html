@@ -289,33 +289,52 @@
         <span class="tp-panel-label">Comments</span>
         <span class="tp-comment-count" id="tp-count"></span>
       </div>
+      <!-- Comment search -->
+      <div style="padding:6px 16px 0;flex-shrink:0">
+        <div class="comment-search-bar">
+          <input class="comment-search-input" id="tp-comment-search" type="text"
+            placeholder="🔍 Search comments…"
+            oninput="tpOnSearchInput()" />
+        </div>
+      </div>
       <div class="tp-comment-list" id="tp-comment-list">
         <p style="font-size:.8rem;color:var(--muted);padding:12px 0">Loading…</p>
       </div>
       {% if user %}
       {% if not is_done %}
       <div class="tp-panel-footer">
-        <div class="tp-input-outer">
+        <div class="tp-input-outer" style="position:relative">
           <div id="tp-reply-bar" class="tp-reply-bar">
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M9 1L1 5l4 1 1 4 3-9z" fill="var(--accent2)"/></svg>
             <span id="tp-reply-label"></span>
             <button onclick="tpCancelReply()">✕</button>
           </div>
+          <!-- Image paste preview -->
+          <div id="tp-img-preview" style="padding:0 11px"></div>
+          <!-- Preview pane -->
+          <div id="tp-preview-pane" class="md-preview-pane md-body"></div>
           <textarea id="tp-input" class="tp-comment-input" rows="1"
-            placeholder="Write a comment…"
+            placeholder="Write a comment… **bold**, _italic_, `code`, @mention"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();tpPostComment();}"
-            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"></textarea>
+            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px';tpUpdatePreview()"></textarea>
           <div class="tp-input-toolbar">
-            <button class="tp-tool-btn" title="Bold" onclick="tpWrap('**','**')">
+            <button class="tp-tool-btn" title="Bold (Ctrl+B)" onclick="tpWrap('**','**')">
               <svg viewBox="0 0 14 14" fill="none"><path d="M3.5 2h4a2.5 2.5 0 010 5H3.5V2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M3.5 7h4.5a2.5 2.5 0 010 5H3.5V7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
             </button>
-            <button class="tp-tool-btn" title="Italic" onclick="tpWrap('_','_')">
+            <button class="tp-tool-btn" title="Italic (Ctrl+I)" onclick="tpWrap('_','_')">
               <svg viewBox="0 0 14 14" fill="none"><line x1="9" y1="2" x2="5" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="6" y1="2" x2="11" y2="2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="3" y1="12" x2="8" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
             </button>
-            <button class="tp-tool-btn" title="Code" onclick="tpWrap('`','`')">
+            <button class="tp-tool-btn" title="Code (Ctrl+`)" onclick="tpWrap('`','`')">
               <svg viewBox="0 0 14 14" fill="none"><polyline points="4,4 1,7 4,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="10,4 13,7 10,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
+            <button class="tp-tool-btn" title="Blockquote" onclick="tpWrap('> ','')">
+              <svg viewBox="0 0 14 14" fill="none"><path d="M2 4h3v4H2V4zm7 0h3v4H9V4zm-4 4c0 2 1.5 3 3 3m-7 0c0 2 1.5 3 3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            </button>
             <div class="tp-toolbar-sep"></div>
+            <button id="tp-preview-btn" class="md-preview-toggle" onclick="tpTogglePreview()" title="Toggle preview">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z" stroke="currentColor" stroke-width="1.1"/><circle cx="6" cy="6" r="1.5" stroke="currentColor" stroke-width="1.1"/></svg>
+              Preview
+            </button>
             <span class="tp-send-hint">↵ send · ⇧↵ newline</span>
             <button class="tp-send-btn" onclick="tpPostComment()" title="Send">
               <svg viewBox="0 0 13 13" fill="none"><path d="M6.5 11V2M2 6l4.5-4.5L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -498,8 +517,40 @@ const TP_UID     = "{{ current_user_id }}";
 const TP_LEVEL   = "{{ access_level }}";
 const TP_IS_DONE = {{ 'true' if is_done else 'false' }};
 
-let _tpReplyingTo = null;
+// ── State ────────────────────────────────────────────────────────────────────
+let _tpReplyingTo  = null;
+let _tpPreviewMode = false;
+let _tpPastedImg   = null;   // { data, type }
+let _tpEditingId   = null;
 
+// ── Markdown preview ─────────────────────────────────────────────────────────
+function tpUpdatePreview() {
+  const inp  = document.getElementById('tp-input');
+  const pane = document.getElementById('tp-preview-pane');
+  if (!pane || !_tpPreviewMode) return;
+  pane.innerHTML = renderMarkdown(inp?.value || '');
+}
+
+function tpTogglePreview() {
+  _tpPreviewMode = !_tpPreviewMode;
+  const inp  = document.getElementById('tp-input');
+  const pane = document.getElementById('tp-preview-pane');
+  const btn  = document.getElementById('tp-preview-btn');
+  if (!pane || !inp) return;
+  if (_tpPreviewMode) {
+    pane.classList.add('visible');
+    pane.innerHTML = renderMarkdown(inp.value || '');
+    inp.style.display = 'none';
+    if (btn) btn.classList.add('active');
+  } else {
+    pane.classList.remove('visible');
+    inp.style.display = '';
+    inp.focus();
+    if (btn) btn.classList.remove('active');
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
 function _tpEsc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -515,7 +566,7 @@ function _tpRelTime(ts) {
   } catch(e) { return ts; }
 }
 
-// Panel switcher
+// ── Panel switcher ────────────────────────────────────────────────────────────
 function tpShowPanel(name) {
   ['comments','details','activity'].forEach(p => {
     const panel = document.getElementById('panel-'+p);
@@ -523,65 +574,24 @@ function tpShowPanel(name) {
     if (panel) panel.classList.toggle('visible', p===name);
     if (btn)   btn.classList.toggle('active', p===name);
   });
+  // Mark comments read when switching to comments
+  if (name === 'comments') markCommentsRead(TP_TODO_ID, Date.now());
 }
 
-// Formatting helpers
+// ── Formatting helpers ────────────────────────────────────────────────────────
 function tpWrap(before, after) {
   const ta = document.getElementById('tp-input');
-  if (!ta) return;
+  if (!ta || ta.style.display === 'none') return;
   const s = ta.selectionStart, e = ta.selectionEnd;
   const sel = ta.value.slice(s, e) || 'text';
   ta.value = ta.value.slice(0,s) + before + sel + after + ta.value.slice(e);
   ta.focus();
   ta.selectionStart = s + before.length;
   ta.selectionEnd   = s + before.length + sel.length;
+  tpUpdatePreview();
 }
 
-// Humanise activity timestamps on load
-document.querySelectorAll('[data-ts]').forEach(el => {
-  el.textContent = _tpRelTime(el.dataset.ts);
-});
-
-function _tpRenderComment(c, depth) {
-  const indent = Math.min(depth,3)*30;
-  const sz     = depth===0?'28px':'22px';
-  const style  = indent?`margin-left:${indent}px`:'';
-  if (c.deleted) return `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;${style}"><div style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div><span style="font-size:.82rem;color:var(--muted);font-style:italic;padding-top:2px">[comment deleted]</span></div>`;
-  const canDel = (TP_UID===c.user_id||['manager','admin','owner'].includes(TP_LEVEL))&&!TP_IS_DONE;
-  const delBtn = canDel?`<button onclick="tpDeleteComment('${c.id}')" title="Delete" class="tp-del" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">✕</button>`:'';
-  const repBtn = !TP_IS_DONE?`<button onclick="tpStartReply('${c.id}','${_tpEsc(c.user_name)}')" class="tp-reply-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">↩ Reply</button>`:'';
-  return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${style}" onmouseenter="this.querySelectorAll('.tp-del,.tp-reply-btn').forEach(b=>b.style.opacity=1)" onmouseleave="this.querySelectorAll('.tp-del,.tp-reply-btn').forEach(b=>b.style.opacity=0)">
-    <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px"/>
-    <div style="flex:1;min-width:0">
-      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px;flex-wrap:wrap">
-        <span style="font-size:${depth===0?'0.82':'0.77'}rem;font-weight:700;color:var(--text)">${_tpEsc(c.user_name)}</span>
-        <span style="font-size:.71rem;color:var(--muted)">${_tpRelTime(c.ts)}</span>
-        ${repBtn}${delBtn}
-      </div>
-      <div style="font-size:.84rem;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word">${_tpEsc(c.text)}</div>
-    </div>
-  </div>`;
-}
-
-async function tpLoadComments() {
-  const list    = document.getElementById('tp-comment-list');
-  const countEl = document.getElementById('tp-count');
-  try {
-    const all      = await (await fetch(`/api/todo/${TP_TODO_ID}/comments`)).json();
-    const topLevel = all.filter(c=>!c.reply_to);
-    const repCount = all.length - topLevel.length;
-    if (countEl) countEl.textContent = all.length ? `${topLevel.length} comment${topLevel.length!==1?'s':''}${repCount?` · ${repCount} repl${repCount!==1?'ies':'y'}`:'' }` : '';
-    if (!all.length) {
-      list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:.82rem"><div style="font-size:1.4rem;margin-bottom:4px">💬</div>${TP_IS_DONE?'No comments.':'No comments yet — be the first!'}</div>`;
-      return;
-    }
-    const childMap = {};
-    all.forEach(c=>{ if(c.reply_to){(childMap[c.reply_to]=childMap[c.reply_to]||[]).push(c);} });
-    function thread(c,d){ let h=_tpRenderComment(c,d); (childMap[c.id]||[]).forEach(ch=>{ h+=thread(ch,d+1); }); return h; }
-    list.innerHTML = topLevel.map((c,i)=>`<div style="${i>0?'border-top:1px solid var(--border)':''}">${thread(c,0)}</div>`).join('');
-  } catch(e) { list.innerHTML='<p style="color:var(--muted);font-size:.8rem;padding:8px 0">Could not load comments.</p>'; }
-}
-
+// ── Reply ─────────────────────────────────────────────────────────────────────
 function tpStartReply(id, name) {
   _tpReplyingTo = {id, user_name:name};
   const bar = document.getElementById('tp-reply-bar');
@@ -597,33 +607,205 @@ function tpCancelReply() {
   const bar = document.getElementById('tp-reply-bar');
   const inp = document.getElementById('tp-input');
   if (bar) bar.style.display='none';
-  if (inp) inp.placeholder='Write a comment…';
+  if (inp) inp.placeholder='Write a comment… **bold**, _italic_, `code`, @mention';
 }
 
+// ── Comment rendering ─────────────────────────────────────────────────────────
+function _tpRenderComment(c, depth) {
+  const indent = Math.min(depth,3)*30;
+  const sz     = depth===0?'28px':'22px';
+  const style  = indent?`margin-left:${indent}px`:'';
+  if (c.deleted) return `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;${style}"><div style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div><span style="font-size:.82rem;color:var(--muted);font-style:italic;padding-top:2px">[comment deleted]</span></div>`;
+
+  const canDel  = (TP_UID===c.user_id||['manager','admin','owner'].includes(TP_LEVEL))&&!TP_IS_DONE;
+  const canEdit = TP_UID===c.user_id && !TP_IS_DONE;
+  const delBtn  = canDel  ? `<button onclick="tpDeleteComment('${c.id}')" title="Delete" class="tp-del" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">✕</button>` : '';
+  const editBtn = canEdit ? `<button onclick="tpStartEdit('${c.id}',this)" title="Edit" class="tp-edit-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">✏️</button>` : '';
+  const repBtn  = !TP_IS_DONE ? `<button onclick="tpStartReply('${c.id}','${_tpEsc(c.user_name)}')" class="tp-reply-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">↩ Reply</button>` : '';
+
+  // Reactions
+  const reactions = c.reactions || {};
+  const reactChips = Object.entries(reactions).map(([emoji, users]) => {
+    const mine = users.includes(TP_UID);
+    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="tpToggleReaction('${c.id}','${emoji}')">${emoji} <span class="r-count">${users.length}</span></span>`;
+  }).join('');
+  const addReactBtn = !TP_IS_DONE ? `<span class="reaction-add-btn" onclick="tpOpenEmojiPicker(this,'${c.id}')" title="Add reaction">😊</span>` : '';
+  const reactionRow = `<div class="reaction-row">${reactChips}${addReactBtn}</div>`;
+
+  // Image attachment
+  const imgHtml = c.image_data ? `<div style="margin-top:5px"><img src="${c.image_data}" style="max-height:120px;max-width:220px;border-radius:8px;border:1px solid var(--border);display:block" /></div>` : '';
+
+  return `<div id="c-wrap-${c.id}" style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${style}" onmouseenter="this.querySelectorAll('.tp-del,.tp-reply-btn,.tp-edit-btn').forEach(b=>b.style.opacity=1)" onmouseleave="this.querySelectorAll('.tp-del,.tp-reply-btn,.tp-edit-btn').forEach(b=>b.style.opacity=0)">
+    <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px"/>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+        <span style="font-size:${depth===0?'0.82':'0.77'}rem;font-weight:700;color:var(--text)">${_tpEsc(c.user_name)}</span>
+        <span style="font-size:.71rem;color:var(--muted)" title="${c.ts}">${_tpRelTime(c.ts)}</span>
+        ${c.edited?'<span style="font-size:.68rem;color:var(--muted);font-style:italic">(edited)</span>':''}
+        ${repBtn}${editBtn}${delBtn}
+      </div>
+      <div id="c-body-${c.id}" class="md-body">${renderMarkdown(c.text)}</div>
+      ${imgHtml}
+      ${reactionRow}
+    </div>
+  </div>`;
+}
+
+// ── Load comments ─────────────────────────────────────────────────────────────
+async function tpLoadComments(silent=false) {
+  const list    = document.getElementById('tp-comment-list');
+  const countEl = document.getElementById('tp-count');
+  const search  = document.getElementById('tp-comment-search')?.value?.toLowerCase() || '';
+  if (!silent) list.innerHTML = '<p style="font-size:.8rem;color:var(--muted);padding:8px 0">Loading…</p>';
+  try {
+    const all      = await (await fetch(`/api/todo/${TP_TODO_ID}/comments`)).json();
+    let filtered   = search ? all.filter(c => (c.text||'').toLowerCase().includes(search) || (c.user_name||'').toLowerCase().includes(search)) : all;
+    const topLevel = all.filter(c=>!c.reply_to);
+    const fTopLevel= filtered.filter(c=>!c.reply_to);
+    const repCount = all.length - topLevel.length;
+
+    if (countEl) countEl.textContent = all.length
+      ? `${topLevel.length} comment${topLevel.length!==1?'s':''}${repCount?` · ${repCount} repl${repCount!==1?'ies':'y'}`:''}`
+      : '';
+
+    // Update unread badge
+    if (all.length) {
+      const latestTs = all.reduce((mx,c)=>c.ts>mx?c.ts:mx, '');
+      const railBtn = document.getElementById('rail-comments');
+      if (railBtn && hasUnread(TP_TODO_ID, latestTs)) {
+        if (!railBtn.querySelector('.unread-dot')) {
+          const dot = document.createElement('span');
+          dot.className = 'unread-dot';
+          railBtn.appendChild(dot);
+        }
+      }
+    }
+
+    if (!filtered.length) {
+      list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:.82rem"><div style="font-size:1.4rem;margin-bottom:4px">💬</div>${search?'No comments match your search.':TP_IS_DONE?'No comments.':'No comments yet — be the first!'}</div>`;
+      return;
+    }
+    const childMap = {};
+    all.forEach(c=>{ if(c.reply_to){(childMap[c.reply_to]=childMap[c.reply_to]||[]).push(c);} });
+    function thread(c,d){ let h=_tpRenderComment(c,d); (childMap[c.id]||[]).forEach(ch=>{ h+=thread(ch,d+1); }); return h; }
+    list.innerHTML = fTopLevel.map((c,i)=>`<div style="${i>0?'border-top:1px solid var(--border)':''}">${thread(c,0)}</div>`).join('');
+
+    markCommentsRead(TP_TODO_ID, Date.now());
+    document.getElementById('rail-comments')?.querySelector('.unread-dot')?.remove();
+  } catch(e) { list.innerHTML='<p style="color:var(--muted);font-size:.8rem;padding:8px 0">Could not load comments.</p>'; }
+}
+
+// ── Post comment (optimistic) ─────────────────────────────────────────────────
+async function tpPostComment() {
+  const inp  = document.getElementById('tp-input');
+  const text = (inp?.value||'').trim();
+  if (!text && !_tpPastedImg) return;
+  const body = {text};
+  if (_tpReplyingTo) body.reply_to = _tpReplyingTo.id;
+  if (_tpPastedImg)  body.image_data = _tpPastedImg.data;
+
+  // Optimistic: inject immediately
+  const list = document.getElementById('tp-comment-list');
+  const fakeId = 'optimistic-' + Date.now();
+  const fakeComment = {
+    id: fakeId, text, user_id: TP_UID,
+    user_name: '{{ user.display_name if user else "You" }}',
+    user_avatar: '{{ user.avatar_url if user else "" }}',
+    ts: new Date().toISOString(), deleted: false,
+    reactions: {}, image_data: _tpPastedImg?.data || null,
+  };
+  const fakeHtml = `<div id="c-wrap-${fakeId}" style="opacity:.5;border-top:1px solid var(--border)">${_tpRenderComment(fakeComment,0)}</div>`;
+  list.insertAdjacentHTML('beforeend', fakeHtml);
+  list.scrollTop = list.scrollHeight;
+
+  // Clear input
+  inp.value=''; inp.style.height='auto';
+  _tpPastedImg = null;
+  document.getElementById('tp-img-preview').innerHTML = '';
+  if (_tpPreviewMode) tpTogglePreview();
+  tpCancelReply();
+
+  try {
+    const r = await fetch(`/api/todo/${TP_TODO_ID}/comments`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if (!r.ok) throw new Error('Failed');
+    tpLoadComments(true);
+  } catch(e) {
+    document.getElementById(`c-wrap-${fakeId}`)?.remove();
+    alert('Could not post comment.');
+  }
+}
+
+// ── Delete comment ────────────────────────────────────────────────────────────
 async function tpDeleteComment(commentId) {
   if (!confirm('Delete this comment? If it has replies, it will appear as [deleted].')) return;
   try {
     const r = await fetch(`/api/todo/${TP_TODO_ID}/comments/${commentId}`,{method:'DELETE'});
     if (!r.ok) throw new Error('Failed');
-    tpLoadComments();
+    tpLoadComments(true);
   } catch(e) { alert('Could not delete comment.'); }
 }
 
-async function tpPostComment() {
-  const inp  = document.getElementById('tp-input');
-  const text = (inp?.value||'').trim();
-  if (!text) return;
-  const body = {text};
-  if (_tpReplyingTo) body.reply_to = _tpReplyingTo.id;
-  try {
-    const r = await fetch(`/api/todo/${TP_TODO_ID}/comments`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if (!r.ok) throw new Error('Failed');
-    inp.value=''; inp.style.height='auto';
-    _tpReplyingTo=null; tpCancelReply(); tpLoadComments();
-  } catch(e) { alert('Could not post comment.'); }
+// ── Edit comment ──────────────────────────────────────────────────────────────
+async function tpStartEdit(commentId, btnEl) {
+  if (_tpEditingId && _tpEditingId !== commentId) tpCancelEdit(_tpEditingId);
+  _tpEditingId = commentId;
+  const bodyEl = document.getElementById(`c-body-${commentId}`);
+  if (!bodyEl) return;
+  const currentText = bodyEl.dataset.rawText || bodyEl.innerText;
+  bodyEl.dataset.rawText = currentText;
+  bodyEl.innerHTML = `
+    <textarea class="comment-edit-area" id="edit-ta-${commentId}">${_tpEsc(currentText)}</textarea>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      <button class="btn btn-primary btn-sm" onclick="tpSaveEdit('${commentId}')">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="tpCancelEdit('${commentId}')">Cancel</button>
+    </div>`;
+  const ta = document.getElementById(`edit-ta-${commentId}`);
+  ta.style.height = ta.scrollHeight + 'px';
+  ta.focus(); ta.selectionStart = ta.value.length;
 }
 
-// Quick status change directly from the detail page
+async function tpSaveEdit(commentId) {
+  const ta   = document.getElementById(`edit-ta-${commentId}`);
+  const text = ta?.value?.trim();
+  if (!text) return;
+  try {
+    const r = await fetch(`/api/todo/${TP_TODO_ID}/comments/${commentId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    if (!r.ok) throw new Error('Failed');
+    _tpEditingId = null;
+    tpLoadComments(true);
+  } catch(e) { alert('Could not save edit.'); }
+}
+
+function tpCancelEdit(commentId) {
+  _tpEditingId = null;
+  const bodyEl = document.getElementById(`c-body-${commentId}`);
+  if (bodyEl && bodyEl.dataset.rawText) {
+    bodyEl.innerHTML = renderMarkdown(bodyEl.dataset.rawText);
+  }
+}
+
+// ── Emoji reactions ───────────────────────────────────────────────────────────
+async function tpToggleReaction(commentId, emoji) {
+  try {
+    await fetch(`/api/todo/${TP_TODO_ID}/comments/${commentId}/react`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emoji})});
+    tpLoadComments(true);
+  } catch(e) {}
+}
+
+function tpOpenEmojiPicker(btn, commentId) {
+  openEmojiPicker(btn, commentId, async (cid, emoji) => {
+    await tpToggleReaction(cid, emoji);
+  });
+}
+
+// ── Comment search ────────────────────────────────────────────────────────────
+let _tpSearchDebounce;
+function tpOnSearchInput() {
+  clearTimeout(_tpSearchDebounce);
+  _tpSearchDebounce = setTimeout(() => tpLoadComments(true), 280);
+}
+
+// ── Quick status ──────────────────────────────────────────────────────────────
 async function tpQuickStatus(newStatus) {
   try {
     const r = await fetch(`/api/todo/${TP_TODO_ID}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:newStatus})});
@@ -642,6 +824,31 @@ async function tpDelete() {
   } catch(e) { toast('Could not delete','error'); }
 }
 
-tpLoadComments();
+// ── Humanise timestamps ────────────────────────────────────────────────────────
+document.querySelectorAll('[data-ts]').forEach(el => {
+  el.textContent = _tpRelTime(el.dataset.ts);
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(function init() {
+  tpLoadComments();
+
+  // Keyboard shortcuts
+  const inp = document.getElementById('tp-input');
+  if (inp) {
+    attachKbShortcuts(inp, tpWrap);
+    // @mention
+    const footer = inp.closest('.tp-panel-footer');
+    if (footer) {
+      const mc = createMentionController();
+      mc.attach(inp, footer, tpUpdatePreview);
+    }
+    // Paste image
+    const previewEl = document.getElementById('tp-img-preview');
+    attachPasteImage(inp, previewEl, (data, type) => {
+      _tpPastedImg = data ? {data, type} : null;
+    });
+  }
+})();
 </script>
 {% endblock %}
