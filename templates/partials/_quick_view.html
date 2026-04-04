@@ -1,0 +1,92 @@
+<!-- ── Global Quick-View Modal (available on every page) ── -->
+<div class="modal-overlay" id="gv-modal" onclick="this.classList.remove('open')">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width:560px">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1rem;gap:10px">
+      <h3 id="gv-title" style="font-size:1rem;line-height:1.4;word-break:break-word"></h3>
+      <button class="btn btn-ghost btn-sm" style="flex-shrink:0" onclick="document.getElementById('gv-modal').classList.remove('open')">✕</button>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem">
+      <div id="gv-status"></div>
+      <div id="gv-priority"></div>
+      <div id="gv-public-badge"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Assigned To</div>
+        <div id="gv-assigned" style="font-size:0.9rem"></div>
+      </div>
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Added By</div>
+        <div id="gv-added" style="font-size:0.9rem"></div>
+      </div>
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Due Date</div>
+        <div id="gv-due" style="font-size:0.9rem"></div>
+      </div>
+      <div>
+        <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Created</div>
+        <div id="gv-created" style="font-size:0.82rem;color:var(--muted)"></div>
+      </div>
+    </div>
+
+    <div id="gv-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.75rem"></div>
+
+    <div id="gv-desc-wrap" style="display:none;margin-bottom:0.75rem">
+      <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Description</div>
+      <div id="gv-desc" style="background:var(--surface2);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:10px 14px;font-size:0.82rem;color:var(--muted);font-style:italic"></div>
+    </div>
+
+    <div id="gv-extra" style="font-size:0.78rem;color:var(--muted);margin-bottom:0.75rem"></div>
+
+    <hr>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem">
+      <a id="gv-board-link" href="/board" class="btn btn-primary btn-sm">Open on Board →</a>
+      <a id="gv-changelog-link" href="/changelog" class="btn btn-ghost btn-sm" style="display:none">📋 View in Changelog →</a>
+      <button id="gv-watch-btn" class="btn btn-ghost btn-sm" onclick="gvToggleWatch()">👁 Watch</button>
+    </div>
+
+    <!-- Comments -->
+    <div id="gv-comments-section" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:0.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">💬 Comments</div>
+        <div id="gv-comment-count" style="font-size:0.72rem;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:10px"></div>
+      </div>
+      <div id="gv-comments-list" style="display:flex;flex-direction:column;gap:0;margin-bottom:14px"></div>
+      <div id="gv-comment-input-wrap">
+        <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;transition:border-color 0.15s,background 0.15s" id="gv-input-outer">
+          <div id="gv-reply-bar" style="display:none;align-items:center;gap:6px;padding:6px 10px 0;font-size:0.75rem;color:var(--accent2)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M9 1L1 5l4 1 1 4 3-9z" fill="currentColor"/></svg>
+            <span id="gv-reply-label" style="flex:1;font-style:italic"></span>
+            <button onclick="gvCancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.78rem;line-height:1;padding:0 2px" title="Cancel">✕</button>
+          </div>
+          <textarea id="gv-comment-input" placeholder="Write a comment…" rows="1"
+            style="width:100%;border:none;outline:none;resize:none;overflow:hidden;background:transparent;font-family:var(--sans);font-size:0.84rem;color:var(--text);padding:9px 11px 5px;line-height:1.55;min-height:36px;max-height:160px;display:block"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();gvPostComment()}"
+            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"
+            onfocus="document.getElementById('gv-input-outer').style.cssText='border:1px solid var(--accent);border-radius:10px;background:var(--surface);overflow:hidden;transition:border-color 0.15s,background 0.15s'"
+            onblur="document.getElementById('gv-input-outer').style.cssText='border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;transition:border-color 0.15s,background 0.15s'"></textarea>
+          <div style="display:flex;align-items:center;gap:4px;padding:4px 7px 6px">
+            <button title="Bold" onclick="gvWrap('**','**')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M3.5 2h4a2.5 2.5 0 010 5H3.5V2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M3.5 7h4.5a2.5 2.5 0 010 5H3.5V7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+            </button>
+            <button title="Italic" onclick="gvWrap('_','_')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><line x1="9" y1="2" x2="5" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="6" y1="2" x2="11" y2="2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="3" y1="12" x2="8" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            </button>
+            <button title="Code" onclick="gvWrap('\`','\`')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><polyline points="4,4 1,7 4,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="10,4 13,7 10,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div style="width:1px;height:13px;background:var(--border);margin:0 2px"></div>
+            <span style="font-size:0.68rem;color:var(--muted);padding:0 4px">↵ send · ⇧↵ newline</span>
+            <button onclick="gvPostComment()" title="Send" style="margin-left:auto;width:28px;height:28px;border-radius:50%;border:none;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background 0.15s,transform 0.1s" onmouseover="this.style.background='var(--accent2)'" onmouseout="this.style.background='var(--accent)'" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 11V2M2 6l4.5-4.5L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="gv-loading" style="text-align:center;padding:1.5rem;color:var(--muted);font-size:0.85rem;display:none">Loading…</div>
+  </div>
+</div>

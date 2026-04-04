@@ -1,0 +1,64 @@
+<nav>
+  <a class="nav-brand" href="/">
+    <span class="logo">✦</span>
+    AnymeX
+  </a>
+  <div class="nav-links">
+    <a href="/" class="{% if request.endpoint == 'index' %}active{% endif %}">
+      <span>Home</span>
+    </a>
+    <a href="/board" class="{% if request.endpoint == 'board' %}active{% endif %}">
+      <span>Board</span>
+    </a>
+    <a href="/bugs" class="{% if request.endpoint == 'bugs_page' %}active{% endif %}">
+      <span>🐛 Bugs</span>
+    </a>
+    <a href="/suggestions" class="{% if request.endpoint == 'suggestions_page' %}active{% endif %}">
+      <span>💡 Suggestions</span>
+    </a>
+    <a href="/issues" class="{% if request.endpoint == 'issues_page' %}active{% endif %}">
+      <span>📦 Issues</span>
+    </a>
+    {% if user %}
+    <a href="/dashboard" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
+      <span>My Tasks</span>
+      {% if my_task_count > 0 %}<span class="nav-badge">{{ my_task_count }}</span>{% endif %}
+    </a>
+    <a href="/analytics" class="{% if request.endpoint == 'analytics' %}active{% endif %}">
+      <span>Analytics</span>
+    </a>
+    <a href="/activity" class="{% if request.endpoint == 'activity' %}active{% endif %}">
+      <span>Activity</span>
+    </a>
+    {% if access_level in ('admin', 'owner') %}
+    <a href="/settings" class="{% if request.endpoint == 'settings' %}active{% endif %}">
+      <span>Settings</span>
+    </a>
+    {% endif %}
+    {% endif %}
+    <a href="/roadmap" class="{% if request.endpoint == 'roadmap' %}active{% endif %}">
+      <span>Roadmap</span>
+    </a>
+    <a href="/changelog" class="{% if request.endpoint == 'changelog' %}active{% endif %}">
+      <span>Changelog</span>
+    </a>
+    <a href="/search" class="{% if request.endpoint == 'search_page' %}active{% endif %}">
+      <span>🔍</span>
+    </a>
+  </div>
+  <div class="nav-right">
+    {% if user %}
+      <a href="/member/{{ user.id }}" class="user-chip" style="text-decoration:none;color:inherit">
+        <img class="avatar" src="https://cdn.discordapp.com/avatars/{{ user.id }}/{{ user.avatar }}.png?size=64" alt="{{ user.username }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" referrerpolicy="no-referrer" />
+        <span>{{ user.global_name or user.username }}</span>
+        <span class="badge {{ access_level }}">{{ access_level }}</span>
+      </a>
+      <a href="/logout" class="btn btn-ghost btn-sm">Log out</a>
+    {% else %}
+      <a href="/login" class="btn btn-discord btn-sm">
+        <svg width="16" height="16" viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
+        Login with Discord
+      </a>
+    {% endif %}
+  </div>
+</nav>
