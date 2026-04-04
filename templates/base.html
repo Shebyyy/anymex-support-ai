@@ -265,6 +265,8 @@
         flex: 1 1 100%;
         order: 1;
         overflow-x: auto;
+        -webkit-mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 32px), transparent 100%);
+        mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 32px), transparent 100%);
 
         a {
           padding: 0.5rem;
@@ -449,15 +451,36 @@
         <div id="gv-comment-count" style="font-size:0.72rem;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:10px"></div>
       </div>
       <div id="gv-comments-list" style="display:flex;flex-direction:column;gap:0;margin-bottom:14px"></div>
-      <div id="gv-reply-bar" style="display:none;align-items:center;gap:8px;padding:5px 10px;margin-bottom:6px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--accent)">
-        <span id="gv-reply-label" style="font-size:0.77rem;color:var(--muted);flex:1"></span>
-        <button onclick="gvCancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.8rem;line-height:1;padding:2px 4px" title="Cancel">✕</button>
-      </div>
-      <div id="gv-comment-input-wrap" style="display:flex;gap:8px;align-items:flex-end">
-        <textarea class="form-control" id="gv-comment-input" placeholder="Write a comment… (Enter to send)" rows="2"
-          style="flex:1;resize:none;border-radius:10px;line-height:1.5"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();gvPostComment()}"></textarea>
-        <button class="btn btn-primary btn-sm" onclick="gvPostComment()" style="height:38px;padding:0 14px;border-radius:10px" title="Send">↑</button>
+      <div id="gv-comment-input-wrap">
+        <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;transition:border-color 0.15s,background 0.15s" id="gv-input-outer">
+          <div id="gv-reply-bar" style="display:none;align-items:center;gap:6px;padding:6px 10px 0;font-size:0.75rem;color:var(--accent2)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M9 1L1 5l4 1 1 4 3-9z" fill="currentColor"/></svg>
+            <span id="gv-reply-label" style="flex:1;font-style:italic"></span>
+            <button onclick="gvCancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.78rem;line-height:1;padding:0 2px" title="Cancel">✕</button>
+          </div>
+          <textarea id="gv-comment-input" placeholder="Write a comment…" rows="1"
+            style="width:100%;border:none;outline:none;resize:none;overflow:hidden;background:transparent;font-family:var(--sans);font-size:0.84rem;color:var(--text);padding:9px 11px 5px;line-height:1.55;min-height:36px;max-height:160px;display:block"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();gvPostComment()}"
+            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px'"
+            onfocus="document.getElementById('gv-input-outer').style.cssText='border:1px solid var(--accent);border-radius:10px;background:var(--surface);overflow:hidden;transition:border-color 0.15s,background 0.15s'"
+            onblur="document.getElementById('gv-input-outer').style.cssText='border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden;transition:border-color 0.15s,background 0.15s'"></textarea>
+          <div style="display:flex;align-items:center;gap:4px;padding:4px 7px 6px">
+            <button title="Bold" onclick="gvWrap('**','**')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M3.5 2h4a2.5 2.5 0 010 5H3.5V2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M3.5 7h4.5a2.5 2.5 0 010 5H3.5V7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+            </button>
+            <button title="Italic" onclick="gvWrap('_','_')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><line x1="9" y1="2" x2="5" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="6" y1="2" x2="11" y2="2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="3" y1="12" x2="8" y2="12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            </button>
+            <button title="Code" onclick="gvWrap('\`','\`')" style="width:26px;height:26px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><polyline points="4,4 1,7 4,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="10,4 13,7 10,10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div style="width:1px;height:13px;background:var(--border);margin:0 2px"></div>
+            <span style="font-size:0.68rem;color:var(--muted);padding:0 4px">↵ send · ⇧↵ newline</span>
+            <button onclick="gvPostComment()" title="Send" style="margin-left:auto;width:28px;height:28px;border-radius:50%;border:none;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background 0.15s,transform 0.1s" onmouseover="this.style.background='var(--accent2)'" onmouseout="this.style.background='var(--accent)'" onmousedown="this.style.transform='scale(0.95)'" onmouseup="this.style.transform='scale(1)'">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 11V2M2 6l4.5-4.5L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -514,37 +537,40 @@ function _gvRender(t) {
   document.getElementById('gv-public-badge').innerHTML =
     `<span style="font-size:.72rem;padding:3px 8px;border-radius:10px;background:${isPublic?'rgba(29,158,117,0.12)':'rgba(107,114,128,0.1)'};color:${isPublic?'var(--done)':'var(--muted)'}">${isPublic?'🌐 Public':'🔒 Private'}</span>`;
 
-  // Assigned
-  const assignedName = t.assigned_to_name || (t.assigned_to_id ? 'Member' : null);
-  document.getElementById('gv-assigned').innerHTML = assignedName && t.assigned_to_id
-    ? `<a href="/member/${t.assigned_to_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${assignedName}</a>`
-    : `<span style="color:var(--muted)">Unassigned</span>`;
-
-  // Added by — resolve display name if stored value looks like a raw ID
-  const addedEl = document.getElementById('gv-added');
-  const rawAddedBy = t.added_by || '';
-  const isRawId = /^\d{10,}$/.test(rawAddedBy);
-  if (t.added_by_id) {
-    const displayName = (!isRawId && rawAddedBy) ? rawAddedBy : null;
-    if (displayName) {
-      addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${displayName}</a>`;
-    } else {
-      // Raw ID stored — try to resolve from members search
-      addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">Loading…</a>`;
-      fetch(`/api/members/search?q=${t.added_by_id}`)
-        .then(r => r.json())
-        .then(data => {
-          const members = Array.isArray(data) ? data : (data.results || []);
-          const match = members.find(m => String(m.id) === String(t.added_by_id));
-          const name = match ? (match.display_name || match.username) : `User #${t.added_by_id}`;
-          addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${name}</a>`;
-        })
-        .catch(() => {
-          addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">User #${t.added_by_id}</a>`;
-        });
-    }
+  // Assigned — Option C chip
+  const assignedEl       = document.getElementById('gv-assigned');
+  const assignedDisplay  = t.assigned_to_name     || null;
+  const assignedUsername = t.assigned_to_username || null;
+  const assignedAvatar   = t.assigned_to_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  if (t.assigned_to_id && (assignedDisplay || assignedUsername)) {
+    assignedEl.innerHTML = `<a href="/member/${t.assigned_to_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+      <img src="${assignedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
+      <span style="display:flex;flex-direction:column;gap:0">
+        <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${assignedDisplay || assignedUsername}</span>
+        ${assignedUsername ? `<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@${assignedUsername}</span>` : ''}
+      </span>
+    </a>`;
   } else {
-    addedEl.innerHTML = `<span style="color:var(--muted)">${rawAddedBy || '—'}</span>`;
+    assignedEl.innerHTML = `<span style="color:var(--muted)">Unassigned</span>`;
+  }
+
+  // Added by — Option C chip
+  const addedEl       = document.getElementById('gv-added');
+  const addedDisplay  = t.added_by_display  || null;
+  const addedUsername = t.added_by_username || null;
+  const addedAvatar   = t.added_by_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  if (t.added_by_id && (addedDisplay || addedUsername)) {
+    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+      <img src="${addedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
+      <span style="display:flex;flex-direction:column;gap:0">
+        <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${addedDisplay || addedUsername}</span>
+        ${addedUsername ? `<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@${addedUsername}</span>` : ''}
+      </span>
+    </a>`;
+  } else if (t.added_by_id) {
+    addedEl.innerHTML = `<span style="color:var(--muted)">Member</span>`;
+  } else {
+    addedEl.innerHTML = `<span style="color:var(--muted)">—</span>`;
   }
 
   // Due date
@@ -663,7 +689,9 @@ async function _gvLoadComments(todoId, isDone) {
   _gvReplyingTo = null;
   const replyBar = document.getElementById('gv-reply-bar');
   if (replyBar) replyBar.style.display = 'none';
-  if (inputWrap) inputWrap.style.display = isDone ? 'none' : 'flex';
+  const ta = document.getElementById('gv-comment-input');
+  if (ta) { ta.value = ''; ta.style.height = 'auto'; ta.placeholder = 'Write a comment…'; }
+  if (inputWrap) { inputWrap.style.display = isDone ? 'none' : 'block'; }
   list.innerHTML = '<p style="font-size:.8rem;color:var(--muted)">Loading…</p>';
   try {
     const all = await (await fetch(`/api/todo/${todoId}/comments`)).json();
@@ -702,8 +730,10 @@ function gvStartReply(commentId, userName) {
   _gvReplyingTo = { id: commentId, user_name: userName };
   const bar   = document.getElementById('gv-reply-bar');
   const label = document.getElementById('gv-reply-label');
+  const outer = document.getElementById('gv-input-outer');
   if (bar)   bar.style.display = 'flex';
   if (label) label.textContent = `Replying to ${userName}`;
+  if (outer) outer.style.borderColor = 'var(--accent)';
   const input = document.getElementById('gv-comment-input');
   if (input) { input.placeholder = `Reply to ${userName}…`; input.focus(); }
 }
@@ -711,9 +741,22 @@ function gvStartReply(commentId, userName) {
 function gvCancelReply() {
   _gvReplyingTo = null;
   const bar   = document.getElementById('gv-reply-bar');
+  const outer = document.getElementById('gv-input-outer');
   const input = document.getElementById('gv-comment-input');
   if (bar)   bar.style.display = 'none';
-  if (input) input.placeholder = 'Write a comment… (Enter to send)';
+  if (outer) outer.style.borderColor = 'var(--border)';
+  if (input) input.placeholder = 'Write a comment…';
+}
+
+function gvWrap(before, after) {
+  const ta = document.getElementById('gv-comment-input');
+  if (!ta) return;
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  const sel = ta.value.slice(s, e) || 'text';
+  ta.value = ta.value.slice(0, s) + before + sel + after + ta.value.slice(e);
+  ta.focus();
+  ta.selectionStart = s + before.length;
+  ta.selectionEnd   = s + before.length + sel.length;
 }
 
 async function gvDeleteComment(todoId, commentId) {
@@ -738,6 +781,7 @@ async function gvPostComment() {
     });
     if (!res.ok) throw new Error('Failed');
     input.value = '';
+    input.style.height = 'auto';
     _gvReplyingTo = null;
     const bar = document.getElementById('gv-reply-bar');
     if (bar) bar.style.display = 'none';
@@ -764,6 +808,21 @@ async function gvToggleWatch() {
 // Close on Escape
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.getElementById('gv-modal').classList.remove('open');
+  // Press / to jump to search (unless already in an input)
+  if (e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
+    e.preventDefault(); window.location = '/search';
+  }
+});
+
+// Focus trap inside quick-view modal
+document.getElementById('gv-modal').addEventListener('keydown', e => {
+  if (e.key !== 'Tab') return;
+  const modal = document.getElementById('gv-modal');
+  const focusable = [...modal.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last.focus(); } }
+  else { if (document.activeElement === last) { e.preventDefault(); first.focus(); } }
 });
 </script>
 

@@ -391,6 +391,19 @@ document.querySelectorAll('.settings-nav a').forEach(a => {
   });
 });
 
+// Update nav active state on scroll
+const _settingsSections = document.querySelectorAll('.settings-card[id]');
+const _settingsObserver = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      document.querySelectorAll('.settings-nav a').forEach(a => {
+        a.classList.toggle('active', a.getAttribute('href') === '#' + entry.target.id);
+      });
+    }
+  });
+}, { threshold: 0.3 });
+_settingsSections.forEach(s => _settingsObserver.observe(s));
+
 // ── Member DB ────────────────────────────────────────────────────────────────
 async function loadMembers() {
   const listEl = document.getElementById('members-list');

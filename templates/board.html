@@ -3,16 +3,40 @@
 
 {% block head %}
 <style>
+/* ── Board header ── */
 .board-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;
 }
-.board-header h1 { font-family: var(--mono); font-size: 1.3rem; }
+.board-header h1 {
+  font-family: var(--mono); font-size: 1.3rem; font-weight: 700;
+  display: flex; align-items: center; gap: 10px;
+}
+.board-header h1 .active-count {
+  font-size: 0.72rem; color: var(--muted);
+  background: var(--surface2); border: 1px solid var(--border);
+  padding: 2px 9px; border-radius: 10px;
+  font-weight: 400;
+}
+.header-actions { display: flex; gap: 8px; align-items: center; }
 
-/* Filters */
+/* ── View toggle ── */
+.view-toggle {
+  display: flex; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 3px; gap: 2px;
+}
+.view-btn {
+  padding: 5px 11px; border-radius: 6px; border: none; cursor: pointer;
+  font-size: 0.78rem; font-weight: 600; font-family: var(--sans);
+  color: var(--muted); background: transparent; transition: all 0.15s;
+  display: flex; align-items: center; gap: 5px;
+}
+.view-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+
+/* ── Filters ── */
 .filters {
   display: flex; align-items: center; gap: 8px;
-  flex-wrap: wrap; margin-bottom: 1.5rem;
+  flex-wrap: wrap; margin-bottom: 1.25rem;
 }
 .filter-input {
   background: var(--surface); border: 1px solid var(--border);
@@ -28,15 +52,25 @@
   outline: none; cursor: pointer; appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7280'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 10px center;
+  transition: border-color 0.15s;
 }
+.filter-select:focus { outline: none; border-color: var(--accent); }
 .filter-select option { background: #1a1d27; }
+.filter-select.active-filter { border-color: var(--accent); color: var(--text); }
 
-/* Results count */
-.results-info {
-  font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem;
+.results-info { font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem; }
+
+/* ── Due date badges ── */
+.due-badge {
+  font-size: 0.68rem; font-weight: 700; font-family: var(--mono);
+  padding: 2px 7px; border-radius: 4px; white-space: nowrap;
 }
+.due-overdue { background: rgba(226,75,74,0.15); color: var(--blocked); }
+.due-today   { background: rgba(186,117,23,0.15); color: var(--inprog); }
+.due-soon    { background: rgba(55,138,221,0.12); color: var(--todo); }
+.due-normal  { background: var(--surface2); color: var(--muted); }
 
-/* Assignee chip on cards */
+/* ── Assignee chip ── */
 .assignee-chip {
   font-size: 0.73rem; color: var(--muted);
   background: var(--surface2); border: 1px solid var(--border);
@@ -44,7 +78,156 @@
   display: inline-flex; align-items: center; gap: 4px;
 }
 
-/* Member search dropdown */
+/* ── AI badge ── */
+.ai-badge {
+  font-size: 0.65rem; color: var(--accent2);
+  background: rgba(88,101,242,0.1); padding: 2px 6px; border-radius: 4px;
+  font-family: var(--mono); flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════
+   LIST VIEW
+══════════════════════════════════════════ */
+.todo-grid { display: flex; flex-direction: column; gap: 8px; }
+
+.todo-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-left: 4px solid var(--accent);
+  padding: 1rem 1.25rem;
+  cursor: pointer; position: relative;
+  transition: box-shadow 0.15s, transform 0.15s, border-color 0.15s;
+  animation: cardIn 0.25s ease both;
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.todo-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+  transform: translateY(-1px);
+}
+.todo-card.selected { border-color: var(--accent) !important; background: rgba(88,101,242,0.04); }
+
+.todo-card-top {
+  display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px;
+}
+.todo-card-top .id {
+  font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
+  padding-top: 2px; min-width: 30px;
+}
+.todo-card-top .title {
+  flex: 1; font-size: 0.95rem; font-weight: 600; line-height: 1.3;
+}
+.todo-card-desc {
+  font-size: 0.82rem; color: var(--muted);
+  margin: 0 0 10px 42px; line-height: 1.5;
+}
+.todo-card-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-left: 42px; flex-wrap: wrap;
+}
+.todo-card-actions { display: flex; gap: 6px; margin-left: auto; }
+.created-at {
+  font-size: 0.72rem; color: var(--muted);
+  font-family: var(--mono); margin-left: auto;
+}
+.card-checkbox {
+  position: absolute; top: 12px; left: -28px;
+  width: 16px; height: 16px; cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* ══════════════════════════════════════════
+   KANBAN VIEW
+══════════════════════════════════════════ */
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+@media (max-width: 640px)  { .kanban-board { height: auto; } }
+
+.kanban-col {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: visible;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 220px);
+}
+.kanban-col-head {
+  padding: 12px 14px;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  flex-shrink: 0;
+  background: var(--surface2);
+}
+.kanban-col-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.kanban-col-label {
+  font-size: 0.78rem; font-weight: 700; font-family: var(--mono);
+  color: var(--text); flex: 1;
+}
+.kanban-col-count {
+  font-size: 0.68rem; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 1px 7px; border-radius: 10px; font-family: var(--mono);
+}
+.kanban-col-body { padding: 10px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; flex: 1; border-radius: 0 0 12px 12px; }
+
+.kanban-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px;
+  cursor: pointer; position: relative;
+  transition: box-shadow 0.15s, transform 0.15s;
+  animation: cardIn 0.2s ease both;
+}
+.kanban-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  transform: translateY(-1px);
+}
+.kanban-card-title {
+  font-size: 0.88rem; font-weight: 600; line-height: 1.35;
+  margin-bottom: 8px; color: var(--text);
+}
+.kanban-card-id {
+  font-family: var(--mono); font-size: 0.68rem; color: var(--muted);
+  margin-bottom: 6px;
+}
+.kanban-card-footer {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px;
+}
+.kanban-card-desc {
+  font-size: 0.78rem; color: var(--muted); line-height: 1.45;
+  margin-bottom: 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.kanban-empty {
+  padding: 24px 14px; text-align: center;
+  font-size: 0.78rem; color: var(--muted); opacity: 0.5;
+}
+
+/* ── Bulk bar ── */
+.bulk-bar {
+  position: sticky; top: 58px; z-index: 90;
+  background: var(--surface); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 10px 16px;
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 1rem; flex-wrap: wrap;
+  box-shadow: 0 4px 16px rgba(88,101,242,0.15);
+  animation: slideDown 0.15s ease;
+}
+@keyframes slideDown { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+.bulk-bar .count { font-family: var(--mono); font-size: 0.85rem; font-weight: 700; color: var(--accent); }
+.bulk-bar .sep { color: var(--border); }
+
+/* ── Member search ── */
 .member-search-wrap { position: relative; }
 .member-results {
   position: absolute; top: calc(100% + 4px); left: 0; right: 0;
@@ -73,58 +256,11 @@
 .assignee-selected img { width: 22px; height: 22px; border-radius: 50%; }
 .assignee-selected .clear {
   margin-left: auto; cursor: pointer; color: var(--muted); font-size: 0.8rem;
-  background: none; border: none; color: var(--muted);
+  background: none; border: none;
 }
 .assignee-selected .clear:hover { color: var(--blocked); }
 
-/* TODO cards grid */
-.todo-grid {
-  display: flex; flex-direction: column; gap: 10px;
-}
-.todo-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius);
-  border-left: 4px solid var(--accent);
-  padding: 1rem 1.25rem;
-  transition: box-shadow 0.15s, transform 0.15s;
-  cursor: pointer;
-}
-.todo-card:hover {
-  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-  transform: translateY(-1px);
-}
-.todo-card-top {
-  display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px;
-}
-.todo-card-top .id {
-  font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
-  padding-top: 2px; min-width: 30px;
-}
-.todo-card-top .title {
-  flex: 1; font-size: 0.95rem; font-weight: 600; line-height: 1.3;
-}
-.ai-badge {
-  font-size: 0.65rem; color: var(--accent2);
-  background: rgba(88,101,242,0.1); padding: 2px 6px; border-radius: 4px;
-  font-family: var(--mono); flex-shrink: 0;
-}
-.todo-card-desc {
-  font-size: 0.82rem; color: var(--muted);
-  margin: 0 0 10px 42px; line-height: 1.5;
-}
-.todo-card-meta {
-  display: flex; align-items: center; gap: 8px;
-  margin-left: 42px; flex-wrap: wrap;
-}
-.todo-card-actions {
-  display: flex; gap: 6px; margin-left: auto;
-}
-.created-at {
-  font-size: 0.72rem; color: var(--muted);
-  font-family: var(--mono); margin-left: auto;
-}
-
-/* Detail modal */
+/* ── Detail / Source quote ── */
 .detail-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;
 }
@@ -132,101 +268,55 @@
   display: block; font-size: 0.72rem; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
 }
-.detail-field .val {
-  font-size: 0.9rem;
-}
+.detail-field .val { font-size: 0.9rem; }
 .source-quote {
   background: var(--surface2); border-left: 3px solid var(--accent);
   border-radius: 0 6px 6px 0; padding: 10px 14px;
-  font-size: 0.82rem; color: var(--muted); margin: 10px 0;
-  font-style: italic;
+  font-size: 0.82rem; color: var(--muted); margin: 10px 0; font-style: italic;
 }
 
-/* Due date badges */
-.due-badge {
-  font-size: 0.68rem; font-weight: 700; font-family: var(--mono);
-  padding: 2px 7px; border-radius: 4px; white-space: nowrap;
-}
-.due-overdue { background: rgba(226,75,74,0.15); color: var(--blocked); }
-.due-today   { background: rgba(186,117,23,0.15); color: var(--inprog); }
-.due-soon    { background: rgba(55,138,221,0.12); color: var(--todo); }
-.due-normal  { background: var(--surface2); color: var(--muted); }
-
-/* Bulk actions bar */
-.bulk-bar {
-  position: sticky; top: 58px; z-index: 90;
-  background: var(--surface); border: 1px solid var(--accent);
-  border-radius: var(--radius); padding: 10px 16px;
-  display: flex; align-items: center; gap: 10px;
-  margin-bottom: 1rem; flex-wrap: wrap;
-  box-shadow: 0 4px 16px rgba(88,101,242,0.15);
-  animation: slideDown 0.15s ease;
-}
-@keyframes slideDown { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
-.bulk-bar .count { font-family: var(--mono); font-size: 0.85rem; font-weight: 700; color: var(--accent); }
-.bulk-bar .sep { color: var(--border); }
-
-/* Checkbox on cards */
-.card-checkbox {
-  position: absolute; top: 12px; left: -28px;
-  width: 16px; height: 16px; cursor: pointer;
-  accent-color: var(--accent);
-}
-.todo-card { position: relative; }
-.todo-card.selected { border-color: var(--accent) !important; background: rgba(88,101,242,0.04); }
-
-/* Board — mobile */
+/* ── Responsive ── */
 @media (max-width: 768px) {
-  .filters {
-    gap: 6px;
-  }
-  .filter-input {
-    min-width: 0;
-    flex: 1 1 100%;
-  }
-  .filter-select {
-    flex: 1 1 auto;
-  }
-  .todo-card {
-    padding: 0.85rem 1rem;
-  }
-  .todo-card-top {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .todo-card-top .id {
-    min-width: unset;
-  }
-  .todo-card-top .title {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-  .todo-card-desc {
-    margin-left: 0;
-    margin-top: 6px;
-  }
-  .todo-card-meta {
-    margin-left: 0;
-    margin-top: 8px;
-  }
-  .todo-card-actions {
-    flex-basis: 100%;
-    margin-left: 0;
-    margin-top: 6px;
-  }
-  .detail-grid {
-    grid-template-columns: 1fr;
-    gap: 0.75rem;
-  }
+  .filters { gap: 6px; }
+  .filter-input { min-width: 0; flex: 1 1 100%; }
+  .filter-select { flex: 1 1 auto; }
+  .todo-card { padding: 0.85rem 1rem; }
+  .todo-card-top { flex-wrap: wrap; gap: 8px; }
+  .todo-card-top .id { min-width: unset; }
+  .todo-card-top .title { flex: 1 1 0; min-width: 0; }
+  .todo-card-desc { margin-left: 0; margin-top: 6px; }
+  .todo-card-meta { margin-left: 0; margin-top: 8px; }
+  .todo-card-actions { flex-basis: 100%; margin-left: 0; margin-top: 6px; }
+  .detail-grid { grid-template-columns: 1fr; gap: 0.75rem; }
+  .board-header { flex-direction: column; align-items: flex-start; }
 }
+
+/* ── Stagger card animations ── */
+{% for i in range(30) %}
+.todo-card:nth-child({{ i+1 }}),
+.kanban-card:nth-child({{ i+1 }}) { animation-delay: {{ i * 0.03 }}s; }
+{% endfor %}
 </style>
 {% endblock %}
 
 {% block content %}
+
 <div class="board-header">
-  <h1>TODO Board</h1>
-  <div style="display:flex;gap:8px;align-items:center">
-    <span style="font-size:0.8rem;color:var(--muted)">{{ todos|length }} active</span>
+  <h1>
+    TODO Board
+    <span class="active-count">{{ todos|length }} active</span>
+  </h1>
+  <div class="header-actions">
+    <div class="view-toggle">
+      <button class="view-btn active" id="btn-list" onclick="setView('list')">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="0" y="1" width="14" height="2" rx="1" fill="currentColor"/><rect x="0" y="6" width="14" height="2" rx="1" fill="currentColor"/><rect x="0" y="11" width="14" height="2" rx="1" fill="currentColor"/></svg>
+        List
+      </button>
+      <button class="view-btn" id="btn-kanban" onclick="setView('kanban')">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="0" y="0" width="4" height="14" rx="1" fill="currentColor"/><rect x="5" y="0" width="4" height="10" rx="1" fill="currentColor"/><rect x="10" y="0" width="4" height="12" rx="1" fill="currentColor"/></svg>
+        Kanban
+      </button>
+    </div>
     {% if access_level in ('manager','admin','owner') %}
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add TODO</button>
     {% endif %}
@@ -235,29 +325,29 @@
 
 <!-- Filters -->
 <form class="filters" method="GET" action="/board" id="filter-form">
-  <input class="filter-input" type="text" name="q" placeholder="Search TODOs…" value="{{ search }}" />
-  <select class="filter-select" name="status" onchange="this.form.submit()">
+  <input class="filter-input" type="text" name="q" placeholder="🔍  Search TODOs…" value="{{ search }}" />
+  <select class="filter-select {% if status_filter != 'all' %}active-filter{% endif %}" name="status" onchange="this.form.submit()">
     <option value="all" {% if status_filter=='all' %}selected{% endif %}>All statuses</option>
     <option value="todo"          {% if status_filter=='todo' %}selected{% endif %}>○ To Do</option>
     <option value="in_progress"   {% if status_filter=='in_progress' %}selected{% endif %}>◑ In Progress</option>
     <option value="review_needed" {% if status_filter=='review_needed' %}selected{% endif %}>◇ Review Needed</option>
     <option value="blocked"       {% if status_filter=='blocked' %}selected{% endif %}>✕ Blocked</option>
   </select>
-  <select class="filter-select" name="priority" onchange="this.form.submit()">
+  <select class="filter-select {% if priority_filter != 'all' %}active-filter{% endif %}" name="priority" onchange="this.form.submit()">
     <option value="all"    {% if priority_filter=='all' %}selected{% endif %}>All priorities</option>
     <option value="high"   {% if priority_filter=='high' %}selected{% endif %}>▲ High</option>
     <option value="medium" {% if priority_filter=='medium' %}selected{% endif %}>◈ Medium</option>
     <option value="low"    {% if priority_filter=='low' %}selected{% endif %}>▽ Low</option>
   </select>
   {% if all_tags %}
-  <select class="filter-select" name="tag" onchange="this.form.submit()">
+  <select class="filter-select {% if tag_filter != 'all' %}active-filter{% endif %}" name="tag" onchange="this.form.submit()">
     <option value="all" {% if tag_filter=='all' %}selected{% endif %}>All tags</option>
     {% for tag in all_tags %}
     <option value="{{ tag }}" {% if tag_filter==tag %}selected{% endif %}>{{ tag }}</option>
     {% endfor %}
   </select>
   {% endif %}
-  <select class="filter-select" name="assignee" onchange="this.form.submit()">
+  <select class="filter-select {% if assignee_filter != 'all' %}active-filter{% endif %}" name="assignee" onchange="this.form.submit()">
     <option value="all"        {% if assignee_filter=='all' %}selected{% endif %}>All assignees</option>
     {% if user %}<option value="me" {% if assignee_filter=='me' %}selected{% endif %}>👤 Mine</option>{% endif %}
     <option value="unassigned" {% if assignee_filter=='unassigned' %}selected{% endif %}>⊘ Unassigned</option>
@@ -269,7 +359,7 @@
     </optgroup>
     {% endif %}
   </select>
-  <select class="filter-select" name="due" onchange="this.form.submit()">
+  <select class="filter-select {% if due_filter != 'all' %}active-filter{% endif %}" name="due" onchange="this.form.submit()">
     <option value="all"     {% if due_filter=='all' %}selected{% endif %}>Any due date</option>
     <option value="overdue" {% if due_filter=='overdue' %}selected{% endif %}>⚠ Overdue</option>
     <option value="soon"    {% if due_filter=='soon' %}selected{% endif %}>🕐 Due soon</option>
@@ -281,14 +371,13 @@
 </form>
 
 <div class="results-info">
-  Showing <strong>{{ todos|length }}</strong> TODO{{ 's' if todos|length != 1 }}
-  {% if search %} matching "<strong>{{ search }}</strong>"{% endif %}
+  Showing <strong>{{ todos|length }}</strong> TODO{{ 's' if todos|length != 1 }}{% if search %} matching "<strong>{{ search }}</strong>"{% endif %}
 </div>
 
-<!-- ── Embed all todo data safely as JSON in a script tag (fixes onclick encoding bugs) ── -->
+<!-- Embed todo data safely -->
 <script id="todos-data" type="application/json">{{ todos | tojson }}</script>
 
-<!-- Bulk action bar (shown when items are selected) -->
+<!-- Bulk bar -->
 {% if access_level in ('manager','admin','owner') %}
 <div class="bulk-bar" id="bulk-bar" style="display:none">
   <span class="count" id="bulk-count">0 selected</span>
@@ -303,126 +392,164 @@
 </div>
 {% endif %}
 
-<!-- Cards -->
-<div class="todo-grid" id="todo-grid">
-{% for t in todos %}
-<div class="todo-card" style="border-left-color:{{ t.status_color }}" data-id="{{ t.id }}" onclick="cardClick(event,{{ t.id }})">
-  {% if access_level in ('manager','admin','owner') %}
-  <input type="checkbox" class="card-checkbox" data-id="{{ t.id }}"
-    onclick="event.stopPropagation();toggleSelect({{ t.id }},this)" />
-  {% endif %}
-  <div class="todo-card-top">
-    <span class="id">#{{ t.id }}</span>
-    <span class="title">{{ t.title }}</span>
-    {% if t.get('auto_generated') %}<span class="ai-badge">✦ AI</span>{% endif %}
-    <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
-  </div>
-  {% if t.get('ai_description') %}
-  <div class="todo-card-desc">{{ t.ai_description[:140] }}</div>
-  {% endif %}
-  <div class="todo-card-meta">
-    <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }} {{ t.priority_label }}</span>
-    {% for tag in t.get('tags', []) %}
-      <span class="tag">{{ tag }}</span>
-    {% endfor %}
-    {% if t.get('assigned_to_name') or t.get('assigned_to_id') %}
-    <a class="assignee-chip" href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;cursor:pointer">👤 {{ t.assigned_to_name or 'Member' }}</a>
-    {% endif %}
-    {% if t.get('due_urgency') and t.due_urgency != 'done' %}
-    <span class="due-badge due-{{ t.due_urgency }}">
-      {{ '⚠' if t.due_urgency == 'overdue' else '🕐' if t.due_urgency in ('today','soon') else '📅' }}
-      {{ t.due_label }}
-    </span>
-    {% endif %}
-    {% if t.get('watcher_count') %}
-    <span style="font-size:0.72rem;color:var(--muted)">👁 {{ t.watcher_count }}</span>
-    {% endif %}
-    {% if t.get('total_minutes') %}
-    <span style="font-size:0.72rem;color:var(--muted)">⏱ {{ (t.total_minutes / 60)|round(1) }}h</span>
-    {% endif %}
-    {% if t.get('is_blocked') %}
-    <span style="font-size:0.72rem;background:rgba(226,75,74,0.1);color:var(--blocked);padding:2px 6px;border-radius:4px">⛔ Blocked by {{ t.blocked_by_count }}</span>
-    {% endif %}
-    {% if t.get('created_at_fmt') %}
-    <span class="created-at">{{ t.created_at_fmt }}</span>
-    {% endif %}
+<!-- ═══════════════════════
+     LIST VIEW
+═══════════════════════ -->
+<div id="view-list">
+  <div class="todo-grid" id="todo-grid">
+  {% for t in todos %}
+  <div class="todo-card" style="border-left-color:{{ t.status_color }}" data-id="{{ t.id }}" onclick="cardClick(event,{{ t.id }})">
     {% if access_level in ('manager','admin','owner') %}
-    <div class="todo-card-actions" onclick="event.stopPropagation()">
-      {% if access_level == 'manager' %}
-        {% if t.get('assigned_to_id') == current_user_id|string %}
-        <button class="btn btn-ghost btn-sm" title="Unassign yourself" onclick="selfAssign({{ t.id }}, 'unassign', this)">✗ Unassign</button>
-        {% else %}
-        <button class="btn btn-ghost btn-sm" title="Assign to yourself" onclick="selfAssign({{ t.id }}, 'assign', this)">👤 Claim</button>
-        {% endif %}
-      {% endif %}
-      <button class="btn btn-ghost btn-sm" onclick="editTodoById({{ t.id }})">Edit</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteTodo({{ t.id }}, this)">Delete</button>
-    </div>
+    <input type="checkbox" class="card-checkbox" data-id="{{ t.id }}"
+      onclick="event.stopPropagation();toggleSelect({{ t.id }},this)" />
     {% endif %}
+    <div class="todo-card-top">
+      <span class="id">#{{ t.id }}</span>
+      <span class="title">{{ t.title }}</span>
+      {% if t.get('auto_generated') %}<span class="ai-badge">✦ AI</span>{% endif %}
+      <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+      {% if t.get('assigned_to_id') %}
+      <a href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
+        <img src="{{ t.assigned_to_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:18px;height:18px;border-radius:50%;flex-shrink:0">
+        <span style="display:flex;flex-direction:column;line-height:1">
+          <span style="font-size:.68rem;font-weight:600;color:var(--text)">{{ t.assigned_to_name or t.assigned_to_username or 'Member' }}</span>
+          {% if t.assigned_to_username %}<span style="font-size:.6rem;color:var(--muted);font-family:var(--mono)">@{{ t.assigned_to_username }}</span>{% endif %}
+        </span>
+      </a>
+      {% endif %}
+    </div>
+    {% if t.get('ai_description') %}
+    <div class="todo-card-desc">{{ t.ai_description[:140] }}</div>
+    {% endif %}
+    <div class="todo-card-meta">
+      <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }} {{ t.priority_label }}</span>
+      {% for tag in t.get('tags', []) %}
+        <span class="tag">{{ tag }}</span>
+      {% endfor %}
+      {% if t.get('due_urgency') and t.due_urgency != 'done' %}
+      <span class="due-badge due-{{ t.due_urgency }}">
+        {{ '⚠' if t.due_urgency == 'overdue' else '🕐' if t.due_urgency in ('today','soon') else '📅' }}
+        {{ t.due_label }}
+      </span>
+      {% endif %}
+      {% if t.get('watcher_count') %}
+      <span style="font-size:0.72rem;color:var(--muted)">👁 {{ t.watcher_count }}</span>
+      {% endif %}
+      {% if t.get('total_minutes') %}
+      <span style="font-size:0.72rem;color:var(--muted)">⏱ {{ (t.total_minutes / 60)|round(1) }}h</span>
+      {% endif %}
+      {% if t.get('is_blocked') %}
+      <span style="font-size:0.72rem;background:rgba(226,75,74,0.1);color:var(--blocked);padding:2px 6px;border-radius:4px">⛔ Blocked by {{ t.blocked_by_count }}</span>
+      {% endif %}
+      {% if t.get('created_at_fmt') %}
+      <span class="created-at">{{ t.created_at_fmt }}</span>
+      {% endif %}
+      {% if access_level in ('manager','admin','owner') %}
+      <div class="todo-card-actions" onclick="event.stopPropagation()">
+        {% if access_level == 'manager' %}
+          {% if t.get('assigned_to_id') == current_user_id|string %}
+          <button class="btn btn-ghost btn-sm" title="Unassign yourself" onclick="selfAssign({{ t.id }}, 'unassign', this)">✗ Unassign</button>
+          {% else %}
+          <button class="btn btn-ghost btn-sm" title="Assign to yourself" onclick="selfAssign({{ t.id }}, 'assign', this)">👤 Claim</button>
+          {% endif %}
+        {% endif %}
+        <button class="btn btn-ghost btn-sm" onclick="editTodoById({{ t.id }})">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteTodo({{ t.id }}, this)">Delete</button>
+      </div>
+      {% endif %}
+    </div>
   </div>
-</div>
-{% else %}
-<div class="empty card">
-  <div class="emoji">🔍</div>
-  <p>No TODOs match your filters.</p>
-</div>
-{% endfor %}
+  {% else %}
+  <div class="empty card">
+    <div class="emoji">🔍</div>
+    <p>No TODOs match your filters.</p>
+  </div>
+  {% endfor %}
+  </div>
 </div>
 
-<!-- ── View Modal ── -->
+<!-- ═══════════════════════
+     KANBAN VIEW
+═══════════════════════ -->
+<div id="view-kanban" style="display:none">
+  <div class="kanban-board">
+    <!-- To Do -->
+    <div class="kanban-col">
+      <div class="kanban-col-head">
+        <span class="kanban-col-dot" style="background:var(--todo)"></span>
+        <span class="kanban-col-label">To Do</span>
+        <span class="kanban-col-count" id="k-count-todo">0</span>
+      </div>
+      <div class="kanban-col-body" id="k-col-todo">
+        <div class="kanban-empty">No tasks</div>
+      </div>
+    </div>
+    <!-- In Progress -->
+    <div class="kanban-col">
+      <div class="kanban-col-head">
+        <span class="kanban-col-dot" style="background:var(--inprog)"></span>
+        <span class="kanban-col-label">In Progress</span>
+        <span class="kanban-col-count" id="k-count-in_progress">0</span>
+      </div>
+      <div class="kanban-col-body" id="k-col-in_progress">
+        <div class="kanban-empty">No tasks</div>
+      </div>
+    </div>
+    <!-- Review Needed -->
+    <div class="kanban-col">
+      <div class="kanban-col-head">
+        <span class="kanban-col-dot" style="background:var(--review)"></span>
+        <span class="kanban-col-label">Review</span>
+        <span class="kanban-col-count" id="k-count-review_needed">0</span>
+      </div>
+      <div class="kanban-col-body" id="k-col-review_needed">
+        <div class="kanban-empty">No tasks</div>
+      </div>
+    </div>
+    <!-- Blocked -->
+    <div class="kanban-col">
+      <div class="kanban-col-head">
+        <span class="kanban-col-dot" style="background:var(--blocked)"></span>
+        <span class="kanban-col-label">Blocked</span>
+        <span class="kanban-col-count" id="k-count-blocked">0</span>
+      </div>
+      <div class="kanban-col-body" id="k-col-blocked">
+        <div class="kanban-empty">No tasks</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── View modal ── -->
 <div class="modal-overlay" id="view-modal">
   <div class="modal" onclick="event.stopPropagation()" style="max-width:580px">
-    <!-- Header -->
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1rem;gap:10px">
       <h3 id="vm-title" style="font-size:1rem;line-height:1.4;word-break:break-word">TODO #0</h3>
-      <button class="btn btn-ghost btn-sm" style="flex-shrink:0" onclick="closeModal('view-modal')">✕</button>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <a id="vm-permalink" href="#" class="btn btn-ghost btn-sm" style="font-size:0.75rem">🔗 Permalink</a>
+        <button class="btn btn-ghost btn-sm" onclick="closeModal('view-modal')">✕</button>
+      </div>
     </div>
-
-    <!-- Status + Priority row -->
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem">
       <div id="vm-status"></div>
       <div id="vm-priority"></div>
       <div id="vm-public-badge"></div>
     </div>
-
-    <!-- Main info grid -->
     <div class="detail-grid">
-      <div class="detail-field">
-        <label>Assigned To</label>
-        <div class="val" id="vm-assigned"></div>
-      </div>
-      <div class="detail-field">
-        <label>Added By</label>
-        <div class="val" id="vm-added"></div>
-      </div>
-      <div class="detail-field">
-        <label>Due Date</label>
-        <div class="val" id="vm-due"></div>
-      </div>
-      <div class="detail-field">
-        <label>Created</label>
-        <div class="val" id="vm-created" style="font-size:0.82rem;color:var(--muted)"></div>
-      </div>
+      <div class="detail-field"><label>Assigned To</label><div class="val" id="vm-assigned"></div></div>
+      <div class="detail-field"><label>Added By</label><div class="val" id="vm-added"></div></div>
+      <div class="detail-field"><label>Due Date</label><div class="val" id="vm-due"></div></div>
+      <div class="detail-field"><label>Created</label><div class="val" id="vm-created" style="font-size:0.82rem;color:var(--muted)"></div></div>
     </div>
-
-    <!-- Extra info row: watchers, time, deps -->
     <div id="vm-extra-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:0.75rem;font-size:0.78rem;color:var(--muted)"></div>
-
-    <!-- Tags -->
     <div id="vm-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:0.75rem"></div>
-
-    <!-- Deep links row (Discord thread, site link) -->
     <div id="vm-links-row" style="display:none;gap:6px;flex-wrap:wrap;margin-bottom:0.75rem"></div>
-
-    <!-- AI description -->
     <div id="vm-desc-wrap" style="display:none;margin-bottom:0.75rem">
       <label style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Description</label>
       <div class="source-quote" id="vm-desc"></div>
     </div>
-
     {% if user %}
     <hr>
-    <!-- Action buttons -->
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:1rem" id="vm-actions">
       {% if access_level in ('manager','admin','owner') %}
       <button class="btn btn-primary btn-sm" id="vm-edit-btn">✏️ Edit</button>
@@ -434,18 +561,15 @@
       <button class="btn btn-danger btn-sm" id="vm-delete-btn" onclick="deleteFromView()">🗑 Delete</button>
       {% endif %}
     </div>
-
-    <!-- Comments -->
     <div id="vm-comments-section">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div style="font-size:0.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">💬 Comments</div>
         <div id="vm-comment-count" style="font-size:0.72rem;color:var(--muted);background:var(--surface2);padding:2px 8px;border-radius:10px"></div>
       </div>
       <div id="vm-comments-list" style="display:flex;flex-direction:column;gap:0;margin-bottom:14px"></div>
-      <!-- Reply-to indicator bar (hidden until Reply clicked) -->
       <div id="vm-reply-bar" style="display:none;align-items:center;gap:8px;padding:5px 10px;margin-bottom:6px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--accent)">
         <span id="vm-reply-label" style="font-size:0.78rem;color:var(--muted);flex:1"></span>
-        <button onclick="cancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.8rem;line-height:1;padding:2px 4px" title="Cancel reply">✕</button>
+        <button onclick="cancelReply()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.8rem;line-height:1;padding:2px 4px">✕</button>
       </div>
       <div style="display:flex;gap:8px;align-items:flex-end">
         <div style="flex:1">
@@ -453,14 +577,14 @@
             style="resize:none;line-height:1.5;border-radius:10px"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();postComment()}"></textarea>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="postComment()" style="height:38px;padding:0 14px;border-radius:10px" title="Send">↑</button>
+        <button class="btn btn-primary btn-sm" onclick="postComment()" style="height:38px;padding:0 14px;border-radius:10px">↑</button>
       </div>
     </div>
     {% endif %}
   </div>
 </div>
 
-<!-- ── Edit/Add Modal ── -->
+<!-- ── Edit/Add modal ── -->
 <div class="modal-overlay" id="edit-modal">
   <div class="modal" onclick="event.stopPropagation()">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
@@ -504,7 +628,6 @@
       <label>Due Date <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
       <input class="form-control" type="date" id="em-due-date" />
     </div>
-    <!-- Assignee — managers see self-assign toggle; admins/owners see full search -->
     <div class="form-group" id="em-assign-group">
       <label>Assign To</label>
       <div id="em-assignee-selected" style="display:none" class="assignee-selected">
@@ -530,25 +653,79 @@
 </div>
 
 <script>
-// ── Load todo data from the safe JSON script tag ──
-const _TODOS = JSON.parse(document.getElementById('todos-data').textContent);
+const _TODOS     = JSON.parse(document.getElementById('todos-data').textContent);
 const _TODOS_MAP = Object.fromEntries(_TODOS.map(t => [t.id, t]));
 
 const STATUS_ICONS  = { todo:'○', in_progress:'◑', review_needed:'◇', blocked:'✕', done:'✓' };
 const STATUS_LABELS = { todo:'To Do', in_progress:'In Progress', review_needed:'Review Needed', blocked:'Blocked', done:'Done' };
+const STATUS_COLORS = { todo:'var(--todo)', in_progress:'var(--inprog)', review_needed:'var(--review)', blocked:'var(--blocked)', done:'var(--done)' };
 const PRI_ICONS     = { low:'▽', medium:'◈', high:'▲' };
 const PRI_LABELS    = { low:'Low', medium:'Medium', high:'High' };
 
 const ACCESS_LEVEL  = "{{ access_level }}";
 const CURRENT_UID   = "{{ current_user_id }}";
 
+// ── View toggle (list / kanban) ───────────────────────────────────────────────
+let _currentView = localStorage.getItem('anymex_board_view') || 'list';
+
+function setView(v) {
+  _currentView = v;
+  localStorage.setItem('anymex_board_view', v);
+  document.getElementById('view-list').style.display   = v === 'list'   ? '' : 'none';
+  document.getElementById('view-kanban').style.display = v === 'kanban' ? '' : 'none';
+  document.getElementById('btn-list').classList.toggle('active', v === 'list');
+  document.getElementById('btn-kanban').classList.toggle('active', v === 'kanban');
+  if (v === 'kanban') _buildKanban();
+}
+
+function _buildKanban() {
+  const cols   = ['todo','in_progress','review_needed','blocked'];
+  const groups = { todo:[], in_progress:[], review_needed:[], blocked:[] };
+  _TODOS.forEach(t => { if (groups[t.status]) groups[t.status].push(t); });
+
+  cols.forEach(status => {
+    const body  = document.getElementById('k-col-' + status);
+    const count = document.getElementById('k-count-' + status);
+    const col   = body.closest('.kanban-col');
+    const items = groups[status];
+    count.textContent = items.length;
+    if (col) col.style.display = items.length ? '' : 'none';
+    if (!items.length) { body.innerHTML = ''; return; }
+    body.innerHTML = items.map((t, i) => {
+      const tags = (t.tags||[]).slice(0,2).map(tg=>`<span class="tag">${tg}</span>`).join('');
+      const due  = t.due_urgency && t.due_urgency !== 'done'
+        ? `<span class="due-badge due-${t.due_urgency}">${t.due_label}</span>` : '';
+      const assignee = t.assigned_to_id
+        ? `<a href="/member/${t.assigned_to_id}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
+            <img src="${t.assigned_to_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
+            <span style="display:flex;flex-direction:column;line-height:1">
+              <span style="font-size:.62rem;font-weight:600;color:var(--text)">${t.assigned_to_name||t.assigned_to_username||'Member'}</span>
+              ${t.assigned_to_username?`<span style="font-size:.56rem;color:var(--muted);font-family:var(--mono)">@${t.assigned_to_username}</span>`:''}
+            </span>
+          </a>` : '';
+      const desc = t.ai_description
+        ? `<div class="kanban-card-desc">${t.ai_description}</div>` : '';
+      return `<div class="kanban-card" style="animation-delay:${i*0.04}s" onclick="viewTodoById(${t.id})">
+        <div class="kanban-card-id" style="display:flex;align-items:center;gap:6px">#${t.id}${t.auto_generated?' <span class="ai-badge" style="vertical-align:middle">✦ AI</span>':''}<span style="margin-left:auto">${assignee}</span></div>
+        <div class="kanban-card-title">${t.title}</div>
+        ${desc}
+        <div class="kanban-card-footer">
+          <span class="pri-icon pri-${t.priority||'medium'}" style="font-size:0.75rem">${PRI_ICONS[t.priority||'medium']}</span>
+          ${tags}${due}
+        </div>
+      </div>`;
+    }).join('');
+  });
+}
+
+// Init view
+setView(_currentView);
+
 // ── Bulk selection ────────────────────────────────────────────────────────────
 const _selected = new Set();
 
 function cardClick(e, id) {
-  // If clicking directly on the checkbox or a button, don't open modal
   if (e.target.type === 'checkbox' || e.target.closest('button')) return;
-  // If we're in selection mode, toggle instead of opening modal
   if (_selected.size > 0) {
     const cb = document.querySelector(`.card-checkbox[data-id="${id}"]`);
     if (cb) { cb.checked = !cb.checked; toggleSelect(id, cb); }
@@ -558,8 +735,7 @@ function cardClick(e, id) {
 }
 
 function toggleSelect(id, cb) {
-  if (cb.checked) _selected.add(id);
-  else _selected.delete(id);
+  if (cb.checked) _selected.add(id); else _selected.delete(id);
   const card = document.querySelector(`.todo-card[data-id="${id}"]`);
   if (card) card.classList.toggle('selected', cb.checked);
   _refreshBulkBar();
@@ -568,13 +744,8 @@ function toggleSelect(id, cb) {
 function _refreshBulkBar() {
   const bar = document.getElementById('bulk-bar');
   if (!bar) return;
-  if (_selected.size === 0) {
-    bar.style.display = 'none';
-  } else {
-    bar.style.display = 'flex';
-    document.getElementById('bulk-count').textContent =
-      `${_selected.size} selected`;
-  }
+  bar.style.display = _selected.size ? 'flex' : 'none';
+  if (_selected.size) document.getElementById('bulk-count').textContent = `${_selected.size} selected`;
 }
 
 function clearSelection() {
@@ -588,38 +759,30 @@ function clearSelection() {
 }
 
 async function bulkAction(type, value) {
-  if (_selected.size === 0) return;
+  if (!_selected.size) return;
   const ids = [..._selected];
   let patch = {};
   if (type === 'status')    patch = { status: value };
   if (type === 'assign_me') patch = { assigned_to_id: CURRENT_UID };
-
   const bar = document.getElementById('bulk-bar');
   bar.style.opacity = '0.5';
-
   try {
-    const res = await fetch('/api/todos/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, patch }),
-    });
+    const res  = await fetch('/api/todos/bulk', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids, patch}) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed');
     toast(`Updated ${data.updated.length} TODO${data.updated.length !== 1 ? 's' : ''}`);
     clearSelection();
     setTimeout(() => location.reload(), 700);
-  } catch(e) {
-    toast(e.message, 'error');
-    bar.style.opacity = '1';
-  }
+  } catch(e) { toast(e.message, 'error'); bar.style.opacity = '1'; }
 }
 
-function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
-}
-document.querySelectorAll('.modal-overlay').forEach(m => {
-  m.addEventListener('click', () => m.classList.remove('open'));
-});
+// ── Modal helpers ─────────────────────────────────────────────────────────────
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', () => m.classList.remove('open')));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open')); });
+
+// ── View todo ─────────────────────────────────────────────────────────────────
+let _currentViewId = null;
 
 function viewTodoById(id) {
   const t = _TODOS_MAP[id];
@@ -629,93 +792,102 @@ function viewTodoById(id) {
   loadComments(id);
   const watchBtn = document.getElementById('vm-watch-btn');
   if (watchBtn) {
-    const watchers = t.watchers || [];
-    watchBtn.textContent = watchers.length > 0 ? `👁 Watching (${watchers.length})` : '👁 Watch';
+    const wc = (t.watchers||[]).length;
+    watchBtn.textContent = wc > 0 ? `👁 Watching (${wc})` : '👁 Watch';
   }
 }
 
 function viewTodo(t) {
-  const status = t.status || 'todo';
-  const pri    = t.priority || 'medium';
+  const status   = t.status || 'todo';
+  const pri      = t.priority || 'medium';
   const isPublic = t.public !== false;
 
   document.getElementById('vm-title').textContent = `#${t.id} — ${t.title}`;
 
-  // Status + Priority + Public badge row
-  document.getElementById('vm-status').innerHTML =
-    `<span class="status-pill status-${status}">${STATUS_ICONS[status] || '○'} ${STATUS_LABELS[status] || status}</span>`;
-  document.getElementById('vm-priority').innerHTML =
-    `<span class="pri-icon pri-${pri}">${PRI_ICONS[pri] || '◈'} ${PRI_LABELS[pri] || pri}</span>`;
-  document.getElementById('vm-public-badge').innerHTML =
-    `<span style="font-size:0.72rem;padding:3px 8px;border-radius:10px;background:${isPublic ? 'rgba(29,158,117,0.12)' : 'rgba(107,114,128,0.1)'};color:${isPublic ? 'var(--done)' : 'var(--muted)'}">${isPublic ? '🌐 Public' : '🔒 Private'}</span>`;
+  const permalink = document.getElementById('vm-permalink');
+  if (permalink) permalink.href = `/todo/${t.id}`;
 
-  // Assigned-to — clickable member profile link + assign/unassign button
-  const assignedEl = document.getElementById('vm-assigned');
-  const assignedName = t.assigned_to_name || (t.assigned_to_id ? 'Member' : null);
-  let assignedHtml = assignedName && t.assigned_to_id
-    ? `<a href="/member/${t.assigned_to_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${assignedName}</a>`
-    : '<span style="color:var(--muted)">Unassigned</span>';
+  document.getElementById('vm-status').innerHTML =
+    `<span class="status-pill status-${status}">${STATUS_ICONS[status]||'○'} ${STATUS_LABELS[status]||status}</span>`;
+  document.getElementById('vm-priority').innerHTML =
+    `<span class="pri-icon pri-${pri}">${PRI_ICONS[pri]||'◈'} ${PRI_LABELS[pri]||pri}</span>`;
+  document.getElementById('vm-public-badge').innerHTML =
+    `<span style="font-size:0.72rem;padding:3px 8px;border-radius:10px;background:${isPublic?'rgba(29,158,117,0.12)':'rgba(107,114,128,0.1)'};color:${isPublic?'var(--done)':'var(--muted)'}">${isPublic?'🌐 Public':'🔒 Private'}</span>`;
+
+  // Assigned to — chip with avatar + display name + @username
+  const assignedEl       = document.getElementById('vm-assigned');
+  const assignedDisplay  = t.assigned_to_name     || null;
+  const assignedUsername = t.assigned_to_username || null;
+  const assignedAvatar   = t.assigned_to_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  let assignedHtml       = '';
+  if (t.assigned_to_id && (assignedDisplay || assignedUsername)) {
+    assignedHtml = `<a href="/member/${t.assigned_to_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+      <img src="${assignedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
+      <span style="display:flex;flex-direction:column;gap:0">
+        <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${assignedDisplay || assignedUsername}</span>
+        ${assignedUsername ? `<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@${assignedUsername}</span>` : ''}
+      </span>
+    </a>`;
+  } else {
+    assignedHtml = '<span style="color:var(--muted)">Unassigned</span>';
+  }
   if (['manager','admin','owner'].includes(ACCESS_LEVEL)) {
-    if (t.assigned_to_id === CURRENT_UID) {
+    if (t.assigned_to_id === CURRENT_UID)
       assignedHtml += ` <button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="selfAssign(${t.id},'unassign',this)">✗ Unassign me</button>`;
-    } else {
+    else
       assignedHtml += ` <button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="selfAssign(${t.id},'assign',this)">👤 Assign to me</button>`;
-    }
   }
   assignedEl.innerHTML = assignedHtml;
 
-  // Added By — show display name (resolved from members DB), link to profile
-  const addedEl = document.getElementById('vm-added');
-  const addedName = t.added_by_display || t.added_by || null;
-  if (t.added_by_id && addedName) {
-    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${addedName}</a>`;
+  // Added by — chip with avatar + display name + @username
+  const addedEl       = document.getElementById('vm-added');
+  const addedDisplay  = t.added_by_display  || null;
+  const addedUsername = t.added_by_username || null;
+  const addedAvatar   = t.added_by_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  if (t.added_by_id && (addedDisplay || addedUsername)) {
+    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+      <img src="${addedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
+      <span style="display:flex;flex-direction:column;gap:0">
+        <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${addedDisplay || addedUsername}</span>
+        ${addedUsername ? `<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@${addedUsername}</span>` : ''}
+      </span>
+    </a>`;
   } else if (t.added_by_id) {
-    // Name not in members DB yet — show linked ID
-    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">Member</a>`;
+    addedEl.innerHTML = `<span style="color:var(--muted)">Member</span>`;
   } else {
-    addedEl.textContent = addedName || '—';
+    addedEl.innerHTML = `<span style="color:var(--muted)">—</span>`;
   }
 
-  // Due date
+  // Due
   const dueEl = document.getElementById('vm-due');
   if (t.due_date) {
     const urgency = t.due_urgency || 'normal';
-    const label   = t.due_label || t.due_date_fmt || (t.due_date || '').slice(0,10);
-    const icon    = urgency === 'overdue' ? '⚠ ' : urgency === 'today' ? '🕐 ' : '📅 ';
+    const label   = t.due_label || t.due_date_fmt || (t.due_date||'').slice(0,10);
+    const icon    = urgency==='overdue'?'⚠ ':urgency==='today'?'🕐 ':'📅 ';
     dueEl.innerHTML = `<span class="due-badge due-${urgency}">${icon}${label}</span>`;
-  } else {
-    dueEl.innerHTML = '<span style="color:var(--muted);font-size:0.82rem">No due date</span>';
-  }
+  } else dueEl.innerHTML = '<span style="color:var(--muted);font-size:0.82rem">No due date</span>';
   document.getElementById('vm-created').textContent = t.created_at_fmt || '—';
 
-  // Extra info: watchers, time, deps, recur
+  // Extras
   const extras = [];
-  if ((t.watcher_count || 0) > 0) extras.push(`👁 ${t.watcher_count} watcher${t.watcher_count !== 1 ? 's' : ''}`);
-  if ((t.total_minutes || 0) > 0) extras.push(`⏱ ${(t.total_minutes / 60).toFixed(1)}h logged`);
-  if ((t.blocks_count || 0) > 0) extras.push(`⛓ blocks ${t.blocks_count}`);
-  if ((t.blocked_by_count || 0) > 0) extras.push(`⛔ blocked by ${t.blocked_by_count}`);
-  if (t.recur) extras.push(`🔁 recurring`);
+  if ((t.watcher_count||0)>0)    extras.push(`👁 ${t.watcher_count} watcher${t.watcher_count!==1?'s':''}`);
+  if ((t.total_minutes||0)>0)    extras.push(`⏱ ${(t.total_minutes/60).toFixed(1)}h logged`);
+  if ((t.blocks_count||0)>0)     extras.push(`⛓ blocks ${t.blocks_count}`);
+  if ((t.blocked_by_count||0)>0) extras.push(`⛔ blocked by ${t.blocked_by_count}`);
+  if (t.recur) extras.push('🔁 recurring');
   const extraRow = document.getElementById('vm-extra-row');
   if (extraRow) extraRow.innerHTML = extras.join('<span style="color:var(--border);margin:0 4px">·</span>');
 
   // Tags
-  document.getElementById('vm-tags').innerHTML = (t.tags || []).map(tag =>
-    `<span class="tag">${tag}</span>`
-  ).join('');
+  document.getElementById('vm-tags').innerHTML = (t.tags||[]).map(tag=>`<span class="tag">${tag}</span>`).join('');
 
-  // Discord + Site deep links
+  // Discord links
   const linksRow = document.getElementById('vm-links-row');
   if (linksRow) {
-    const linkParts = [];
-    if (t.discord_thread_url) {
-      linkParts.push(`<a href="${t.discord_thread_url}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:var(--accent2);text-decoration:none;font-size:0.8rem;padding:3px 8px;border-radius:6px;background:rgba(88,101,242,0.1);border:1px solid rgba(88,101,242,0.2)" title="Open Discord thread"><svg width=14 height=14 viewBox="0 0 127.14 96.36" fill="currentColor"><path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.12 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.12 12.69-11.43 12.69z"/></svg>Discord Thread</a>`);
-    }
-    if (linkParts.length > 0) {
-      linksRow.style.display = 'flex';
-      linksRow.innerHTML = linkParts.join('');
-    } else {
-      linksRow.style.display = 'none';
-    }
+    const parts = [];
+    if (t.discord_thread_url) parts.push(`<a href="${t.discord_thread_url}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:var(--accent2);text-decoration:none;font-size:0.8rem;padding:3px 8px;border-radius:6px;background:rgba(88,101,242,0.1);border:1px solid rgba(88,101,242,0.2)">Discord Thread</a>`);
+    linksRow.style.display = parts.length ? 'flex' : 'none';
+    if (parts.length) linksRow.innerHTML = parts.join('');
   }
 
   // Description
@@ -724,28 +896,18 @@ function viewTodo(t) {
   descWrap.style.display = desc ? 'block' : 'none';
   if (desc) document.getElementById('vm-desc').textContent = desc;
 
-  // Edit button
+  // Edit / watch / public btns
   const editBtn = document.getElementById('vm-edit-btn');
   if (editBtn) editBtn.onclick = () => { closeModal('view-modal'); editTodo(t); };
-
-  // Watch button
   const watchBtn = document.getElementById('vm-watch-btn');
-  if (watchBtn) {
-    const wc = (t.watchers || []).length;
-    watchBtn.textContent = wc > 0 ? `👁 Watching (${wc})` : '👁 Watch';
-  }
-
-  // Public toggle button
+  if (watchBtn) { const wc=(t.watchers||[]).length; watchBtn.textContent = wc>0?`👁 Watching (${wc})`:'👁 Watch'; }
   const publicBtn = document.getElementById('vm-public-btn');
-  if (publicBtn) {
-    publicBtn.textContent = isPublic ? '🌐 Public (hide)' : '🔒 Private (publish)';
-    publicBtn.style.color = isPublic ? 'var(--done)' : 'var(--muted)';
-  }
+  if (publicBtn) { publicBtn.textContent = isPublic?'🌐 Public (hide)':'🔒 Private (publish)'; publicBtn.style.color = isPublic?'var(--done)':'var(--muted)'; }
 
   document.getElementById('view-modal').classList.add('open');
 }
 
-
+// ── Add / Edit modal ──────────────────────────────────────────────────────────
 function openAddModal() {
   document.getElementById('em-title').textContent = 'Add TODO';
   document.getElementById('em-id').value = '';
@@ -754,48 +916,33 @@ function openAddModal() {
   document.getElementById('em-status').value = 'todo';
   document.getElementById('em-priority').value = 'medium';
   document.getElementById('em-tags').value = '';
-  clearAssignee();
   document.getElementById('em-due-date').value = '';
+  clearAssignee();
   _showAssignSearch();
   document.getElementById('edit-modal').classList.add('open');
 }
 
-function editTodoById(id) {
-  const t = _TODOS_MAP[id];
-  if (!t) return;
-  editTodo(t);
-}
+function editTodoById(id) { const t = _TODOS_MAP[id]; if (t) editTodo(t); }
 
 function editTodo(t) {
   document.getElementById('em-title').textContent = `Edit TODO #${t.id}`;
   document.getElementById('em-id').value = t.id;
-  document.getElementById('em-title-input').value = t.title || '';
-  document.getElementById('em-desc-input').value = t.ai_description || '';
-  document.getElementById('em-status').value = t.status || 'todo';
-  document.getElementById('em-priority').value = t.priority || 'medium';
-  document.getElementById('em-tags').value = (t.tags || []).join(', ');
-
-  // Prefill assignee
-  clearAssignee(true); // silent clear
-  if (t.assigned_to_id) {
-    _setAssignee({
-      id: t.assigned_to_id,
-      display_name: t.assigned_to_name || 'Member',
-      avatar_url: `https://cdn.discordapp.com/embed/avatars/0.png`,
-    });
-  }
-  // Prefill due date
-  document.getElementById('em-due-date').value = (t.due_date || '').slice(0,10);
-
+  document.getElementById('em-title-input').value = t.title||'';
+  document.getElementById('em-desc-input').value = t.ai_description||'';
+  document.getElementById('em-status').value = t.status||'todo';
+  document.getElementById('em-priority').value = t.priority||'medium';
+  document.getElementById('em-tags').value = (t.tags||[]).join(', ');
+  clearAssignee(true);
+  if (t.assigned_to_id) _setAssignee({ id:t.assigned_to_id, display_name:t.assigned_to_name||'Member', avatar_url:'https://cdn.discordapp.com/embed/avatars/0.png' });
+  document.getElementById('em-due-date').value = (t.due_date||'').slice(0,10);
   _showAssignSearch();
   document.getElementById('edit-modal').classList.add('open');
 }
 
-// ── Assignee search ──────────────────────────────────────────────────────────
+// ── Assignee search ───────────────────────────────────────────────────────────
 let _assignSearchTimer = null;
 
 function _showAssignSearch() {
-  // Managers can also search (they can assign themselves, but let them see the field)
   const grp = document.getElementById('em-assign-group');
   if (grp) grp.style.display = ['manager','admin','owner'].includes(ACCESS_LEVEL) ? '' : 'none';
 }
@@ -809,11 +956,11 @@ function clearAssignee(silent) {
   document.getElementById('em-member-results').style.display = 'none';
 }
 
-function _setAssignee(member) {
-  document.getElementById('em-assignee-id').value   = member.id;
-  document.getElementById('em-assignee-name').value = member.display_name;
-  document.getElementById('em-assignee-avatar').src  = member.avatar_url;
-  document.getElementById('em-assignee-label').textContent = member.display_name;
+function _setAssignee(m) {
+  document.getElementById('em-assignee-id').value   = m.id;
+  document.getElementById('em-assignee-name').value = m.display_name;
+  document.getElementById('em-assignee-avatar').src = m.avatar_url;
+  document.getElementById('em-assignee-label').textContent = m.display_name;
   document.getElementById('em-assignee-selected').style.display = 'flex';
   document.getElementById('em-assign-input-wrap').style.display = 'none';
   document.getElementById('em-member-results').style.display   = 'none';
@@ -821,223 +968,152 @@ function _setAssignee(member) {
 
 function onAssigneeSearch(val) {
   clearTimeout(_assignSearchTimer);
-  const resultsEl = document.getElementById('em-member-results');
-  if (!val.trim()) { resultsEl.style.display = 'none'; return; }
-
+  const el = document.getElementById('em-member-results');
+  if (!val.trim()) { el.style.display = 'none'; return; }
   _assignSearchTimer = setTimeout(async () => {
     try {
-      const res = await fetch(`/api/members/search?q=${encodeURIComponent(val)}`);
+      const res  = await fetch(`/api/members/search?q=${encodeURIComponent(val)}`);
       const data = await res.json();
-      // If DB isn't synced yet, show a friendly message
-      if (data.syncing) {
-        resultsEl.innerHTML = '<div style="padding:10px 14px;font-size:0.8rem;color:var(--muted)">⏳ Member DB is syncing… try again in a few seconds</div>';
-        resultsEl.style.display = 'block';
-        return;
-      }
-      const members = Array.isArray(data) ? data : (data.results || []);
-      if (!Array.isArray(members) || members.length === 0) {
-        resultsEl.innerHTML = '<div style="padding:10px 14px;font-size:0.8rem;color:var(--muted)">No members found</div>';
-        resultsEl.style.display = 'block';
-        return;
-      }
-      resultsEl.innerHTML = members.map(m => `
-        <div class="member-result" onclick="pickMember(${JSON.stringify(m).replace(/"/g, '&quot;')})">
-          <img src="${m.avatar_url}" alt="" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" />
-          <div>
-            <div class="mname">${m.display_name}</div>
-            <div class="muname">@${m.username}${m.role_names && m.role_names.length ? ' · ' + m.role_names.slice(0,2).join(', ') : ''}</div>
-          </div>
-          ${m.is_admin ? '<span class="mrole" style="background:rgba(226,75,74,.1);color:var(--blocked)">Admin</span>' : m.is_manager ? '<span class="mrole">Manager</span>' : ''}
-        </div>
-      `).join('');
-      resultsEl.style.display = 'block';
-    } catch(e) {
-      resultsEl.style.display = 'none';
-    }
+      if (data.syncing) { el.innerHTML = '<div style="padding:10px 14px;font-size:0.8rem;color:var(--muted)">⏳ Syncing…</div>'; el.style.display='block'; return; }
+      const members = Array.isArray(data)?data:(data.results||[]);
+      if (!members.length) { el.innerHTML = '<div style="padding:10px 14px;font-size:0.8rem;color:var(--muted)">No members found</div>'; el.style.display='block'; return; }
+      el.innerHTML = members.map(m=>`<div class="member-result" onclick="pickMember(${JSON.stringify(m).replace(/"/g,'&quot;')})"><img src="${m.avatar_url}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"/><div><div class="mname">${m.display_name}</div><div class="muname">@${m.username}</div></div>${m.is_admin?'<span class="mrole" style="background:rgba(226,75,74,.1);color:var(--blocked)">Admin</span>':m.is_manager?'<span class="mrole">Manager</span>':''}</div>`).join('');
+      el.style.display = 'block';
+    } catch(e) { el.style.display = 'none'; }
   }, 300);
 }
 
-function pickMember(member) {
-  _setAssignee(member);
-}
+function pickMember(m) { _setAssignee(m); }
 
-// ── Self-assign (Claim / Unassign) ───────────────────────────────────────────
+// ── Self-assign ───────────────────────────────────────────────────────────────
 async function selfAssign(todoId, action, btn) {
-  const prev = btn.textContent;
-  btn.disabled = true; btn.textContent = '…';
+  const prev = btn.textContent; btn.disabled=true; btn.textContent='…';
   try {
-    const res = await fetch(`/api/todo/${todoId}/assign`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
-    });
+    const res  = await fetch(`/api/todo/${todoId}/assign`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action}) });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed');
-    toast(action === 'assign' ? '👤 Assigned to you!' : 'Unassigned');
+    if (!res.ok) throw new Error(data.error||'Failed');
+    toast(action==='assign'?'👤 Assigned to you!':'Unassigned');
     setTimeout(() => location.reload(), 500);
-  } catch(e) {
-    toast(e.message, 'error');
-    btn.disabled = false; btn.textContent = prev;
-  }
+  } catch(e) { toast(e.message,'error'); btn.disabled=false; btn.textContent=prev; }
 }
 
-// ── Save (create/update) ─────────────────────────────────────────────────────
+// ── Save todo ─────────────────────────────────────────────────────────────────
 async function saveTodo() {
   const id       = document.getElementById('em-id').value;
   const title    = document.getElementById('em-title-input').value.trim();
   const desc     = document.getElementById('em-desc-input').value.trim();
   const status   = document.getElementById('em-status').value;
   const priority = document.getElementById('em-priority').value;
-  const tagsRaw  = document.getElementById('em-tags').value;
-  const tags     = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-
-  // Assignee — for managers, if they filled the search field it means themselves
+  const tags     = document.getElementById('em-tags').value.split(',').map(t=>t.trim()).filter(Boolean);
   let assigneeId   = document.getElementById('em-assignee-id').value || null;
   let assigneeName = document.getElementById('em-assignee-name').value || null;
-
-  if (ACCESS_LEVEL === 'manager' && !assigneeId) {
-    // If manager typed something in the search box, treat it as self-assign intent
+  if (ACCESS_LEVEL==='manager' && !assigneeId) {
     const typed = document.getElementById('em-assignee-search').value.trim();
-    if (typed) {
-      assigneeId   = CURRENT_UID;
-      assigneeName = null; // server will fill from session
-    }
+    if (typed) { assigneeId = CURRENT_UID; assigneeName = null; }
   }
-
-  if (!title) { toast('Title is required', 'error'); return; }
-
+  if (!title) { toast('Title is required','error'); return; }
   const btn = document.getElementById('em-save-btn');
-  btn.disabled = true; btn.textContent = 'Saving…';
-
+  btn.disabled=true; btn.textContent='Saving…';
   try {
     const dueDate = document.getElementById('em-due-date').value || null;
-  const body = { title, description: desc, status, priority, tags, due_date: dueDate };
+    const body = { title, description:desc, status, priority, tags, due_date:dueDate };
     if (assigneeId !== undefined) body.assigned_to_id = assigneeId;
     if (assigneeName)             body.assigned_to_name = assigneeName;
-
-    if (id) {
-      await api('PATCH', `/api/todo/${id}`, body);
-      toast(`TODO #${id} updated!`);
-    } else {
-      await api('POST', '/api/todo', body);
-      toast('TODO created!');
-    }
+    if (id) { await api('PATCH',`/api/todo/${id}`,body); toast(`TODO #${id} updated!`); }
+    else    { await api('POST','/api/todo',body); toast('TODO created!'); }
     closeModal('edit-modal');
     setTimeout(() => location.reload(), 600);
-  } catch(e) {
-    toast(e.message, 'error');
-    btn.disabled = false; btn.textContent = 'Save';
-  }
+  } catch(e) { toast(e.message,'error'); btn.disabled=false; btn.textContent='Save'; }
 }
 
 async function deleteTodo(id, btn) {
   const card  = btn.closest('.todo-card');
-  const title = card ? card.querySelector('.title')?.textContent?.trim() : `#${id}`;
+  const title = card?.querySelector('.title')?.textContent?.trim() || `#${id}`;
   if (!confirm(`Delete TODO #${id} — "${title}"?`)) return;
-  try {
-    await api('DELETE', `/api/todo/${id}`);
-    toast(`TODO #${id} deleted`);
-    setTimeout(() => location.reload(), 600);
-  } catch(e) {
-    toast(e.message, 'error');
-  }
+  try { await api('DELETE',`/api/todo/${id}`); toast(`TODO #${id} deleted`); setTimeout(() => location.reload(), 600); }
+  catch(e) { toast(e.message,'error'); }
 }
 
-// Hide assignee field for public/member on page load
-_showAssignSearch();
-
-// Close member search dropdown on outside click
-document.addEventListener('click', e => {
-  const wrap = document.getElementById('em-assign-input-wrap');
-  if (wrap && !wrap.contains(e.target)) {
-    document.getElementById('em-member-results').style.display = 'none';
-  }
-});
-
-// ── Watch / Comments / Time ────────────────────────────────────────────────────
-let _currentViewId = null;
-
+// ── Watch / toggle public ─────────────────────────────────────────────────────
 async function togglePublic() {
   if (!_currentViewId) return;
-  const t = _TODOS_MAP[_currentViewId];
-  if (!t) return;
-  const isPublic = t.public !== false;
-  const newPublic = !isPublic;
+  const t = _TODOS_MAP[_currentViewId]; if (!t) return;
+  const newPublic = !(t.public !== false);
   try {
-    await api('POST', `/api/todo/${_currentViewId}/public`, { public: newPublic });
-    t.public = newPublic;
-    _TODOS_MAP[_currentViewId] = t;
+    await api('POST',`/api/todo/${_currentViewId}/public`,{public:newPublic});
+    t.public = newPublic; _TODOS_MAP[_currentViewId] = t;
     const btn = document.getElementById('vm-public-btn');
-    if (btn) {
-      btn.textContent = newPublic ? '🌐 Public (click to hide)' : '🔒 Private (click to publish)';
-      btn.style.color = newPublic ? 'var(--done)' : 'var(--muted)';
-    }
-    toast(newPublic ? 'TODO is now public on roadmap & changelog' : 'TODO hidden from public views');
-  } catch(e) { toast(e.message, 'error'); }
+    if (btn) { btn.textContent = newPublic?'🌐 Public (click to hide)':'🔒 Private (click to publish)'; btn.style.color = newPublic?'var(--done)':'var(--muted)'; }
+    toast(newPublic?'TODO is now public':'TODO hidden from public views');
+  } catch(e) { toast(e.message,'error'); }
 }
 
-function _relativeTime(isoStr) {
-  if (!isoStr) return '';
+async function toggleWatch() {
+  if (!_currentViewId) return;
+  const btn = document.getElementById('vm-watch-btn');
+  const isWatching = btn && btn.textContent.includes('Watching');
   try {
-    const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
-    if (diff < 60)    return 'just now';
-    if (diff < 3600)  return Math.floor(diff/60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-    const d = new Date(isoStr);
-    return d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+    const res = await api('POST',`/api/todo/${_currentViewId}/watch`,{action:isWatching?'unwatch':'watch'});
+    toast(res.action==='watching'?'👁 Now watching this TODO':'Unwatched');
+    const count = (res.watchers||[]).length;
+    if (btn) btn.textContent = count>0?`👁 Watching (${count})`:'👁 Watch';
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function openTimeLog() {
+  if (!_currentViewId) return;
+  const mins = prompt('Log time (minutes):');
+  if (!mins || isNaN(parseInt(mins))) return;
+  api('POST',`/api/todo/${_currentViewId}/time`,{minutes:parseInt(mins)})
+    .then(res => toast(`Logged ${mins} mins! Total: ${res.total_minutes} mins`))
+    .catch(e => toast(e.message,'error'));
+}
+
+async function deleteFromView(id) {
+  const todoId = id || _currentViewId; if (!todoId) return;
+  if (!confirm(`Delete TODO #${todoId}? This cannot be undone.`)) return;
+  try {
+    await api('DELETE',`/api/todo/${todoId}`);
+    closeModal('view-modal');
+    toast(`TODO #${todoId} deleted.`);
+    const card = document.querySelector(`.todo-card[data-id="${todoId}"]`);
+    if (card) card.remove();
+    delete _TODOS_MAP[todoId];
+  } catch(e) { toast(e.message,'error'); }
+}
+
+// ── Comments ──────────────────────────────────────────────────────────────────
+let _replyingTo = null;
+
+function _relativeTime(iso) {
+  if (!iso) return '';
+  try {
+    const diff = Math.floor((Date.now()-new Date(iso))/1000);
+    if (diff<60)    return 'just now';
+    if (diff<3600)  return Math.floor(diff/60)+'m ago';
+    if (diff<86400) return Math.floor(diff/3600)+'h ago';
+    return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric'});
   } catch(e) { return ''; }
 }
 
-function _escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Comments with threaded replies ──────────────────────────────────────────
-let _replyingTo = null; // { id, user_name } of comment being replied to
+function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function _renderComment(c, todoId, depth) {
-  // depth: 0 = top-level, 1+ = nested. Cap indent at depth 3.
-  const indentPx = Math.min(depth, 3) * 32;
-  const indent = indentPx > 0 ? `margin-left:${indentPx}px;` : '';
-  const avatarSize = depth === 0 ? '28px' : '22px';
-  const isDeleted = c.deleted;
-
-  if (isDeleted) {
-    // Tombstone — keep placeholder so child replies still have context
-    return `<div class="comment-item" data-cid="${c.id}"
-        style="display:flex;gap:10px;align-items:flex-start;padding:6px 0 4px;${indent}">
-      <div style="width:${avatarSize};height:${avatarSize};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div>
-      <div style="flex:1;min-width:0">
-        <span style="font-size:0.8rem;color:var(--muted);font-style:italic">[comment deleted]</span>
-      </div>
-    </div>`;
-  }
-
-  const canDelete = CURRENT_UID === c.user_id || ['manager','admin','owner'].includes(ACCESS_LEVEL);
-  const deleteBtn = canDelete
-    ? `<button data-cid="${c.id}" data-tid="${todoId}"
-         onclick="deleteComment(this.dataset.tid, this.dataset.cid)"
-         title="Delete" class="del-comment-btn"
-         style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">✕</button>`
-    : '';
-  // Reply button on any comment (not just top-level)
-  const replyBtn = `<button onclick="startReply('${c.id}','${_escHtml(c.user_name)}')"
-       class="reply-btn"
-       style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:0.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">↩ Reply</button>`;
-  return `<div class="comment-item" data-cid="${c.id}"
-      style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${indent}"
-      onmouseenter="this.querySelectorAll('.del-comment-btn,.reply-btn').forEach(b=>b.style.opacity=1)"
-      onmouseleave="this.querySelectorAll('.del-comment-btn,.reply-btn').forEach(b=>b.style.opacity=0)">
-    <img src="${c.user_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}"
-      style="width:${avatarSize};height:${avatarSize};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px" />
+  const indent = Math.min(depth,3)*32;
+  const sz     = depth===0?'28px':'22px';
+  if (c.deleted) return `<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0 4px;${indent?'margin-left:'+indent+'px':''}"><div style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div><span style="font-size:.8rem;color:var(--muted);font-style:italic">[comment deleted]</span></div>`;
+  const canDel = CURRENT_UID===c.user_id||['manager','admin','owner'].includes(ACCESS_LEVEL);
+  const delBtn = canDel ? `<button data-cid="${c.id}" data-tid="${todoId}" onclick="deleteComment(this.dataset.tid,this.dataset.cid)" class="del-comment-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">✕</button>` : '';
+  const replyBtn = `<button onclick="startReply('${c.id}','${_esc(c.user_name)}')" class="reply-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;line-height:1;opacity:0;transition:opacity .15s">↩ Reply</button>`;
+  return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${indent?'margin-left:'+indent+'px':''}" onmouseenter="this.querySelectorAll('.del-comment-btn,.reply-btn').forEach(b=>b.style.opacity=1)" onmouseleave="this.querySelectorAll('.del-comment-btn,.reply-btn').forEach(b=>b.style.opacity=0)">
+    <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px"/>
     <div style="flex:1;min-width:0">
       <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px;flex-wrap:wrap">
-        <span style="font-size:${depth === 0 ? '0.8' : '0.77'}rem;font-weight:700;color:var(--text)">${_escHtml(c.user_name)}</span>
-        <span style="font-size:0.71rem;color:var(--muted)">${_relativeTime(c.ts)}</span>
-        ${replyBtn}
-        ${deleteBtn}
+        <span style="font-size:${depth===0?'0.8':'0.77'}rem;font-weight:700;color:var(--text)">${_esc(c.user_name)}</span>
+        <span style="font-size:.71rem;color:var(--muted)">${_relativeTime(c.ts)}</span>
+        ${replyBtn}${delBtn}
       </div>
-      <div style="font-size:0.83rem;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word">${_escHtml(c.text)}</div>
+      <div style="font-size:.83rem;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word">${_esc(c.text)}</div>
     </div>
   </div>`;
 }
@@ -1046,164 +1122,77 @@ async function loadComments(todoId) {
   const list    = document.getElementById('vm-comments-list');
   const countEl = document.getElementById('vm-comment-count');
   if (!list) return;
-  _replyingTo = null;
-  _resetReplyBar();
+  _replyingTo = null; _resetReplyBar();
   try {
-    const all = await (await fetch(`/api/todo/${todoId}/comments`)).json();
-    // Count only top-level for display, but show total
-    const topLevel = all.filter(c => !c.reply_to);
-    const replyCount = all.length - topLevel.length;
-    if (countEl) {
-      const label = all.length
-        ? `${topLevel.length} comment${topLevel.length !== 1 ? 's' : ''}${replyCount ? ` · ${replyCount} repl${replyCount !== 1 ? 'ies' : 'y'}` : ''}`
-        : '';
-      countEl.textContent = label;
-    }
-    if (!all.length) {
-      list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:0.82rem">
-        <div style="font-size:1.4rem;margin-bottom:4px">💬</div>No comments yet — be the first!</div>`;
-      return;
-    }
-    // Build parent → children map for unlimited nesting
+    const all      = await (await fetch(`/api/todo/${todoId}/comments`)).json();
+    const topLevel = all.filter(c=>!c.reply_to);
+    const repCount = all.length - topLevel.length;
+    if (countEl) countEl.textContent = all.length ? `${topLevel.length} comment${topLevel.length!==1?'s':''}${repCount?` · ${repCount} repl${repCount!==1?'ies':'y'}`:'' }` : '';
+    if (!all.length) { list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:.82rem"><div style="font-size:1.4rem;margin-bottom:4px">💬</div>No comments yet — be the first!</div>`; return; }
     const childMap = {};
-    all.forEach(c => {
-      if (c.reply_to) {
-        (childMap[c.reply_to] = childMap[c.reply_to] || []).push(c);
-      }
-    });
-    function _renderThread(c, depth) {
-      let h = _renderComment(c, todoId, depth);
-      (childMap[c.id] || []).forEach(child => { h += _renderThread(child, depth + 1); });
-      return h;
-    }
-    let html = '';
-    topLevel.forEach((c, i) => {
-      html += `<div style="${i > 0 ? 'border-top:1px solid var(--border)' : ''}">`;
-      html += _renderThread(c, 0);
-      html += `</div>`;
-    });
-    list.innerHTML = html;
-  } catch(e) { if(list) list.innerHTML = ''; }
+    all.forEach(c => { if (c.reply_to) { (childMap[c.reply_to]=childMap[c.reply_to]||[]).push(c); } });
+    function thread(c, d) { let h=_renderComment(c,todoId,d); (childMap[c.id]||[]).forEach(ch=>{ h+=thread(ch,d+1); }); return h; }
+    list.innerHTML = topLevel.map((c,i)=>`<div style="${i>0?'border-top:1px solid var(--border)':''}">${thread(c,0)}</div>`).join('');
+  } catch(e) { if(list) list.innerHTML=''; }
 }
 
-function startReply(commentId, userName) {
-  _replyingTo = { id: commentId, user_name: userName };
+function startReply(id, name) {
+  _replyingTo = {id, user_name:name};
   const bar = document.getElementById('vm-reply-bar');
-  const label = document.getElementById('vm-reply-label');
-  if (bar) bar.style.display = 'flex';
-  if (label) label.textContent = `Replying to ${userName}`;
-  const input = document.getElementById('vm-comment-input');
-  if (input) { input.placeholder = `Reply to ${userName}…`; input.focus(); }
+  const lbl = document.getElementById('vm-reply-label');
+  if (bar) bar.style.display='flex'; if (lbl) lbl.textContent=`Replying to ${name}`;
+  const inp = document.getElementById('vm-comment-input');
+  if (inp) { inp.placeholder=`Reply to ${name}…`; inp.focus(); }
 }
 
-function cancelReply() {
-  _replyingTo = null;
-  _resetReplyBar();
-}
+function cancelReply() { _replyingTo=null; _resetReplyBar(); }
 
 function _resetReplyBar() {
   const bar = document.getElementById('vm-reply-bar');
-  const input = document.getElementById('vm-comment-input');
-  if (bar) bar.style.display = 'none';
-  if (input) input.placeholder = 'Write a comment… (Enter to send, Shift+Enter for new line)';
+  const inp = document.getElementById('vm-comment-input');
+  if (bar) bar.style.display='none';
+  if (inp) inp.placeholder='Write a comment… (Enter to send, Shift+Enter for new line)';
 }
 
 async function deleteComment(todoId, commentId) {
   if (!confirm('Delete this comment? If it has replies, it will appear as [deleted].')) return;
-  try {
-    await api('DELETE', `/api/todo/${todoId}/comments/${commentId}`);
-    loadComments(todoId);
-  } catch(e) { toast(e.message, 'error'); }
+  try { await api('DELETE',`/api/todo/${todoId}/comments/${commentId}`); loadComments(todoId); }
+  catch(e) { toast(e.message,'error'); }
 }
 
 async function postComment() {
-  const input = document.getElementById('vm-comment-input');
-  const text = (input?.value || '').trim();
+  const inp  = document.getElementById('vm-comment-input');
+  const text = (inp?.value||'').trim();
   if (!text || !_currentViewId) return;
-  const body = { text };
+  const body = {text};
   if (_replyingTo) body.reply_to = _replyingTo.id;
   try {
-    await api('POST', `/api/todo/${_currentViewId}/comments`, body);
-    input.value = '';
-    _replyingTo = null;
-    _resetReplyBar();
-    loadComments(_currentViewId);
-  } catch(e) { toast(e.message, 'error'); }
+    await api('POST',`/api/todo/${_currentViewId}/comments`,body);
+    inp.value=''; _replyingTo=null; _resetReplyBar(); loadComments(_currentViewId);
+  } catch(e) { toast(e.message,'error'); }
 }
 
-async function toggleWatch() {
-  if (!_currentViewId) return;
-  const btn = document.getElementById('vm-watch-btn');
-  const isWatching = btn && btn.textContent.includes('Watching');
-  try {
-    const res = await api('POST', `/api/todo/${_currentViewId}/watch`, { action: isWatching ? 'unwatch' : 'watch' });
-    toast(res.action === 'watching' ? '👁 Now watching this TODO' : 'Unwatched');
-    const count = (res.watchers || []).length;
-    if (btn) btn.textContent = count > 0 ? `👁 Watching (${count})` : '👁 Watch';
-  } catch(e) { toast(e.message, 'error'); }
-}
+// ── Misc ──────────────────────────────────────────────────────────────────────
+_showAssignSearch();
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('em-assign-input-wrap');
+  if (wrap && !wrap.contains(e.target)) document.getElementById('em-member-results').style.display='none';
+});
 
-function openTimeLog() {
-  if (!_currentViewId) return;
-  const mins = prompt('Log time (minutes):');
-  if (!mins || isNaN(parseInt(mins))) return;
-  api('POST', `/api/todo/${_currentViewId}/time`, { minutes: parseInt(mins) })
-    .then(res => { toast(`Logged ${mins} mins! Total: ${res.total_minutes} mins`); })
-    .catch(e => toast(e.message, 'error'));
-}
-
-async function deleteFromView(id) {
-  const todoId = id || _currentViewId;
-  if (!todoId) return;
-  if (!confirm(`Delete TODO #${todoId}? This cannot be undone.`)) return;
-  try {
-    await api('DELETE', `/api/todo/${todoId}`);
-    closeModal('view-modal');
-    toast(`TODO #${todoId} deleted.`);
-    // Remove card from grid
-    const card = document.querySelector(`.todo-card[data-id="${todoId}"]`);
-    if (card) card.remove();
-    delete _TODOS_MAP[todoId];
-  } catch(e) { toast(e.message, 'error'); }
-}
-
-// ── Auto-open TODO from ?highlight= URL param (e.g. from Discord link) ──────
-(async function _handleHighlight() {
-  const params = new URLSearchParams(window.location.search);
-  const hid = parseInt(params.get('highlight'), 10);
+// Auto-open from ?highlight= URL param
+(async function() {
+  const hid = parseInt(new URLSearchParams(window.location.search).get('highlight'),10);
   if (!hid) return;
-  // Remove param from URL without reload
-  const url = new URL(window.location.href);
-  url.searchParams.delete('highlight');
-  window.history.replaceState({}, '', url);
-
+  const url = new URL(window.location.href); url.searchParams.delete('highlight'); window.history.replaceState({},'',url);
   if (_TODOS_MAP[hid]) {
-    // Active todo — open normally
     viewTodoById(hid);
     const card = document.querySelector(`.todo-card[data-id="${hid}"]`);
-    if (card) card.scrollIntoView({behavior:'smooth', block:'center'});
+    if (card) card.scrollIntoView({behavior:'smooth',block:'center'});
   } else {
-    // Archived / not on this board — fetch from API
     try {
-      const res = await fetch(`/api/todo/${hid}`);
-      if (!res.ok) throw new Error('Not found');
-      const t = await res.json();
-      _currentViewId = hid;
-      viewTodo(t);
-      loadComments(hid);
-      const watchBtn = document.getElementById('vm-watch-btn');
-      if (watchBtn) {
-        const wc = (t.watchers || []).length;
-        watchBtn.textContent = wc > 0 ? `👁 Watching (${wc})` : '👁 Watch';
-        // Completed todos — hide watch/edit/delete actions
-        if (t.status === 'done') {
-          const vmActions = document.getElementById('vm-actions');
-          if (vmActions) vmActions.style.display = 'none';
-        }
-      }
-    } catch(e) {
-      toast(`TODO #${hid} not found`, 'error');
-    }
+      const res = await fetch(`/api/todo/${hid}`); if (!res.ok) throw new Error();
+      const t = await res.json(); _currentViewId=hid; viewTodo(t); loadComments(hid);
+    } catch(e) { toast(`TODO #${hid} not found`,'error'); }
   }
 })();
 </script>
