@@ -29,57 +29,13 @@ DATA_REPO   = "anymex-support-db"
 DATA_BRANCH = "main"
 GITHUB_API  = "https://api.github.com"
 
-# File paths in data repo
-FILE_CONFIG        = "config.json"
-FILE_TODOS         = "todos.json"
-FILE_TODOS_ARCHIVE = "todos_archive.json"
-FILE_BOARD_IDS       = "board_ids.json"
-FILE_THREAD_MESSAGES = "thread_messages.json"
-
-# ── New feature files (must match app.py) ───────────────────────────────────
-FILE_COMMENTS      = "todo_comments.json"
-FILE_BOT_HEALTH    = "bot_health.json"
-FILE_ACTIVITY_LOG  = "activity_log.json"
+from shared import *
 
 # GitHub issues repo (for issue import)
 ANYMEX_OWNER = os.environ.get("ANYMEX_OWNER", "RyanYuuki")
 ANYMEX_REPO  = os.environ.get("ANYMEX_REPO",  "AnymeX")
 
 TODOS_PER_PAGE = 10
-
-# Default config
-DEFAULT_CONFIG = {
-    "todo_channel":    None,
-    "todo_roles":      [],
-    "todo_style":      1,
-    "prefix":          "ax!",
-    # Activity log
-    "log_channel":     None,
-    # Reminders
-    "reminder_days":   3,
-    "reminder_time":   "09:00",
-    "reminder_channel": None,   # None = DM assigned user
-    # Threads (styles 1-4)
-    "thread_channel":  None,
-}
-
-# board_ids.json schema — separate file so config.json stays clean
-# {
-#   "stats_message_id": "discord_msg_id" | null,
-#   "style": 1,          <- style used when board was last posted
-#   "pages": [           <- one entry per Discord message on the board
-#     {
-#       "message_id": "discord_msg_id",
-#       "thread_id":  "discord_thread_id" | null,  <- for styles 5/6
-#       "todo_ids":   [1, 3, 7]   <- which todo IDs live in this message
-#     }                              styles 1-4: multiple per message (one page)
-#   ]                                styles 5-6: exactly one todo per message
-# }
-DEFAULT_BOARD_IDS = {
-    "stats_message_id": None,
-    "style":            None,
-    "pages":            [],
-}
 
 # ── In-memory cache ────────────────────────────────────────────────────────────
 _cache:    dict = {}
@@ -247,29 +203,9 @@ Message:
 # CARD STYLES & EMBED BUILDERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-STATUS_COLORS = {
-    "todo":          0x378ADD,
-    "in_progress":   0xBA7517,
-    "review_needed": 0x888780,
-    "blocked":       0xE24B4A,
-    "done":          0x1D9E75,
-}
-STATUS_LABELS = {
-    "todo":          "To Do",
-    "in_progress":   "In Progress",
-    "review_needed": "Review Needed",
-    "blocked":       "Blocked",
-    "done":          "Done",
-}
-PRIORITY_LABELS  = {"low": "Low", "medium": "Medium", "high": "High"}
-PRIORITY_ICONS   = {"low": "▽", "medium": "◈", "high": "▲"}
-STATUS_ICONS     = {
-    "todo":          "○",
-    "in_progress":   "◑",
-    "review_needed": "◇",
-    "blocked":       "✕",
-    "done":          "✓",
-}
+# Discord embeds need int colors — alias shared.STATUS_COLORS_INT so existing
+# card builders can keep referencing STATUS_COLORS without changes.
+STATUS_COLORS = STATUS_COLORS_INT
 
 # Progress bar helper (Discord block chars)
 def _progress_bar(value: int, total: int, length: int = 10) -> str:
@@ -750,15 +686,6 @@ def now_iso():
 # ══════════════════════════════════════════════════════════════════════════════
 # ACTIVITY LOG
 # ══════════════════════════════════════════════════════════════════════════════
-
-TAG_COLORS = {
-    "bug":      "🔴",
-    "feature":  "🟢",
-    "urgent":   "🟠",
-    "docs":     "🔵",
-    "refactor": "🟣",
-    "question": "🟡",
-}
 
 def _tag_badges(tags: list) -> str:
     """Return a compact string of tag badges, e.g. `bug` `urgent`"""
