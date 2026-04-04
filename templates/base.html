@@ -535,11 +535,11 @@ function _gvRender(t) {
   document.getElementById('gv-public-badge').innerHTML =
     `<span style="font-size:.72rem;padding:3px 8px;border-radius:10px;background:${isPublic?'rgba(29,158,117,0.12)':'rgba(107,114,128,0.1)'};color:${isPublic?'var(--done)':'var(--muted)'}">${isPublic?'🌐 Public':'🔒 Private'}</span>`;
 
-  // Assigned — chip: avatar + display name + @username
-  const assignedDisplay  = t.assigned_to_name || null;
+  // Assigned — Option C chip
+  const assignedEl       = document.getElementById('gv-assigned');
+  const assignedDisplay  = t.assigned_to_name     || null;
   const assignedUsername = t.assigned_to_username || null;
-  const assignedAvatar   = t.assigned_to_avatar || 'https://cdn.discordapp.com/embed/avatars/0.png';
-  const assignedEl = document.getElementById('gv-assigned');
+  const assignedAvatar   = t.assigned_to_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
   if (t.assigned_to_id && (assignedDisplay || assignedUsername)) {
     assignedEl.innerHTML = `<a href="/member/${t.assigned_to_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
       <img src="${assignedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
@@ -552,11 +552,11 @@ function _gvRender(t) {
     assignedEl.innerHTML = `<span style="color:var(--muted)">Unassigned</span>`;
   }
 
-  // Added by — chip: avatar + display name + @username
+  // Added by — Option C chip
+  const addedEl       = document.getElementById('gv-added');
   const addedDisplay  = t.added_by_display  || null;
   const addedUsername = t.added_by_username || null;
   const addedAvatar   = t.added_by_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
-  const addedEl = document.getElementById('gv-added');
   if (t.added_by_id && (addedDisplay || addedUsername)) {
     addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
       <img src="${addedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
