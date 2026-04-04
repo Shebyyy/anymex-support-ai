@@ -2095,12 +2095,34 @@ def api_notifications_mentions():
     ?since=<unix_ms>
     """
     sess = get_session()
-    uid = str(sess.get("user", {}).get("id", "")) if sess.get("user") else ""
-    if not uid:
+    user = sess.get("user")
+    if not user:
         return jsonify({"mentions": []})
-    # In a full implementation this would query a notifications table.
-    # For now returns empty so the poller doesn't error.
-    return jsonify({"mentions": []})
+    
+    uid = str(user.get("id"))
+    since_ms = request.args.get("since", "0")
+    try:
+        since_ts = int(since_ms) / 1000
+    except:
+        since_ts = 0
+
+    db, _ = gh_read(FILE_NOTIFICATIONS)
+    if not db:
+        return jsonify({"mentions": []})
+    
+    u_notifs = db.get(uid, [])
+    # Filter by time
+    new_mentions = []
+    for n in u_notifs:
+        try:
+            # ts is ISO format with Z
+            nts = datetime.datetime.fromisoformat(n["ts"].rstrip("Z")).timestamp()
+            if nts > since_ts:
+                new_mentions.append(n)
+        except:
+            continue
+            
+    return jsonify({"mentions": new_mentions})
 
 
 @app.route("/api/todo/<int:todo_id>/notify-mentions", methods=["POST"])
@@ -2455,6 +2477,43 @@ def api_comments_post(todo_id):
     comments[key] = thread
     ok = gh_write(FILE_COMMENTS, comments, sha, f"Comment on TODO #{todo_id} by {user.get('username','?')}")
     if ok:
+        # Check for @mentions in the text
+        import re
+        # Pattern matches @ followed by word characters or dots/spaces/dashes up to 32 chars
+        mentions = re.findall(r"@([^@\s!?,.:;]+)", text)
+        if mentions:
+            _load_member_cache()
+            notif_db, notif_sha = gh_read(FILE_NOTIFICATIONS, force=True)
+            notif_db = notif_db or {}
+            
+            for m_name in mentions:
+                # Find member by username or display_name
+                # (This is a simplified match, ideally we'd use IDs from the mention controller data)
+                mid = None
+                for uid_candidate, name in _member_name_cache.items():
+                    if name.lower() == m_name.lower():
+                        mid = uid_candidate
+                        break
+                if not mid:
+                    for uid_candidate, uname in _member_username_cache.items():
+                        if uname.lower() == m_name.lower():
+                            mid = uid_candidate
+                            break
+                
+                if mid and mid != str(user.get("id")):
+                    u_notifs = notif_db.get(mid, [])
+                    u_notifs.append({
+                        "id": secrets.token_hex(4),
+                        "todo_id": todo_id,
+                        "from_id": str(user.get("id")),
+                        "from_name": user.get("global_name") or user.get("username", "Someone"),
+                        "text": text[:100],
+                        "ts": new_comment["ts"]
+                    })
+                    notif_db[mid] = u_notifs[-50:] # keep last 50
+            
+            gh_write(FILE_NOTIFICATIONS, notif_db, notif_sha, f"Mentions in # {todo_id}")
+
         # Log to activity
         todos, _ = gh_read(FILE_TODOS)
         todo = next((t for t in (todos or []) if t["id"] == todo_id), {"id": todo_id, "title": "Unknown", "status": "todo"})
