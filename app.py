@@ -60,13 +60,14 @@ FILE_MEMBERS       = "members.json"       # guild member snapshot synced from Di
 FILE_TODO_MEMBERS  = "todo_members.json"  # only is_todo_role=true members (small, always readable)
 
 # Member lookup cache (populated lazily from todo_members.json)
-_member_name_cache: dict     = {}   # id -> display_name (nick > global_name > username)
-_member_username_cache: dict = {}   # id -> raw discord username (stable @handle)
-_member_cache_ts: float      = 0
+_member_name_cache:     dict  = {}   # id -> display_name (nick > global_name > username)
+_member_username_cache: dict  = {}   # id -> raw discord username (stable @handle)
+_member_avatar_cache:   dict  = {}   # id -> avatar_url
+_member_cache_ts:       float = 0
 _MEMBER_CACHE_TTL = 5 * 60  # 5 min
 
 def _load_member_cache() -> None:
-    global _member_name_cache, _member_username_cache, _member_cache_ts
+    global _member_name_cache, _member_username_cache, _member_avatar_cache, _member_cache_ts
     now = time.time()
     if now - _member_cache_ts > _MEMBER_CACHE_TTL:
         try:
@@ -74,6 +75,7 @@ def _load_member_cache() -> None:
             members = (db or {}).get("members") or []
             _member_name_cache     = {str(m["id"]): m.get("display_name") or m.get("global_name") or m.get("username") for m in members if m.get("id")}
             _member_username_cache = {str(m["id"]): m.get("username") for m in members if m.get("id")}
+            _member_avatar_cache   = {str(m["id"]): m.get("avatar_url") for m in members if m.get("id")}
             _member_cache_ts = now
         except Exception:
             pass
@@ -91,6 +93,13 @@ def _resolve_user_username(user_id: str) -> str | None:
         return None
     _load_member_cache()
     return _member_username_cache.get(str(user_id))
+
+def _resolve_user_avatar(user_id: str) -> str | None:
+    """Look up the avatar URL from todo_members.json."""
+    if not user_id:
+        return None
+    _load_member_cache()
+    return _member_avatar_cache.get(str(user_id))
 
 # ── New feature files ────────────────────────────────────────────────────────
 FILE_COMMENTS       = "todo_comments.json"       # #1  Comments on TODOs
@@ -3457,19 +3466,19 @@ def enrich_todo(t):
     t["total_minutes"]    = sum(l.get("minutes",0) for l in t.get("time_logs",[]))
     # Comment count (loaded lazily — just flag)
 
-    # ── Resolve added_by display name + username from todo_members.json ──
+    # ── Resolve added_by fields from todo_members.json ──
     added_by_id = t.get("added_by_id")
     if added_by_id:
-        resolved_display  = _resolve_user_display(str(added_by_id))
-        resolved_username = _resolve_user_username(str(added_by_id))
         raw = t.get("added_by") or ""
-        t["added_by_display"]  = resolved_display  or (raw if raw and raw != "web" else None)
-        t["added_by_username"] = resolved_username or (raw if raw and not raw.isdigit() else None)
+        t["added_by_display"]  = _resolve_user_display(str(added_by_id))  or (raw if raw and raw != "web" else None)
+        t["added_by_username"] = _resolve_user_username(str(added_by_id)) or (raw if raw and not raw.isdigit() else None)
+        t["added_by_avatar"]   = _resolve_user_avatar(str(added_by_id))
     else:
         t["added_by_display"]  = t.get("added_by") or None
         t["added_by_username"] = t.get("added_by") or None
+        t["added_by_avatar"]   = None
 
-    # ── Resolve assigned_to display name + username if missing ──
+    # ── Resolve assigned_to fields from todo_members.json ──
     assigned_id = t.get("assigned_to_id")
     if assigned_id:
         if not t.get("assigned_to_name"):
@@ -3477,8 +3486,10 @@ def enrich_todo(t):
             if resolved:
                 t["assigned_to_name"] = resolved
         t["assigned_to_username"] = _resolve_user_username(str(assigned_id))
+        t["assigned_to_avatar"]   = _resolve_user_avatar(str(assigned_id)) or t.get("assigned_to_avatar")
     else:
         t["assigned_to_username"] = None
+        t["assigned_to_avatar"]   = t.get("assigned_to_avatar")
 
     # ── Discord deep link for linked forum thread ──
     linked_thread = t.get("linked_forum_thread_id")
