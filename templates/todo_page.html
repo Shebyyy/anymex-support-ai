@@ -345,16 +345,29 @@
           <div>
             <div class="tp-meta-label">Assigned to</div>
             <div class="tp-meta-val">
-              {% if todo.assigned_to_avatar %}<img src="{{ todo.assigned_to_avatar }}" style="width:18px;height:18px;border-radius:50%">{% endif %}
-              {% if todo.assigned_to_id %}<a href="/member/{{ todo.assigned_to_id }}">{{ todo.assigned_to_name or 'Member' }}</a>
+              {% if todo.assigned_to_id %}
+                <a href="/member/{{ todo.assigned_to_id }}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+                  <img src="{{ todo.assigned_to_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0">
+                  <span style="display:flex;flex-direction:column;gap:0">
+                    <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">{{ todo.assigned_to_name or todo.assigned_to_username or 'Member' }}</span>
+                    {% if todo.assigned_to_username %}<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@{{ todo.assigned_to_username }}</span>{% endif %}
+                  </span>
+                </a>
               {% else %}<span style="color:var(--muted)">Unassigned</span>{% endif %}
             </div>
           </div>
           <div>
             <div class="tp-meta-label">Added by</div>
             <div class="tp-meta-val">
-              {% if todo.added_by_id %}<a href="/member/{{ todo.added_by_id }}">{{ todo.added_by or 'Member' }}</a>
-              {% else %}{{ todo.added_by or '—' }}{% endif %}
+              {% if todo.added_by_id %}
+                <a href="/member/{{ todo.added_by_id }}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+                  <img src="{{ todo.added_by_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0">
+                  <span style="display:flex;flex-direction:column;gap:0">
+                    <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">{{ todo.added_by_display or todo.added_by_username or todo.added_by or 'Member' }}</span>
+                    {% if todo.added_by_username %}<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@{{ todo.added_by_username }}</span>{% endif %}
+                  </span>
+                </a>
+              {% else %}<span style="color:var(--muted)">{{ todo.added_by or '—' }}</span>{% endif %}
             </div>
           </div>
           {% if todo.created_at_fmt %}
