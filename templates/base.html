@@ -848,5 +848,370 @@ async function api(method, path, body) {
 </script>
 
 {% block scripts %}{% endblock %}
+
+<!-- Markdown rendering library -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<script>
+// ─── Markdown ───────────────────────────────────────────────────────────────
+if (typeof marked !== 'undefined') {
+  marked.setOptions({ breaks: true, gfm: true, pedantic: false });
+}
+
+function _escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderMarkdown(text) {
+  if (!text || typeof marked === 'undefined') return _escapeHtml(text || '');
+  try {
+    // Highlight @mentions before markdown parse
+    const withMentions = String(text).replace(/@([\w.]+)/g, '<span class="mention">@$1</span>');
+    return marked.parse(withMentions);
+  } catch(e) { return _escapeHtml(text); }
+}
+
+// ─── Keyboard shortcuts for comment inputs ─────────────────────────────────
+// Call this after attaching a textarea to wire Ctrl+B / Ctrl+I / Ctrl+` 
+function attachKbShortcuts(taId, wrapFn) {
+  const ta = typeof taId === 'string' ? document.getElementById(taId) : taId;
+  if (!ta) return;
+  ta.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      if (e.key === 'b') { e.preventDefault(); wrapFn('**','**'); }
+      if (e.key === 'i') { e.preventDefault(); wrapFn('_','_'); }
+      if (e.key === '`') { e.preventDefault(); wrapFn('`','`'); }
+    }
+  });
+}
+
+// ─── @mention autocomplete ──────────────────────────────────────────────────
+// Returns a controller; call .attach(textarea, wrapContainer, onInsert)
+function createMentionController() {
+  let _active = false, _idx = 0, _results = [], _query = '', _ta = null, _container = null, _onInsert = null;
+
+  async function _search(q) {
+    try {
+      const res = await fetch(`/api/members/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      return Array.isArray(data) ? data : (data.results || []);
+    } catch { return []; }
+  }
+
+  function _render() {
+    let el = _container.querySelector('.mention-dropdown');
+    if (!_results.length) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.className = 'mention-dropdown'; _container.appendChild(el); }
+    el.innerHTML = _results.map((m,i) => `
+      <div class="mention-item ${i===_idx?'active':''}" data-i="${i}">
+        <img src="${m.avatar_url||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"/>
+        <div><div class="m-name">${_escapeHtml(m.display_name)}</div><div class="m-uname">@${_escapeHtml(m.username)}</div></div>
+      </div>`).join('');
+    el.querySelectorAll('.mention-item').forEach(item => {
+      item.addEventListener('mousedown', e => { e.preventDefault(); _insert(_results[+item.dataset.i]); });
+    });
+  }
+
+  function _insert(m) {
+    if (!_ta) return;
+    const val = _ta.value;
+    const pos = _ta.selectionStart;
+    const before = val.slice(0, pos);
+    const atPos = before.lastIndexOf('@');
+    const after = val.slice(pos);
+    _ta.value = before.slice(0, atPos) + '@' + m.username + ' ' + after;
+    const newPos = atPos + m.username.length + 2;
+    _ta.selectionStart = _ta.selectionEnd = newPos;
+    _ta.focus();
+    if (_onInsert) _onInsert();
+    _close();
+  }
+
+  function _close() {
+    _active = false; _results = []; _query = '';
+    const el = _container?.querySelector('.mention-dropdown');
+    if (el) el.remove();
+  }
+
+  let _debounce;
+  function attach(ta, container, onInsert) {
+    _ta = ta; _container = container; _onInsert = onInsert;
+    ta.addEventListener('input', async () => {
+      const val = ta.value, pos = ta.selectionStart;
+      const before = val.slice(0, pos);
+      const m = before.match(/@([\w.]*)$/);
+      if (!m) { _close(); return; }
+      _query = m[1]; _active = true;
+      clearTimeout(_debounce);
+      _debounce = setTimeout(async () => {
+        _results = (await _search(_query)).slice(0, 6);
+        _idx = 0; _render();
+      }, 220);
+    });
+    ta.addEventListener('keydown', e => {
+      if (!_active || !_results.length) return;
+      if (e.key === 'ArrowDown')  { e.preventDefault(); _idx = (_idx+1) % _results.length; _render(); }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); _idx = (_idx-1+_results.length) % _results.length; _render(); }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        if (_active && _results.length) { e.preventDefault(); e.stopPropagation(); _insert(_results[_idx]); }
+      }
+      if (e.key === 'Escape') _close();
+    });
+    ta.addEventListener('blur', () => setTimeout(_close, 150));
+  }
+
+  return { attach };
+}
+
+// ─── Emoji reactions ────────────────────────────────────────────────────────
+const QUICK_EMOJIS = ['👍','❤️','🔥','✅','😂','😮','🎉','👀'];
+
+function renderReactions(reactions, commentId, currentUid, onToggle) {
+  if (!reactions || !Object.keys(reactions).length) return '';
+  const chips = Object.entries(reactions).map(([emoji, users]) => {
+    const mine = users.includes(currentUid);
+    const count = users.length;
+    return `<span class="reaction-chip ${mine?'mine':''}" 
+      title="${users.length} reaction${users.length!==1?'s':''}"
+      onclick="(${onToggle.toString()})('${commentId}','${emoji}')"
+    >${emoji} <span class="r-count">${count}</span></span>`;
+  }).join('');
+  return chips;
+}
+
+function openEmojiPicker(anchorEl, commentId, onPick) {
+  document.querySelectorAll('.emoji-picker-popup').forEach(p=>p.remove());
+  const picker = document.createElement('div');
+  picker.className = 'emoji-picker-popup';
+  QUICK_EMOJIS.forEach(emoji => {
+    const span = document.createElement('span');
+    span.textContent = emoji;
+    span.title = emoji;
+    span.onclick = (e) => { e.stopPropagation(); onPick(commentId, emoji); picker.remove(); };
+    picker.appendChild(span);
+  });
+  const rect = anchorEl.getBoundingClientRect();
+  picker.style.cssText = `position:fixed;top:${rect.top - 52}px;left:${rect.left}px`;
+  document.body.appendChild(picker);
+  setTimeout(() => document.addEventListener('click', () => picker.remove(), {once:true}), 10);
+}
+
+// ─── Paste image → base64 helper ────────────────────────────────────────────
+function attachPasteImage(ta, previewContainer, onImageChange) {
+  ta.addEventListener('paste', e => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (!item.type.startsWith('image/')) continue;
+      e.preventDefault();
+      const file = item.getAsFile();
+      const reader = new FileReader();
+      reader.onload = () => {
+        onImageChange(reader.result, file.type);
+        if (previewContainer) {
+          previewContainer.innerHTML = `
+            <div class="paste-img-preview">
+              <img src="${reader.result}" alt="pasted"/>
+              <button class="remove-img" onclick="this.closest('.paste-img-preview').remove();(${onImageChange.toString()})(null)" title="Remove">✕</button>
+            </div>`;
+        }
+      };
+      reader.readAsDataURL(file);
+      break;
+    }
+  });
+}
+
+// ─── LocalStorage unread tracker ────────────────────────────────────────────
+function markCommentsRead(todoId, latestTs) {
+  try { localStorage.setItem(`anymex_read_${todoId}`, latestTs||Date.now()); } catch {}
+}
+function getLastRead(todoId) {
+  try { return parseInt(localStorage.getItem(`anymex_read_${todoId}`)||'0', 10); } catch { return 0; }
+}
+function hasUnread(todoId, latestTs) {
+  if (!latestTs) return false;
+  return new Date(latestTs).getTime() > getLastRead(todoId);
+}
+</script>
+
+<style>
+/* ══════════════════════════════════════
+   MARKDOWN RENDERING
+══════════════════════════════════════ */
+.md-body { font-size: .84rem; line-height: 1.6; color: var(--text); word-break: break-word; }
+.md-body p { margin: 0 0 .35em; }
+.md-body p:last-child { margin-bottom: 0; }
+.md-body strong { font-weight: 700; color: #fff; }
+.md-body em { font-style: italic; color: var(--text); }
+.md-body code {
+  font-family: var(--mono); font-size: .78em;
+  background: rgba(255,255,255,0.08); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; color: #e8c77a;
+}
+.md-body pre {
+  background: #0a0b0f; border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: .4em 0;
+}
+.md-body pre code { background: none; border: none; padding: 0; font-size: .8em; color: #c9d1d9; }
+.md-body blockquote { border-left: 3px solid var(--accent); margin: .4em 0; padding: 3px 10px; color: var(--muted); font-style: italic; }
+.md-body ul, .md-body ol { padding-left: 1.3em; margin: .3em 0; }
+.md-body li { margin: .1em 0; }
+.md-body a { color: var(--accent2); text-decoration: underline; }
+.md-body h1,.md-body h2,.md-body h3,.md-body h4 { font-size: .9em; font-weight: 700; margin: .3em 0 .2em; }
+.md-body hr { border: none; border-top: 1px solid var(--border); margin: .5em 0; }
+/* @mention highlight */
+.md-body .mention {
+  color: var(--accent2); background: rgba(88,101,242,0.12);
+  border-radius: 3px; padding: 0 3px; font-weight: 600; font-size: .85em;
+}
+
+/* ══════════════════════════════════════
+   MARKDOWN PREVIEW TOGGLE
+══════════════════════════════════════ */
+.md-preview-toggle {
+  font-size: .68rem; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; gap: 3px;
+  padding: 2px 6px; border-radius: 4px; border: none;
+  background: transparent; transition: background .1s, color .1s; user-select: none;
+}
+.md-preview-toggle:hover { background: var(--surface2); color: var(--text); }
+.md-preview-toggle.active { color: var(--accent); }
+.md-preview-pane {
+  display: none; min-height: 36px; max-height: 160px; overflow-y: auto;
+  padding: 9px 11px; font-size: .84rem; line-height: 1.55; color: var(--text); cursor: text;
+}
+.md-preview-pane.visible { display: block; }
+.md-preview-pane:empty::after { content: 'Preview will appear here…'; color: var(--muted); font-style: italic; }
+
+/* ══════════════════════════════════════
+   EMOJI REACTIONS
+══════════════════════════════════════ */
+.reaction-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.reaction-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 20px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface2);
+  font-size: .78rem; transition: border-color .12s, background .12s;
+  user-select: none;
+}
+.reaction-chip:hover { border-color: var(--accent); background: rgba(88,101,242,0.08); }
+.reaction-chip.mine  { border-color: var(--accent); background: rgba(88,101,242,0.14); color: var(--accent2); }
+.reaction-chip .r-count { font-size: .72rem; color: var(--muted); font-family: var(--mono); }
+.reaction-chip.mine .r-count { color: var(--accent2); }
+.reaction-add-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 22px; border-radius: 20px; cursor: pointer;
+  border: 1px dashed var(--border); background: transparent;
+  font-size: .8rem; color: var(--muted); transition: border-color .12s, color .12s;
+}
+.reaction-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Emoji picker popup */
+.emoji-picker-popup {
+  position: absolute; z-index: 300;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  display: flex; gap: 4px; flex-wrap: wrap; max-width: 200px;
+}
+.emoji-picker-popup span {
+  font-size: 1.1rem; cursor: pointer; padding: 3px 5px; border-radius: 5px;
+  transition: background .1s; line-height: 1;
+}
+.emoji-picker-popup span:hover { background: var(--surface2); }
+
+/* ══════════════════════════════════════
+   @MENTION AUTOCOMPLETE
+══════════════════════════════════════ */
+.mention-dropdown {
+  position: absolute; z-index: 400; bottom: calc(100% + 6px); left: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; min-width: 220px; max-height: 180px; overflow-y: auto;
+  box-shadow: 0 8px 28px rgba(0,0,0,.45);
+}
+.mention-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 12px; cursor: pointer; transition: background .1s;
+}
+.mention-item:hover, .mention-item.active { background: var(--surface2); }
+.mention-item img { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; }
+.mention-item .m-name { font-size: .82rem; font-weight: 600; color: var(--text); }
+.mention-item .m-uname { font-size: .7rem; color: var(--muted); font-family: var(--mono); }
+
+/* ══════════════════════════════════════
+   COMMENT EDIT MODE
+══════════════════════════════════════ */
+.comment-edit-area {
+  width: 100%; border: 1px solid var(--accent); border-radius: 8px;
+  background: var(--surface2); padding: 7px 10px;
+  font-family: var(--sans); font-size: .84rem; color: var(--text);
+  resize: none; outline: none; min-height: 52px; max-height: 160px;
+  margin-top: 4px; display: block;
+}
+
+/* ══════════════════════════════════════
+   PASTED IMAGE PREVIEW
+══════════════════════════════════════ */
+.paste-img-preview {
+  position: relative; display: inline-block; margin: 4px 0;
+}
+.paste-img-preview img {
+  max-height: 80px; max-width: 160px; border-radius: 6px;
+  border: 1px solid var(--border); display: block;
+}
+.paste-img-preview .remove-img {
+  position: absolute; top: -5px; right: -5px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--blocked); color: #fff;
+  border: none; cursor: pointer; font-size: .65rem;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+
+/* ══════════════════════════════════════
+   UNREAD BADGE
+══════════════════════════════════════ */
+.unread-dot {
+  position: absolute; top: 5px; right: 5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--blocked); border: 1.5px solid var(--surface);
+  animation: pulse-dot 1.8s ease infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .6; transform: scale(1.3); }
+}
+
+/* ══════════════════════════════════════
+   DRAG & DROP KANBAN
+══════════════════════════════════════ */
+.kanban-card.dragging {
+  opacity: .35; transform: scale(0.97);
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.kanban-col-body.drag-over {
+  background: rgba(88,101,242,0.07);
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  border-radius: 0 0 12px 12px;
+}
+.kanban-col-body.drag-over .kanban-empty { color: var(--accent); }
+
+/* ══════════════════════════════════════
+   COMMENT SEARCH BAR (board popup)
+══════════════════════════════════════ */
+.comment-search-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 0 8px;
+}
+.comment-search-input {
+  flex: 1; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 7px; padding: 5px 10px; font-size: .8rem;
+  color: var(--text); font-family: var(--sans); outline: none;
+  transition: border-color .15s;
+}
+.comment-search-input:focus { border-color: var(--accent); }
+.comment-search-count { font-size: .72rem; color: var(--muted); white-space: nowrap; }
+</style>
 </body>
 </html>
