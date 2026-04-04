@@ -6,8 +6,8 @@
 .rm-hero h1 { font-family:var(--mono); font-size:2rem; font-weight:700; margin-bottom:.5rem; }
 .rm-hero p { color:var(--muted); font-size:.9rem; }
 .rm-cols {
-  display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,280px));
-  justify-content:center; gap:1.25rem; margin-bottom:2rem;
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:1.25rem; margin-bottom:2rem; max-width:1200px;
 }
 .rm-col { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
 .rm-col-head {

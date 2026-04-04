@@ -265,6 +265,8 @@
         flex: 1 1 100%;
         order: 1;
         overflow-x: auto;
+        -webkit-mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 32px), transparent 100%);
+        mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 32px), transparent 100%);
 
         a {
           padding: 0.5rem;
@@ -806,6 +808,21 @@ async function gvToggleWatch() {
 // Close on Escape
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.getElementById('gv-modal').classList.remove('open');
+  // Press / to jump to search (unless already in an input)
+  if (e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
+    e.preventDefault(); window.location = '/search';
+  }
+});
+
+// Focus trap inside quick-view modal
+document.getElementById('gv-modal').addEventListener('keydown', e => {
+  if (e.key !== 'Tab') return;
+  const modal = document.getElementById('gv-modal');
+  const focusable = [...modal.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last.focus(); } }
+  else { if (document.activeElement === last) { e.preventDefault(); first.focus(); } }
 });
 </script>
 
