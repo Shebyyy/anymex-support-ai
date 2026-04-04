@@ -16,104 +16,150 @@
   .tp-wrap { grid-template-columns: 1fr; }
 }
 
-/* ── Left: todo detail card ── */
+/* ── Left: detail card ── */
 .tp-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 1.5rem;
+  overflow: hidden;
+  animation: fadeUp 0.3s ease both;
+}
+@keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+/* Card header (ID, title, badges) */
+.tp-card-header {
+  padding: 1.5rem 1.5rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 .tp-breadcrumb {
-  font-size: 0.78rem;
-  color: var(--muted);
-  margin-bottom: 1rem;
+  font-size: 0.78rem; color: var(--muted); margin-bottom: 1rem;
+  display: flex; align-items: center; gap: 5px;
 }
 .tp-breadcrumb a { color: var(--accent); text-decoration: none; }
 .tp-breadcrumb a:hover { text-decoration: underline; }
+.tp-breadcrumb span { color: var(--border); }
 
-.tp-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 1rem;
+.tp-id-line {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
 }
 .tp-id {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--muted);
-  white-space: nowrap;
-  margin-top: 3px;
+  font-family: var(--mono); font-size: 0.78rem; color: var(--muted);
 }
+.tp-status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
 .tp-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.4;
-  word-break: break-word;
+  font-size: 1.3rem; font-weight: 700; color: var(--text);
+  line-height: 1.35; word-break: break-word; margin-bottom: 1rem;
 }
 
 .tp-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-bottom: 1.1rem;
+  display: flex; flex-wrap: wrap; gap: 7px;
 }
 .tp-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 3px 9px;
-  border-radius: 20px;
-  background: var(--surface2);
-  color: var(--text);
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; font-weight: 600;
+  padding: 3px 10px; border-radius: 20px;
+  background: var(--surface2); color: var(--text);
   border: 1px solid var(--border);
 }
-.tp-badge.status { color: #fff; border-color: transparent; }
-.tp-badge.overdue { background: #ff4d4f22; color: #ff4d4f; border-color: #ff4d4f44; }
-.tp-badge.soon    { background: #faad1422; color: #faad14; border-color: #faad1444; }
-.tp-badge.today   { background: #fa8c1622; color: #fa8c16; border-color: #fa8c1644; }
+.tp-badge.status { border-color: transparent; }
+.tp-badge.overdue { background: rgba(226,75,74,0.1); color: var(--blocked); border-color: rgba(226,75,74,0.25); }
+.tp-badge.soon    { background: rgba(55,138,221,0.1); color: var(--todo);    border-color: rgba(55,138,221,0.25); }
+.tp-badge.today   { background: rgba(186,117,23,0.1); color: var(--inprog);  border-color: rgba(186,117,23,0.25); }
 
+/* Card body */
+.tp-card-body { padding: 1.5rem; }
+
+/* Meta grid */
 .tp-meta {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 20px;
-  margin-bottom: 1.25rem;
-  font-size: 0.82rem;
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 12px 20px; margin-bottom: 1.25rem;
 }
-.tp-meta-row { display: flex; flex-direction: column; gap: 2px; }
-.tp-meta-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.tp-meta-val { color: var(--text); font-weight: 500; }
+.tp-meta-row {}
+.tp-meta-label {
+  font-size: 0.68rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px;
+}
+.tp-meta-val { color: var(--text); font-weight: 500; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; }
+.tp-meta-val a { color: var(--accent2); text-decoration: none; font-weight: 600; }
+.tp-meta-val a:hover { text-decoration: underline; }
 
+/* Progress bar */
+.tp-progress { margin-bottom: 1.25rem; }
+.tp-progress-label {
+  display: flex; justify-content: space-between;
+  font-size: 0.72rem; color: var(--muted); margin-bottom: 6px;
+}
+.tp-progress-track {
+  height: 6px; background: var(--surface2); border-radius: 3px;
+  overflow: hidden; display: flex;
+}
+.tp-progress-step {
+  height: 100%; flex: 1; border-right: 2px solid var(--bg);
+  opacity: 0.35; transition: opacity 0.3s;
+}
+.tp-progress-step.active { opacity: 1; }
+.tp-progress-step:last-child { border-right: none; }
+
+/* Tags */
 .tp-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 1.25rem; }
 .tp-tag {
-  font-size: 0.73rem;
-  padding: 2px 8px;
-  border-radius: 10px;
-  color: #fff;
-  font-weight: 600;
+  font-size: 0.73rem; padding: 2px 8px; border-radius: 10px;
+  font-weight: 600; color: #fff;
 }
 
-.tp-desc {
+/* AI description */
+.tp-desc-block {
   background: var(--surface2);
   border-left: 3px solid var(--accent);
   border-radius: 0 8px 8px 0;
-  padding: 10px 14px;
-  font-size: 0.86rem;
-  line-height: 1.6;
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
+  padding: 12px 14px;
   margin-bottom: 1.25rem;
 }
+.tp-desc-label {
+  font-size: 0.68rem; font-weight: 700; color: var(--accent2);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-bottom: 6px; display: flex; align-items: center; gap: 5px;
+}
+.tp-desc-text {
+  font-size: 0.86rem; line-height: 1.65; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
 
+/* Action buttons */
 .tp-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding-top: 1.1rem; border-top: 1px solid var(--border);
+  margin-bottom: 0;
+}
+
+/* ── Activity log ── */
+.tp-activity { margin-top: 1.5rem; }
+.tp-activity-label {
+  font-size: 0.72rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em;
+  margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+}
+.tp-activity-list { display: flex; flex-direction: column; }
+
+.tp-activity-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
+  font-size: 0.82rem; color: var(--muted);
+}
+.tp-activity-item:last-child { border-bottom: none; }
+.tp-activity-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0; margin-top: 5px;
+}
+.tp-activity-text { flex: 1; line-height: 1.4; }
+.tp-activity-text strong { color: var(--text); font-weight: 600; }
+.tp-activity-time {
+  font-size: 0.72rem; color: var(--muted);
+  font-family: var(--mono); white-space: nowrap; flex-shrink: 0;
 }
 
 /* ── Right: comments panel ── */
@@ -121,181 +167,289 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 1.25rem;
-  position: sticky;
-  top: 80px;
+  overflow: hidden;
+  position: sticky; top: 80px;
   max-height: calc(100vh - 100px);
-  overflow-y: auto;
-}
-.tp-comments-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-  gap: 8px;
-}
-.tp-comments-title {
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--text);
-}
-.tp-comment-count {
-  font-size: 0.71rem;
-  color: var(--muted);
-  background: var(--surface2);
-  padding: 2px 8px;
-  border-radius: 10px;
+  display: flex; flex-direction: column;
+  animation: fadeUp 0.3s ease 0.1s both;
 }
 
-.tp-comment-list { margin-bottom: 1rem; }
+.tp-comments-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.tp-comments-title { font-size: 0.9rem; font-weight: 700; color: var(--text); flex: 1; }
+.tp-comment-count {
+  font-size: 0.71rem; color: var(--muted);
+  background: var(--surface2); padding: 2px 8px; border-radius: 10px;
+}
+
+.tp-comment-list {
+  flex: 1; overflow-y: auto;
+  padding: 4px 16px;
+}
 
 .tp-reply-bar {
   display: none;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  margin-bottom: 6px;
-  background: var(--surface2);
-  border-radius: 8px;
+  align-items: center; gap: 8px;
+  padding: 6px 12px; margin: 6px 16px 0;
+  background: var(--surface2); border-radius: 8px;
   border-left: 3px solid var(--accent);
-  font-size: 0.78rem;
-  color: var(--muted);
+  font-size: 0.78rem; color: var(--muted);
+  flex-shrink: 0;
 }
 .tp-reply-bar button {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 0.8rem;
-  padding: 0;
-  line-height: 1;
-  margin-left: auto;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 0.8rem; padding: 0; line-height: 1; margin-left: auto;
 }
 
-.tp-comment-input-wrap {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
+.tp-comment-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .tp-comment-input {
-  flex: 1;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  padding: 7px 10px;
-  font-size: 0.83rem;
-  font-family: var(--sans);
-  resize: none;
-  min-height: 36px;
-  max-height: 120px;
+  width: 100%;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text);
+  padding: 8px 11px; font-size: 0.83rem; font-family: var(--sans);
+  resize: none; min-height: 38px; max-height: 120px; line-height: 1.5;
+  transition: border-color 0.15s;
 }
 .tp-comment-input:focus { outline: none; border-color: var(--accent); }
-.tp-send-btn {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 0 14px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
+.tp-comment-hint {
+  font-size: 0.72rem; color: var(--muted); margin-top: 5px;
+  display: flex; align-items: center; justify-content: space-between;
 }
-.tp-send-btn:hover { opacity: .88; }
 
 .tp-no-login {
-  text-align: center;
-  padding: 1.5rem 0;
-  color: var(--muted);
-  font-size: 0.83rem;
+  text-align: center; padding: 1.5rem; color: var(--muted); font-size: 0.83rem;
+}
+
+/* Due date badges */
+.due-badge { font-size: 0.68rem; font-weight: 700; font-family: var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+.due-overdue { background: rgba(226,75,74,0.15); color: var(--blocked); }
+.due-today   { background: rgba(186,117,23,0.15); color: var(--inprog); }
+.due-soon    { background: rgba(55,138,221,0.12); color: var(--todo); }
+.due-normal  { background: var(--surface2); color: var(--muted); }
+
+/* Mobile */
+@media (max-width: 820px) {
+  .tp-card-header { padding: 1.25rem 1rem 1rem; }
+  .tp-card-body   { padding: 1rem; }
+  .tp-meta { grid-template-columns: 1fr; gap: 10px; }
+  .tp-comments { position: static; max-height: none; }
 }
 </style>
 {% endblock %}
 
 {% block content %}
 {% set is_done = todo.status == 'done' %}
+
+<!-- Progress step map -->
+{% set steps = ['todo','in_progress','review_needed','done'] %}
+{% set step_colors = {'todo': 'var(--todo)', 'in_progress': 'var(--inprog)', 'review_needed': 'var(--review)', 'blocked': 'var(--blocked)', 'done': 'var(--done)'} %}
+{% set current_step = steps.index(todo.status) if todo.status in steps else 0 %}
+
 <div class="tp-wrap">
 
-  <!-- ── Left: todo detail ── -->
-  <div class="tp-card">
-    <div class="tp-breadcrumb">
-      <a href="/board">← Board</a> / TODO #{{ todo.id }}
-    </div>
+  <!-- ── LEFT: todo detail ── -->
+  <div>
+    <div class="tp-card">
 
-    <div class="tp-header">
-      <span class="tp-id">#{{ todo.id }}</span>
-      <h1 class="tp-title">{{ todo.title }}</h1>
-    </div>
+      <!-- Header section -->
+      <div class="tp-card-header">
+        <div class="tp-breadcrumb">
+          <a href="/board">Board</a>
+          <span>/</span>
+          <span>TODO #{{ todo.id }}</span>
+        </div>
 
-    <div class="tp-badges">
-      <span class="tp-badge status" style="background:{{ todo.status_color }}">
-        {{ todo.status_icon }} {{ todo.status_label }}
-      </span>
-      <span class="tp-badge">
-        {{ todo.priority_icon }} {{ todo.priority_label }}
-      </span>
-      {% if todo.due_urgency in ('overdue','today','soon') %}
-      <span class="tp-badge {{ todo.due_urgency }}">
-        📅 {{ todo.due_label }}
-      </span>
-      {% elif todo.get('due_date_fmt') %}
-      <span class="tp-badge">📅 {{ todo.due_date_fmt }}</span>
-      {% endif %}
-      {% if todo.public == false %}
-      <span class="tp-badge">🔒 Private</span>
-      {% endif %}
-    </div>
-
-    <div class="tp-meta">
-      <div class="tp-meta-row">
-        <span class="tp-meta-label">Assigned to</span>
-        <span class="tp-meta-val">
-          {% if todo.assigned_to_avatar %}
-          <img src="{{ todo.assigned_to_avatar }}"
-            style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:5px">
+        <div class="tp-id-line">
+          <span class="tp-status-dot" style="background:{{ todo.status_color }}"></span>
+          <span class="tp-id">#{{ todo.id }}</span>
+          {% if todo.get('auto_generated') %}
+          <span style="font-size:0.65rem;color:var(--accent2);background:rgba(88,101,242,0.1);padding:2px 6px;border-radius:4px;font-family:var(--mono)">✦ AI</span>
           {% endif %}
-          {{ todo.assigned_to_name or '—' }}
-        </span>
-      </div>
-      <div class="tp-meta-row">
-        <span class="tp-meta-label">Added by</span>
-        <span class="tp-meta-val">{{ todo.added_by or '—' }}</span>
-      </div>
-      {% if todo.created_at_fmt %}
-      <div class="tp-meta-row">
-        <span class="tp-meta-label">Created</span>
-        <span class="tp-meta-val">{{ todo.created_at_fmt }}</span>
-      </div>
-      {% endif %}
-      {% if todo.updated_at_fmt %}
-      <div class="tp-meta-row">
-        <span class="tp-meta-label">Updated</span>
-        <span class="tp-meta-val">{{ todo.updated_at_fmt }}</span>
-      </div>
-      {% endif %}
-    </div>
+        </div>
 
-    {% if todo.tags %}
-    <div class="tp-tags">
-      {% for tag in todo.tags %}
-      <span class="tp-tag" style="background:{{ todo.tag_colors.get(tag, '#5865F2') }}">{{ tag }}</span>
-      {% endfor %}
-    </div>
-    {% endif %}
+        <h1 class="tp-title">{{ todo.title }}</h1>
 
-    {% if todo.ai_description %}
-    <div class="tp-desc">{{ todo.ai_description }}</div>
-    {% endif %}
+        <div class="tp-badges">
+          <span class="tp-badge status" style="background:{{ todo.status_color }}20;color:{{ todo.status_color }};border-color:{{ todo.status_color }}40">
+            {{ todo.status_icon }} {{ todo.status_label }}
+          </span>
+          <span class="tp-badge">
+            {{ todo.priority_icon }} {{ todo.priority_label }}
+          </span>
+          {% if todo.due_urgency in ('overdue','today','soon') %}
+          <span class="tp-badge {{ todo.due_urgency }}">📅 {{ todo.due_label }}</span>
+          {% elif todo.get('due_date_fmt') %}
+          <span class="tp-badge">📅 {{ todo.due_date_fmt }}</span>
+          {% endif %}
+          {% if todo.public == false %}
+          <span class="tp-badge">🔒 Private</span>
+          {% endif %}
+          {% if todo.get('recur') %}
+          <span class="tp-badge">🔁 Recurring</span>
+          {% endif %}
+        </div>
+      </div>
 
-    {% if user and access_level in ('manager','admin','owner') %}
-    <div class="tp-actions">
-      <a href="/board#todo-{{ todo.id }}" class="btn btn-primary btn-sm">✏️ Edit on Board</a>
-    </div>
-    {% endif %}
-  </div>
+      <!-- Body section -->
+      <div class="tp-card-body">
 
-  <!-- ── Right: comments ── -->
+        <!-- Meta grid -->
+        <div class="tp-meta">
+          <div class="tp-meta-row">
+            <div class="tp-meta-label">Assigned to</div>
+            <div class="tp-meta-val">
+              {% if todo.assigned_to_avatar %}
+              <img src="{{ todo.assigned_to_avatar }}" style="width:18px;height:18px;border-radius:50%">
+              {% endif %}
+              {% if todo.assigned_to_id %}
+              <a href="/member/{{ todo.assigned_to_id }}">{{ todo.assigned_to_name or 'Member' }}</a>
+              {% else %}
+              <span style="color:var(--muted)">Unassigned</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="tp-meta-row">
+            <div class="tp-meta-label">Added by</div>
+            <div class="tp-meta-val">
+              {% if todo.added_by_id %}
+              <a href="/member/{{ todo.added_by_id }}">{{ todo.added_by or 'Member' }}</a>
+              {% else %}
+              {{ todo.added_by or '—' }}
+              {% endif %}
+            </div>
+          </div>
+          {% if todo.created_at_fmt %}
+          <div class="tp-meta-row">
+            <div class="tp-meta-label">Created</div>
+            <div class="tp-meta-val">{{ todo.created_at_fmt }}</div>
+          </div>
+          {% endif %}
+          {% if todo.updated_at_fmt %}
+          <div class="tp-meta-row">
+            <div class="tp-meta-label">Last updated</div>
+            <div class="tp-meta-val">{{ todo.updated_at_fmt }}</div>
+          </div>
+          {% endif %}
+          {% if todo.get('watcher_count') %}
+          <div class="tp-meta-row">
+            <div class="tp-meta-label">Watchers</div>
+            <div class="tp-meta-val">👁 {{ todo.watcher_count }}</div>
+          </div>
+          {% endif %}
+          {% if todo.get('total_minutes') %}
+          <div class="tp-meta-row">
+            <div class="tp-meta-label">Time logged</div>
+            <div class="tp-meta-val">⏱ {{ (todo.total_minutes / 60)|round(1) }}h</div>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- Progress bar (status workflow) -->
+        {% if todo.status != 'blocked' %}
+        <div class="tp-progress">
+          <div class="tp-progress-label">
+            <span>Progress</span>
+            <span>{{ todo.status_label }}</span>
+          </div>
+          <div class="tp-progress-track">
+            {% for step in steps %}
+            <div class="tp-progress-step {{ 'active' if loop.index0 <= current_step else '' }}"
+              style="background:{{ step_colors.get(step, 'var(--muted)') }}"></div>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div style="background:rgba(226,75,74,0.08);border:1px solid rgba(226,75,74,0.2);border-radius:8px;padding:8px 12px;font-size:0.82rem;color:var(--blocked);margin-bottom:1.25rem">
+          ⛔ This task is currently blocked
+          {% if todo.get('blocked_by_count') %} by {{ todo.blocked_by_count }} other task{{ 's' if todo.blocked_by_count != 1 }}{% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Tags -->
+        {% if todo.tags %}
+        <div class="tp-tags">
+          {% for tag in todo.tags %}
+          <span class="tp-tag" style="background:{{ todo.tag_colors.get(tag, '#5865F2') }}">{{ tag }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- AI description -->
+        {% if todo.ai_description %}
+        <div class="tp-desc-block">
+          <div class="tp-desc-label">✦ AI Summary</div>
+          <div class="tp-desc-text">{{ todo.ai_description }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Actions -->
+        {% if user and access_level in ('manager','admin','owner') %}
+        <div class="tp-actions">
+          <a href="/board?highlight={{ todo.id }}" class="btn btn-primary btn-sm">✏️ Edit on Board</a>
+          {% if not is_done %}
+          <button class="btn btn-ghost btn-sm" onclick="tpQuickStatus('in_progress')" {% if todo.status == 'in_progress' %}style="border-color:var(--inprog);color:var(--inprog)"{% endif %}>◑ In Progress</button>
+          <button class="btn btn-ghost btn-sm" onclick="tpQuickStatus('review_needed')" {% if todo.status == 'review_needed' %}style="border-color:var(--review);color:var(--review)"{% endif %}>◇ Review</button>
+          <button class="btn btn-ghost btn-sm" onclick="tpQuickStatus('done')" style="color:var(--done);border-color:rgba(29,158,117,0.3)">✓ Mark Done</button>
+          {% endif %}
+          {% if access_level in ('admin','owner') %}
+          <button class="btn btn-danger btn-sm" onclick="tpDelete()">🗑 Delete</button>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Activity log -->
+        {% if todo.get('activity') %}
+        <div class="tp-activity">
+          <div class="tp-activity-label">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block"></span>
+            Activity
+          </div>
+          <div class="tp-activity-list">
+            {% for entry in todo.activity %}
+            <div class="tp-activity-item">
+              <div class="tp-activity-dot" style="background:
+                {% if entry.type == 'status_change' %}{{ step_colors.get(entry.new_value, 'var(--muted)') }}
+                {% elif entry.type == 'priority_change' %}var(--medium)
+                {% elif entry.type == 'created' %}var(--accent)
+                {% else %}var(--muted){% endif %}"></div>
+              <span class="tp-activity-text">
+                {% if entry.type == 'status_change' %}
+                  Status changed to <strong>{{ entry.new_value | replace('_',' ') | title }}</strong>
+                  {% if entry.user_name %} by <strong>{{ entry.user_name }}</strong>{% endif %}
+                {% elif entry.type == 'priority_change' %}
+                  Priority set to <strong>{{ entry.new_value | title }}</strong>
+                  {% if entry.user_name %} by <strong>{{ entry.user_name }}</strong>{% endif %}
+                {% elif entry.type == 'assigned' %}
+                  Assigned to <strong>{{ entry.new_value }}</strong>
+                  {% if entry.user_name %} by <strong>{{ entry.user_name }}</strong>{% endif %}
+                {% elif entry.type == 'created' %}
+                  Created by <strong>{{ entry.user_name or todo.added_by or 'unknown' }}</strong>
+                {% else %}
+                  {{ entry.text or entry.type }}
+                {% endif %}
+              </span>
+              {% if entry.get('ts') %}
+              <span class="tp-activity-time" id="tp-ts-{{ loop.index }}" data-ts="{{ entry.ts }}">{{ entry.ts }}</span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+      </div><!-- /card-body -->
+    </div><!-- /card -->
+  </div><!-- /left col -->
+
+  <!-- ── RIGHT: comments ── -->
   <div class="tp-comments">
     <div class="tp-comments-header">
       <span class="tp-comments-title">💬 Comments</span>
@@ -303,7 +457,7 @@
     </div>
 
     <div class="tp-comment-list" id="tp-comment-list">
-      <p style="font-size:.8rem;color:var(--muted)">Loading…</p>
+      <p style="font-size:.8rem;color:var(--muted);padding:12px 0">Loading…</p>
     </div>
 
     {% if user %}
@@ -312,28 +466,33 @@
       <span id="tp-reply-label"></span>
       <button onclick="tpCancelReply()">✕</button>
     </div>
-    <div class="tp-comment-input-wrap">
-      <textarea id="tp-input" class="tp-comment-input" rows="1"
-        placeholder="Write a comment… (Enter to send, Shift+Enter for new line)"
-        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();tpPostComment();}"></textarea>
-      <button class="tp-send-btn" onclick="tpPostComment()">Send</button>
+    <div class="tp-comment-input-area">
+      <textarea id="tp-input" class="tp-comment-input" rows="2"
+        placeholder="Write a comment…"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();tpPostComment();}"
+        oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+      <div class="tp-comment-hint">
+        <span>Enter to send · Shift+Enter for new line</span>
+        <button class="btn btn-primary btn-sm" onclick="tpPostComment()" style="padding:4px 14px">Send</button>
+      </div>
     </div>
     {% else %}
-    <p style="font-size:.8rem;color:var(--muted);text-align:center;padding:.5rem 0">This TODO is done — comments are read-only.</p>
+    <p style="font-size:.8rem;color:var(--muted);text-align:center;padding:1rem">This TODO is done — comments are read-only.</p>
     {% endif %}
     {% else %}
     <div class="tp-no-login">
-      <a href="/login" style="color:var(--accent)">Log in</a> to comment.
+      <a href="/login" style="color:var(--accent)">Log in</a> to leave a comment.
     </div>
     {% endif %}
   </div>
-</div>
+
+</div><!-- /tp-wrap -->
 
 <script>
-const TP_TODO_ID   = {{ todo.id }};
-const TP_UID       = "{{ current_user_id }}";
-const TP_LEVEL     = "{{ access_level }}";
-const TP_IS_DONE   = {{ 'true' if is_done else 'false' }};
+const TP_TODO_ID = {{ todo.id }};
+const TP_UID     = "{{ current_user_id }}";
+const TP_LEVEL   = "{{ access_level }}";
+const TP_IS_DONE = {{ 'true' if is_done else 'false' }};
 
 let _tpReplyingTo = null;
 
@@ -343,47 +502,35 @@ function _tpEsc(s) {
 
 function _tpRelTime(ts) {
   if (!ts) return '';
-  const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-  return Math.floor(diff/86400) + 'd ago';
+  try {
+    const diff = Math.floor((Date.now()-new Date(ts))/1000);
+    if (diff<60)    return 'just now';
+    if (diff<3600)  return Math.floor(diff/60)+'m ago';
+    if (diff<86400) return Math.floor(diff/3600)+'h ago';
+    return Math.floor(diff/86400)+'d ago';
+  } catch(e) { return ts; }
 }
 
+// Humanise activity timestamps on load
+document.querySelectorAll('[data-ts]').forEach(el => {
+  el.textContent = _tpRelTime(el.dataset.ts);
+});
+
 function _tpRenderComment(c, depth) {
-  const indentPx = Math.min(depth, 3) * 30;
-  const indent   = indentPx > 0 ? `margin-left:${indentPx}px;` : '';
-  const avatarSz = depth === 0 ? '28px' : '22px';
-  const isDeleted = c.deleted;
-
-  if (isDeleted) {
-    return `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;${indent}">
-      <div style="width:${avatarSz};height:${avatarSz};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div>
-      <span style="font-size:.82rem;color:var(--muted);font-style:italic;padding-top:2px">[comment deleted]</span>
-    </div>`;
-  }
-
-  const canDel = (TP_UID === c.user_id || ['manager','admin','owner'].includes(TP_LEVEL)) && !TP_IS_DONE;
-  const delBtn = canDel
-    ? `<button onclick="tpDeleteComment('${c.id}')" title="Delete"
-         style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s" class="tp-del">✕</button>`
-    : '';
-  const replyBtn = !TP_IS_DONE
-    ? `<button onclick="tpStartReply('${c.id}','${_tpEsc(c.user_name)}')"
-         style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s" class="tp-reply-btn">↩ Reply</button>`
-    : '';
-
-  return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${indent}"
-      onmouseenter="this.querySelectorAll('.tp-del,.tp-reply-btn').forEach(b=>b.style.opacity=1)"
-      onmouseleave="this.querySelectorAll('.tp-del,.tp-reply-btn').forEach(b=>b.style.opacity=0)">
-    <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}"
-      style="width:${avatarSz};height:${avatarSz};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px"/>
+  const indent = Math.min(depth,3)*30;
+  const sz     = depth===0?'28px':'22px';
+  const style  = indent?`margin-left:${indent}px`:'';
+  if (c.deleted) return `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;${style}"><div style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;background:var(--surface2);border:1px solid var(--border)"></div><span style="font-size:.82rem;color:var(--muted);font-style:italic;padding-top:2px">[comment deleted]</span></div>`;
+  const canDel = (TP_UID===c.user_id||['manager','admin','owner'].includes(TP_LEVEL))&&!TP_IS_DONE;
+  const delBtn = canDel?`<button onclick="tpDeleteComment('${c.id}')" title="Delete" class="tp-del" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">✕</button>`:'';
+  const repBtn = !TP_IS_DONE?`<button onclick="tpStartReply('${c.id}','${_tpEsc(c.user_name)}')" class="tp-reply-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">↩ Reply</button>`:'';
+  return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0 6px;${style}" onmouseenter="this.querySelectorAll('.tp-del,.tp-reply-btn').forEach(b=>b.style.opacity=1)" onmouseleave="this.querySelectorAll('.tp-del,.tp-reply-btn').forEach(b=>b.style.opacity=0)">
+    <img src="${c.user_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:${sz};height:${sz};border-radius:50%;flex-shrink:0;border:1px solid var(--border);margin-top:2px"/>
     <div style="flex:1;min-width:0">
       <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px;flex-wrap:wrap">
         <span style="font-size:${depth===0?'0.82':'0.77'}rem;font-weight:700;color:var(--text)">${_tpEsc(c.user_name)}</span>
         <span style="font-size:.71rem;color:var(--muted)">${_tpRelTime(c.ts)}</span>
-        ${replyBtn}
-        ${delBtn}
+        ${repBtn}${delBtn}
       </div>
       <div style="font-size:.84rem;line-height:1.55;color:var(--text);white-space:pre-wrap;word-break:break-word">${_tpEsc(c.text)}</div>
     </div>
@@ -394,81 +541,79 @@ async function tpLoadComments() {
   const list    = document.getElementById('tp-comment-list');
   const countEl = document.getElementById('tp-count');
   try {
-    const all = await (await fetch(`/api/todo/${TP_TODO_ID}/comments`)).json();
-    const topLevel   = all.filter(c => !c.reply_to);
-    const replyCount = all.length - topLevel.length;
-    if (countEl) {
-      countEl.textContent = all.length
-        ? `${topLevel.length} comment${topLevel.length!==1?'s':''}${replyCount?` · ${replyCount} repl${replyCount!==1?'ies':'y'}`:''}`
-        : '';
-    }
+    const all      = await (await fetch(`/api/todo/${TP_TODO_ID}/comments`)).json();
+    const topLevel = all.filter(c=>!c.reply_to);
+    const repCount = all.length - topLevel.length;
+    if (countEl) countEl.textContent = all.length ? `${topLevel.length} comment${topLevel.length!==1?'s':''}${repCount?` · ${repCount} repl${repCount!==1?'ies':'y'}`:'' }` : '';
     if (!all.length) {
-      list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:.82rem">
-        <div style="font-size:1.4rem;margin-bottom:4px">💬</div>${TP_IS_DONE?'No comments.':'No comments yet — be the first!'}</div>`;
+      list.innerHTML = `<div style="text-align:center;padding:20px 0;color:var(--muted);font-size:.82rem"><div style="font-size:1.4rem;margin-bottom:4px">💬</div>${TP_IS_DONE?'No comments.':'No comments yet — be the first!'}</div>`;
       return;
     }
     const childMap = {};
-    all.forEach(c => { if (c.reply_to) { (childMap[c.reply_to]=childMap[c.reply_to]||[]).push(c); } });
-    function renderThread(c, depth) {
-      let h = _tpRenderComment(c, depth);
-      (childMap[c.id]||[]).forEach(ch => { h += renderThread(ch, depth+1); });
-      return h;
-    }
-    let html = '';
-    topLevel.forEach((c, i) => {
-      html += `<div style="${i>0?'border-top:1px solid var(--border)':''}">`;
-      html += renderThread(c, 0);
-      html += '</div>';
-    });
-    list.innerHTML = html;
-  } catch(e) { list.innerHTML = '<p style="color:var(--muted);font-size:.8rem">Could not load comments.</p>'; }
+    all.forEach(c=>{ if(c.reply_to){(childMap[c.reply_to]=childMap[c.reply_to]||[]).push(c);} });
+    function thread(c,d){ let h=_tpRenderComment(c,d); (childMap[c.id]||[]).forEach(ch=>{ h+=thread(ch,d+1); }); return h; }
+    list.innerHTML = topLevel.map((c,i)=>`<div style="${i>0?'border-top:1px solid var(--border)':''}">${thread(c,0)}</div>`).join('');
+  } catch(e) { list.innerHTML='<p style="color:var(--muted);font-size:.8rem;padding:8px 0">Could not load comments.</p>'; }
 }
 
 function tpStartReply(id, name) {
-  _tpReplyingTo = { id, user_name: name };
-  const bar   = document.getElementById('tp-reply-bar');
-  const label = document.getElementById('tp-reply-label');
-  const input = document.getElementById('tp-input');
-  if (bar)   { bar.style.display = 'flex'; }
-  if (label) { label.textContent = `Replying to ${name}`; }
-  if (input) { input.placeholder = `Reply to ${name}…`; input.focus(); }
+  _tpReplyingTo = {id, user_name:name};
+  const bar = document.getElementById('tp-reply-bar');
+  const lbl = document.getElementById('tp-reply-label');
+  const inp = document.getElementById('tp-input');
+  if (bar) bar.style.display='flex';
+  if (lbl) lbl.textContent=`Replying to ${name}`;
+  if (inp) { inp.placeholder=`Reply to ${name}…`; inp.focus(); }
 }
 
 function tpCancelReply() {
-  _tpReplyingTo = null;
-  const bar   = document.getElementById('tp-reply-bar');
-  const input = document.getElementById('tp-input');
-  if (bar)   bar.style.display = 'none';
-  if (input) input.placeholder = 'Write a comment… (Enter to send, Shift+Enter for new line)';
+  _tpReplyingTo=null;
+  const bar = document.getElementById('tp-reply-bar');
+  const inp = document.getElementById('tp-input');
+  if (bar) bar.style.display='none';
+  if (inp) inp.placeholder='Write a comment…';
 }
 
 async function tpDeleteComment(commentId) {
   if (!confirm('Delete this comment? If it has replies, it will appear as [deleted].')) return;
   try {
-    const r = await fetch(`/api/todo/${TP_TODO_ID}/comments/${commentId}`, {method:'DELETE'});
+    const r = await fetch(`/api/todo/${TP_TODO_ID}/comments/${commentId}`,{method:'DELETE'});
     if (!r.ok) throw new Error('Failed');
     tpLoadComments();
   } catch(e) { alert('Could not delete comment.'); }
 }
 
 async function tpPostComment() {
-  const input = document.getElementById('tp-input');
-  const text  = (input?.value||'').trim();
+  const inp  = document.getElementById('tp-input');
+  const text = (inp?.value||'').trim();
   if (!text) return;
-  const body = { text };
+  const body = {text};
   if (_tpReplyingTo) body.reply_to = _tpReplyingTo.id;
   try {
-    const r = await fetch(`/api/todo/${TP_TODO_ID}/comments`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(body)
-    });
+    const r = await fetch(`/api/todo/${TP_TODO_ID}/comments`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if (!r.ok) throw new Error('Failed');
-    input.value = '';
-    _tpReplyingTo = null;
-    tpCancelReply();
-    tpLoadComments();
+    inp.value=''; inp.style.height='auto';
+    _tpReplyingTo=null; tpCancelReply(); tpLoadComments();
   } catch(e) { alert('Could not post comment.'); }
+}
+
+// Quick status change directly from the detail page
+async function tpQuickStatus(newStatus) {
+  try {
+    const r = await fetch(`/api/todo/${TP_TODO_ID}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:newStatus})});
+    if (!r.ok) throw new Error('Failed');
+    toast(`Status updated — reloading…`);
+    setTimeout(()=>location.reload(), 700);
+  } catch(e) { toast('Could not update status','error'); }
+}
+
+async function tpDelete() {
+  if (!confirm(`Delete TODO #${TP_TODO_ID}? This cannot be undone.`)) return;
+  try {
+    await fetch(`/api/todo/${TP_TODO_ID}`,{method:'DELETE'});
+    toast('Deleted — redirecting…');
+    setTimeout(()=>{ window.location.href='/board'; }, 700);
+  } catch(e) { toast('Could not delete','error'); }
 }
 
 tpLoadComments();
