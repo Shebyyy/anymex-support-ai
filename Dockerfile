@@ -7,7 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot.py .
 COPY app.py .
+COPY shared.py .
 COPY templates/ templates/
+COPY static/ static/
 
 EXPOSE 8080
 
