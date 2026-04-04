@@ -530,6 +530,13 @@ function renderLinkedState(linkedId, todoInfo) {
         <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
         <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
         ${(ti.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}
+        ${ti.assigned_to_id ? `<a href="/member/${ti.assigned_to_id}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;margin-left:auto">
+          <img src="${ti.assigned_to_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
+          <span style="display:flex;flex-direction:column;line-height:1">
+            <span style="font-size:.62rem;font-weight:600;color:var(--text)">${ti.assigned_to_name||ti.assigned_to_username||'Member'}</span>
+            ${ti.assigned_to_username?`<span style="font-size:.56rem;color:var(--muted);font-family:var(--mono)">@${ti.assigned_to_username}</span>`:''}
+          </span>
+        </a>` : ''}
       </div>
       ${ti.ai_description?`<div style="font-size:0.8rem;color:var(--muted);margin-top:6px;font-style:italic">${ti.ai_description}</div>`:''}
       <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="openQuickView(${linkedId})">🔍 Quick View</button></div>`;

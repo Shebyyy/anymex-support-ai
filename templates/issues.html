@@ -362,7 +362,13 @@
         {% if issue.assignees %}
         <span style="color:var(--muted)">→</span>
         {% for assignee in issue.assignees[:2] %}
-        <span style="font-size:0.75rem;color:var(--text)">👤 {{ assignee }}</span>
+        <a href="/member/{{ assignee }}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px">
+          <img src="https://cdn.discordapp.com/embed/avatars/0.png" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
+          <span style="display:flex;flex-direction:column;line-height:1">
+            <span style="font-size:.65rem;font-weight:600;color:var(--text)">{{ assignee }}</span>
+            <span style="font-size:.58rem;color:var(--muted);font-family:var(--mono)">@{{ assignee }}</span>
+          </span>
+        </a>
         {% endfor %}
         {% endif %}
 
@@ -670,10 +676,13 @@ function renderIssue(d) {
   if (d.assignees && d.assignees.length) {
     assigneesWrap.style.display = '';
     assigneesEl.innerHTML = d.assignees.map((login, i) => {
-      const av = (d.assignee_avatars||[])[i] || '';
-      return `<a class="assignee-chip" href="https://github.com/${login}" target="_blank">
-        ${av ? `<img src="${av}" alt="${login}" onerror="this.style.display='none'" />` : ''}
-        <span>@${login}</span>
+      const av = (d.assignee_avatars||[])[i] || 'https://cdn.discordapp.com/embed/avatars/0.png';
+      return `<a href="/member/${login}" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px">
+        <img src="${av}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:18px;height:18px;border-radius:50%;flex-shrink:0">
+        <span style="display:flex;flex-direction:column;line-height:1">
+          <span style="font-size:.68rem;font-weight:600;color:var(--text)">${login}</span>
+          <span style="font-size:.6rem;color:var(--muted);font-family:var(--mono)">@${login}</span>
+        </span>
       </a>`;
     }).join('');
   } else {
@@ -709,6 +718,13 @@ function renderLinkedState(linkedId, todoInfo) {
         <span class="status-pill status-${s}">${STATUS_ICONS_MAP[s]||'○'} ${STATUS_LABELS_MAP[s]||s}</span>
         <span class="pri-icon pri-${p}">${PRI_ICONS_MAP[p]||'◈'} ${PRI_LABELS_MAP[p]||p}</span>
         ${(ti.tags||[]).map(t=>`<span class="tag">${t}</span>`).join('')}
+        ${ti.assigned_to_id ? `<a href="/member/${ti.assigned_to_id}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;margin-left:auto">
+          <img src="${ti.assigned_to_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
+          <span style="display:flex;flex-direction:column;line-height:1">
+            <span style="font-size:.62rem;font-weight:600;color:var(--text)">${ti.assigned_to_name||ti.assigned_to_username||'Member'}</span>
+            ${ti.assigned_to_username?`<span style="font-size:.56rem;color:var(--muted);font-family:var(--mono)">@${ti.assigned_to_username}</span>`:''}
+          </span>
+        </a>` : ''}
       </div>
       <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="openQuickView(${linkedId})">🔍 Quick View</button>`;
   } else {

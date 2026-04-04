@@ -143,14 +143,13 @@
 ══════════════════════════════════════════ */
 .kanban-board {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 280px));
+  justify-content: center;
   gap: 12px;
   align-items: stretch;
   height: calc(100vh - 220px);
-  max-width: 1400px;
 }
-@media (max-width: 1100px) { .kanban-board { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 640px)  { .kanban-board { grid-template-columns: 1fr; height: auto; } }
+@media (max-width: 640px)  { .kanban-board { height: auto; } }
 
 .kanban-col {
   background: var(--surface2);
@@ -161,17 +160,6 @@
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 220px);
-}
-.kanban-col-body {
-  overflow-y: auto;
-  flex: 1;
-  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 32px), transparent 100%);
-  mask-image: linear-gradient(to bottom, black calc(100% - 32px), transparent 100%);
-}
-.kanban-empty-col {
-  text-align: center; padding: 2rem 1rem;
-  color: var(--muted); font-size: 0.78rem;
-  border: 1px dashed var(--border); border-radius: 8px; margin: 8px;
 }
 .kanban-col-head {
   padding: 12px 14px;
@@ -193,7 +181,7 @@
   background: var(--surface); border: 1px solid var(--border);
   padding: 1px 7px; border-radius: 10px; font-family: var(--mono);
 }
-.kanban-col-body { padding: 10px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; flex: 1; border-radius: 0 0 12px 12px; -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 28px), transparent 100%); mask-image: linear-gradient(to bottom, black calc(100% - 28px), transparent 100%); }
+.kanban-col-body { padding: 10px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; flex: 1; border-radius: 0 0 12px 12px; }
 
 .kanban-card {
   background: var(--surface); border: 1px solid var(--border);
@@ -422,6 +410,15 @@
       <span class="title">{{ t.title }}</span>
       {% if t.get('auto_generated') %}<span class="ai-badge">✦ AI</span>{% endif %}
       <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
+      {% if t.get('assigned_to_id') %}
+      <a href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
+        <img src="{{ t.assigned_to_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:18px;height:18px;border-radius:50%;flex-shrink:0">
+        <span style="display:flex;flex-direction:column;line-height:1">
+          <span style="font-size:.68rem;font-weight:600;color:var(--text)">{{ t.assigned_to_name or t.assigned_to_username or 'Member' }}</span>
+          {% if t.assigned_to_username %}<span style="font-size:.6rem;color:var(--muted);font-family:var(--mono)">@{{ t.assigned_to_username }}</span>{% endif %}
+        </span>
+      </a>
+      {% endif %}
     </div>
     {% if t.get('ai_description') %}
     <div class="todo-card-desc">{{ t.ai_description[:140] }}</div>
@@ -431,9 +428,6 @@
       {% for tag in t.get('tags', []) %}
         <span class="tag">{{ tag }}</span>
       {% endfor %}
-      {% if t.get('assigned_to_name') or t.get('assigned_to_id') %}
-      <a class="assignee-chip" href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;cursor:pointer">👤 {{ t.assigned_to_name or 'Member' }}</a>
-      {% endif %}
       {% if t.get('due_urgency') and t.due_urgency != 'done' %}
       <span class="due-badge due-{{ t.due_urgency }}">
         {{ '⚠' if t.due_urgency == 'overdue' else '🕐' if t.due_urgency in ('today','soon') else '📅' }}
@@ -703,17 +697,23 @@ function _buildKanban() {
       const tags = (t.tags||[]).slice(0,2).map(tg=>`<span class="tag">${tg}</span>`).join('');
       const due  = t.due_urgency && t.due_urgency !== 'done'
         ? `<span class="due-badge due-${t.due_urgency}">${t.due_label}</span>` : '';
-      const assignee = t.assigned_to_name
-        ? `<span class="assignee-chip" style="font-size:0.68rem">👤 ${t.assigned_to_name}</span>` : '';
+      const assignee = t.assigned_to_id
+        ? `<a href="/member/${t.assigned_to_id}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
+            <img src="${t.assigned_to_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
+            <span style="display:flex;flex-direction:column;line-height:1">
+              <span style="font-size:.62rem;font-weight:600;color:var(--text)">${t.assigned_to_name||t.assigned_to_username||'Member'}</span>
+              ${t.assigned_to_username?`<span style="font-size:.56rem;color:var(--muted);font-family:var(--mono)">@${t.assigned_to_username}</span>`:''}
+            </span>
+          </a>` : '';
       const desc = t.ai_description
         ? `<div class="kanban-card-desc">${t.ai_description}</div>` : '';
       return `<div class="kanban-card" style="animation-delay:${i*0.04}s" onclick="viewTodoById(${t.id})">
-        <div class="kanban-card-id">#${t.id}${t.auto_generated?' <span class="ai-badge" style="vertical-align:middle">✦ AI</span>':''}</div>
+        <div class="kanban-card-id" style="display:flex;align-items:center;gap:6px">#${t.id}${t.auto_generated?' <span class="ai-badge" style="vertical-align:middle">✦ AI</span>':''}<span style="margin-left:auto">${assignee}</span></div>
         <div class="kanban-card-title">${t.title}</div>
         ${desc}
         <div class="kanban-card-footer">
           <span class="pri-icon pri-${t.priority||'medium'}" style="font-size:0.75rem">${PRI_ICONS[t.priority||'medium']}</span>
-          ${tags}${due}${assignee}
+          ${tags}${due}
         </div>
       </div>`;
     }).join('');
