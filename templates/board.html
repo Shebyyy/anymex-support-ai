@@ -143,11 +143,9 @@
 ══════════════════════════════════════════ */
 .kanban-board {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 280px));
-  justify-content: center;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   align-items: stretch;
-  height: calc(100vh - 220px);
 }
 @media (max-width: 640px)  { .kanban-board { height: auto; } }
 
