@@ -814,12 +814,23 @@ function viewTodo(t) {
   document.getElementById('vm-public-badge').innerHTML =
     `<span style="font-size:0.72rem;padding:3px 8px;border-radius:10px;background:${isPublic?'rgba(29,158,117,0.12)':'rgba(107,114,128,0.1)'};color:${isPublic?'var(--done)':'var(--muted)'}">${isPublic?'🌐 Public':'🔒 Private'}</span>`;
 
-  // Assigned to
-  const assignedEl   = document.getElementById('vm-assigned');
-  const assignedName = t.assigned_to_name || (t.assigned_to_id ? 'Member' : null);
-  let assignedHtml   = assignedName && t.assigned_to_id
-    ? `<a href="/member/${t.assigned_to_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${assignedName}</a>`
-    : '<span style="color:var(--muted)">Unassigned</span>';
+  // Assigned to — chip with avatar + display name + @username
+  const assignedEl       = document.getElementById('vm-assigned');
+  const assignedDisplay  = t.assigned_to_name     || null;
+  const assignedUsername = t.assigned_to_username || null;
+  const assignedAvatar   = t.assigned_to_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  let assignedHtml       = '';
+  if (t.assigned_to_id && (assignedDisplay || assignedUsername)) {
+    assignedHtml = `<a href="/member/${t.assigned_to_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+      <img src="${assignedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
+      <span style="display:flex;flex-direction:column;gap:0">
+        <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${assignedDisplay || assignedUsername}</span>
+        ${assignedUsername ? `<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@${assignedUsername}</span>` : ''}
+      </span>
+    </a>`;
+  } else {
+    assignedHtml = '<span style="color:var(--muted)">Unassigned</span>';
+  }
   if (['manager','admin','owner'].includes(ACCESS_LEVEL)) {
     if (t.assigned_to_id === CURRENT_UID)
       assignedHtml += ` <button class="btn btn-ghost btn-sm" style="margin-left:6px" onclick="selfAssign(${t.id},'unassign',this)">✗ Unassign me</button>`;
@@ -828,15 +839,24 @@ function viewTodo(t) {
   }
   assignedEl.innerHTML = assignedHtml;
 
-  // Added by
-  const addedEl   = document.getElementById('vm-added');
-  const addedName = t.added_by_display || t.added_by || null;
-  if (t.added_by_id && addedName)
-    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">${addedName}</a>`;
-  else if (t.added_by_id)
-    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="color:var(--accent2);text-decoration:none;font-weight:600">Member</a>`;
-  else
-    addedEl.textContent = addedName || '—';
+  // Added by — chip with avatar + display name + @username
+  const addedEl       = document.getElementById('vm-added');
+  const addedDisplay  = t.added_by_display  || null;
+  const addedUsername = t.added_by_username || null;
+  const addedAvatar   = t.added_by_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
+  if (t.added_by_id && (addedDisplay || addedUsername)) {
+    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+      <img src="${addedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
+      <span style="display:flex;flex-direction:column;gap:0">
+        <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${addedDisplay || addedUsername}</span>
+        ${addedUsername ? `<span style="font-size:.68rem;color:var(--muted);font-family:var(--mono);line-height:1.3">@${addedUsername}</span>` : ''}
+      </span>
+    </a>`;
+  } else if (t.added_by_id) {
+    addedEl.innerHTML = `<span style="color:var(--muted)">Member</span>`;
+  } else {
+    addedEl.innerHTML = `<span style="color:var(--muted)">—</span>`;
+  }
 
   // Due
   const dueEl = document.getElementById('vm-due');
