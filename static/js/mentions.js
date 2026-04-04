@@ -31,12 +31,21 @@ function createMentionController() {
   }
 
   function _render() {
-    let el = _container.querySelector('.mention-dropdown');
+    let el = document.getElementById('_global_mention_dropdown');
     if (!_results.length) { if (el) el.remove(); return; }
     if (!el) {
       el = document.createElement('div');
+      el.id = '_global_mention_dropdown';
       el.className = 'mention-dropdown';
-      _container.appendChild(el);
+      el.style.cssText = 'position:fixed;z-index:9999';
+      document.body.appendChild(el);
+    }
+    // Position above the textarea using fixed coords
+    if (_ta) {
+      const r = _ta.getBoundingClientRect();
+      el.style.left  = r.left + 'px';
+      el.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+      el.style.top   = '';
     }
     el.innerHTML = _results.map((m, i) => `
       <div class="mention-item ${i === _idx ? 'active' : ''}" data-i="${i}">
@@ -70,7 +79,7 @@ function createMentionController() {
 
   function _close() {
     _active = false; _results = []; _query = '';
-    const el = _container?.querySelector('.mention-dropdown');
+    const el = document.getElementById('_global_mention_dropdown');
     if (el) el.remove();
   }
 

@@ -624,9 +624,14 @@ function _tpRenderComment(c, depth) {
 
   // Reactions
   const reactions = c.reactions || {};
+  function _renderEmoji(e) {
+    const m = e.match(/^<a?:(\w+):(\d+)>$/);
+    if (m) return `<img src="https://cdn.discordapp.com/emojis/${m[2]}.webp" style="width:16px;height:16px;vertical-align:-3px;object-fit:contain" title=":${m[1]}:">`;
+    return e;
+  }
   const reactChips = Object.entries(reactions).map(([emoji, users]) => {
     const mine = users.includes(TP_UID);
-    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="tpToggleReaction('${c.id}','${emoji}')">${emoji} <span class="r-count">${users.length}</span></span>`;
+    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="tpToggleReaction('${c.id}','${emoji}')">${_renderEmoji(emoji)} <span class="r-count">${users.length}</span></span>`;
   }).join('');
   const addReactBtn = !TP_IS_DONE ? `<span class="reaction-add-btn" onclick="tpOpenEmojiPicker(this,'${c.id}')" title="Add reaction">😊</span>` : '';
   const reactionRow = `<div class="reaction-row">${reactChips}${addReactBtn}</div>`;
