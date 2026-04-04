@@ -6,8 +6,8 @@
 .rm-hero h1 { font-family:var(--mono); font-size:2rem; font-weight:700; margin-bottom:.5rem; }
 .rm-hero p { color:var(--muted); font-size:.9rem; }
 .rm-cols {
-  display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-  gap:1.25rem; margin-bottom:2rem;
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,280px));
+  justify-content:center; gap:1.25rem; margin-bottom:2rem;
 }
 .rm-col { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
 .rm-col-head {
@@ -43,27 +43,34 @@
     ('blocked',        '✕ Blocked',     'var(--blocked)'),
   ] %}
   {% for status, label, color in col_config %}
+  {% if by_status[status] %}
   <div class="rm-col">
     <div class="rm-col-head">
       <h3 style="color:{{ color }}">{{ label }}</h3>
       <span style="font-size:.72rem;color:var(--muted);font-family:var(--mono)">{{ by_status[status]|length }}</span>
     </div>
     <div class="rm-col-body">
-      {% if by_status[status] %}
-        {% for t in by_status[status] %}
-        <div class="rm-card" style="border-left-color:{{ color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
-          <div class="title">{{ t.title }}</div>
-          <div class="meta">
-            <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
-            {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
-          </div>
+      {% for t in by_status[status] %}
+      <div class="rm-card" style="border-left-color:{{ color }};cursor:pointer" onclick="openQuickView({{ t.id }})">
+        <div class="title">{{ t.title }}</div>
+        <div class="meta">
+          <span class="pri-icon pri-{{ t.get('priority','medium') }}">{{ t.priority_icon }}</span>
+          {% for tag in t.get('tags',[])[:2] %}<span class="tag">{{ tag }}</span>{% endfor %}
+          {% if t.assigned_to_id %}
+          <a href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px">
+            <img src="{{ t.assigned_to_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:18px;height:18px;border-radius:50%;flex-shrink:0">
+            <span style="display:flex;flex-direction:column;gap:0">
+              <span style="font-size:.65rem;font-weight:600;color:var(--text);line-height:1.3">{{ t.assigned_to_name or t.assigned_to_username or 'Member' }}</span>
+              {% if t.assigned_to_username %}<span style="font-size:.6rem;color:var(--muted);font-family:var(--mono);line-height:1.2">@{{ t.assigned_to_username }}</span>{% endif %}
+            </span>
+          </a>
+          {% endif %}
         </div>
-        {% endfor %}
-      {% else %}
-        <div class="rm-empty">Nothing here</div>
-      {% endif %}
+      </div>
+      {% endfor %}
     </div>
   </div>
+  {% endif %}
   {% endfor %}
 </div>
 
