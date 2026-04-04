@@ -170,7 +170,6 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface2);
-  overflow: hidden;
   transition: border-color 0.15s, background 0.15s;
 }
 .tp-input-outer:focus-within {
@@ -623,11 +622,12 @@ function _tpRenderComment(c, depth) {
   const editBtn = canEdit ? `<button onclick="tpStartEdit('${c.id}',this)" title="Edit" class="tp-edit-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">✏️</button>` : '';
   const repBtn  = !TP_IS_DONE ? `<button onclick="tpStartReply('${c.id}','${_tpEsc(c.user_name)}')" class="tp-reply-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:.72rem;padding:0 2px;opacity:0;transition:opacity .15s">↩ Reply</button>` : '';
 
-  // Reactions
   const reactions = c.reactions || {};
   const reactChips = Object.entries(reactions).map(([emoji, users]) => {
     const mine = users.includes(TP_UID);
-    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="tpToggleReaction('${c.id}','${emoji}')">${emoji} <span class="r-count">${users.length}</span></span>`;
+    const formattedEmoji = emoji.startsWith('<') ? `<img src="https://cdn.discordapp.com/emojis/${emoji.match(/:(\d+)>/)?.[1]}.${emoji.startsWith('<a:')?'gif':'png'}?v=1" alt="${emoji.split(':')[1]}" style="width:16px;height:16px;vertical-align:-3px;display:inline-block;pointer-events:none">` : emoji;
+    const safeEmoji = emoji.replace(/'/g, "\\'");
+    return `<span class="reaction-chip ${mine?'mine':''}" title="${users.length} reaction${users.length!==1?'s':''}" onclick="tpToggleReaction('${c.id}','${safeEmoji}')">${formattedEmoji} <span class="r-count">${users.length}</span></span>`;
   }).join('');
   const addReactBtn = !TP_IS_DONE ? `<span class="reaction-add-btn" onclick="tpOpenEmojiPicker(this,'${c.id}')" title="Add reaction">😊</span>` : '';
   const reactionRow = `<div class="reaction-row">${reactChips}${addReactBtn}</div>`;
@@ -830,7 +830,7 @@ document.querySelectorAll('[data-ts]').forEach(el => {
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-(function init() {
+document.addEventListener('DOMContentLoaded', function init() {
   tpLoadComments();
 
   // Keyboard shortcuts
@@ -838,10 +838,10 @@ document.querySelectorAll('[data-ts]').forEach(el => {
   if (inp) {
     attachKbShortcuts(inp, tpWrap);
     // @mention
-    const footer = inp.closest('.tp-panel-footer');
-    if (footer) {
+    const container = inp.closest('.tp-input-outer') || inp.parentElement;
+    if (container) {
       const mc = createMentionController();
-      mc.attach(inp, footer, tpUpdatePreview);
+      mc.attach(inp, container, tpUpdatePreview);
     }
     // Paste image
     const previewEl = document.getElementById('tp-img-preview');
@@ -849,6 +849,6 @@ document.querySelectorAll('[data-ts]').forEach(el => {
       _tpPastedImg = data ? {data, type} : null;
     });
   }
-})();
+});
 </script>
 {% endblock %}
