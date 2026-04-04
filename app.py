@@ -25,6 +25,7 @@ from flask import (
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
+app.permanent_session_lifetime = datetime.timedelta(days=30)
 
 # Discord OAuth2
 DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
@@ -51,13 +52,7 @@ DATA_REPO     = os.environ.get("DATA_REPO",  "anymex-support-db")
 DATA_BRANCH   = os.environ.get("DATA_BRANCH", "main")
 GITHUB_API    = "https://api.github.com"
 
-FILE_CONFIG        = "config.json"
-FILE_TODOS         = "todos.json"
-FILE_TODOS_ARCHIVE = "todos_archive.json"
-FILE_FORUM_LINKS   = "forum_links.json"
-FILE_ACTIVITY_LOG  = "activity_log.json"
-FILE_MEMBERS       = "members.json"       # guild member snapshot synced from Discord
-FILE_TODO_MEMBERS  = "todo_members.json"  # only is_todo_role=true members (small, always readable)
+from shared import *
 
 # Member lookup cache (populated lazily from todo_members.json)
 _member_name_cache:     dict  = {}   # id -> display_name (nick > global_name > username)
@@ -101,14 +96,7 @@ def _resolve_user_avatar(user_id: str) -> str | None:
     _load_member_cache()
     return _member_avatar_cache.get(str(user_id))
 
-# ── New feature files ────────────────────────────────────────────────────────
-FILE_COMMENTS       = "todo_comments.json"       # #1  Comments on TODOs
-FILE_SAVED_FILTERS  = "saved_filters.json"       # #3  Saved board filters per user
-FILE_GITHUB_ISSUES  = "github_issues.json"       # #14 GitHub issues mirror
-FILE_ISSUE_LINKS    = "github_issue_links.json"  # #14 GitHub issue → TODO links
-FILE_RELEASES       = "releases.json"            # #22 Release notes
-FILE_BOT_HEALTH     = "bot_health.json"          # #25 Bot health monitor
-FILE_GUILD_EMOJIS   = "guild_emojis.json"        # Discord server custom emojis cache
+
 
 # GitHub repo to mirror issues from (AnymeX main repo)
 ANYMEX_OWNER = os.environ.get("ANYMEX_OWNER", "RyanYuuki")
@@ -120,31 +108,7 @@ GITHUB_ISSUES_SYNC_TTL = 10 * 60  # 10 min
 BOT_NOTIFY_URL  = os.environ.get("BOT_NOTIFY_URL")   # e.g. http://localhost:8081/notify
 INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")  # same value set in bot.py
 
-DEFAULT_CONFIG = {
-    "todo_channel": None, "todo_roles": [], "todo_style": 1,
-    "prefix": "ax!", "log_channel": None,
-    "reminder_days": 3, "reminder_time": "09:00",
-    "reminder_channel": None, "thread_channel": None,
-}
 
-STATUS_COLORS = {
-    "todo": "#378ADD", "in_progress": "#BA7517",
-    "review_needed": "#888780", "blocked": "#E24B4A", "done": "#1D9E75",
-}
-STATUS_LABELS = {
-    "todo": "To Do", "in_progress": "In Progress",
-    "review_needed": "Review Needed", "blocked": "Blocked", "done": "Done",
-}
-STATUS_ICONS = {
-    "todo": "○", "in_progress": "◑",
-    "review_needed": "◇", "blocked": "✕", "done": "✓",
-}
-PRIORITY_LABELS = {"low": "Low", "medium": "Medium", "high": "High"}
-PRIORITY_ICONS  = {"low": "▽", "medium": "◈", "high": "▲"}
-TAG_COLORS = {
-    "bug": "#E24B4A", "feature": "#1D9E75", "urgent": "#BA7517",
-    "docs": "#378ADD", "refactor": "#9B59B6", "question": "#F1C40F",
-}
 
 CACHE_TTL = 60  # 1 min cache for web
 _cache: dict = {}
@@ -219,38 +183,7 @@ def gh_write(filepath: str, data, sha, msg: str):
         return False
 
 
-FILE_SESSIONS = "sessions.json"
-SESSION_TTL_DAYS = 30
 
-def session_read_all():
-    data, sha = gh_read(FILE_SESSIONS, force=True)
-    return (data or {}), sha
-
-def session_save(sid, payload):
-    sessions, sha = session_read_all()
-    sessions[sid] = {
-        **payload,
-        "expires_at": (datetime.datetime.utcnow() + datetime.timedelta(days=SESSION_TTL_DAYS)).isoformat()
-    }
-    # Clean expired sessions
-    now = datetime.datetime.utcnow().isoformat()
-    sessions = {k: v for k, v in sessions.items() if v.get("expires_at", "") > now}
-    gh_write(FILE_SESSIONS, sessions, sha, f"Session: save {sid[:8]}")
-
-def session_get(sid):
-    sessions, _ = session_read_all()
-    s = sessions.get(sid)
-    if not s:
-        return None
-    if s.get("expires_at", "") < datetime.datetime.utcnow().isoformat():
-        return None
-    return s
-
-def session_delete(sid):
-    sessions, sha = session_read_all()
-    if sid in sessions:
-        del sessions[sid]
-        gh_write(FILE_SESSIONS, sessions, sha, f"Session: delete {sid[:8]}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DISCORD OAUTH HELPERS
@@ -297,13 +230,7 @@ def notify_bot_board():
 # Posts an embed to the configured log_channel for every action on the site
 # ══════════════════════════════════════════════════════════════════════════════
 
-STATUS_COLORS_INT = {
-    "todo":          0x378ADD,
-    "in_progress":   0xBA7517,
-    "review_needed": 0x888780,
-    "blocked":       0xE24B4A,
-    "done":          0x1D9E75,
-}
+
 
 def _web_log_activity(action: str, todo: dict, user: dict, extra: str = ""):
     """
@@ -462,8 +389,7 @@ def _fmt_discord_ts(ts_str):
 #       When a thread is opened, we call Discord once to get fresh URLs.
 # ══════════════════════════════════════════════════════════════════════════════
 
-FILE_FORUM_POSTS_BUGS        = "forum_posts_bugs.json"
-FILE_FORUM_POSTS_SUGGESTIONS = "forum_posts_suggestions.json"
+
 
 def _forum_file(forum_type):
     """Return the correct file path for a given forum type."""
@@ -1148,8 +1074,8 @@ def _patch_forum_post_todo_link(thread_id, forum_type, todo_id, todo_info):
 @app.route("/login")
 def login():
     state = secrets.token_hex(16)
-    sid = secrets.token_hex(32)
-    session_save(sid, {"oauth_state": state})
+    session.permanent = True
+    session["oauth_state"] = state
     resp = redirect(DISCORD_OAUTH + (
         f"?client_id={DISCORD_CLIENT_ID}"
         f"&redirect_uri={DISCORD_REDIRECT_URI}"
@@ -1157,7 +1083,6 @@ def login():
         f"&scope={DISCORD_SCOPE.replace(' ', '%20')}"
         f"&state={state}"
     ))
-    resp.set_cookie("sid", sid, max_age=600, httponly=True, samesite="Lax")
     return resp
 
 @app.route("/callback")
@@ -1166,13 +1091,11 @@ def callback():
     if error:
         return redirect(url_for("index") + "?error=discord_denied")
 
-    sid = request.cookies.get("sid")
-    sid_data = session_get(sid) if sid else None
-    if not sid_data:
+    if "oauth_state" not in session:
         return redirect(url_for("index") + "?error=state_mismatch")
 
     state = request.args.get("state")
-    if state != sid_data.get("oauth_state"):
+    if state != session.get("oauth_state"):
         return redirect(url_for("index") + "?error=state_mismatch")
 
     code = request.args.get("code")
@@ -1195,36 +1118,28 @@ def callback():
     cfg = cfg or DEFAULT_CONFIG.copy()
     access_level = resolve_access_level(member, cfg)
 
-    # Save full session to GitHub
-    new_sid = secrets.token_hex(32)
-    session_save(new_sid, {
-        "user": user,
-        "access_token": access_token,
-        "access_level": access_level,
-        "member": member,
-    })
+    # Save full session to Flask cookie
+    session.clear() # clear oauth_state
+    session.permanent = True
+    session["user"] = user
+    session["access_token"] = access_token
+    session["access_level"] = access_level
+    session["member"] = member
 
     # Keep members.json fresh for anyone who logs in
     if member:
         _upsert_member(user, member)
 
     resp = redirect(url_for("dashboard"))
-    resp.set_cookie("sid", new_sid, max_age=60*60*24*30, httponly=True, samesite="Lax")
     return resp
 
 def get_session():
-    sid = request.cookies.get("sid")
-    if not sid:
-        return {}
-    return session_get(sid) or {}
+    return session
 
 @app.route("/logout")
 def logout():
-    sid = request.cookies.get("sid")
-    if sid:
-        session_delete(sid)
+    session.clear()
     resp = redirect(url_for("index"))
-    resp.delete_cookie("sid")
     return resp
 
 # ══════════════════════════════════════════════════════════════════════════════

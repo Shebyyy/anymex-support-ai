@@ -409,7 +409,7 @@
       {% if t.get('auto_generated') %}<span class="ai-badge">✦ AI</span>{% endif %}
       <span class="status-pill status-{{ t.status }}">{{ t.status_icon }} {{ t.status_label }}</span>
       {% if t.get('assigned_to_id') %}
-      <a href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
+      <a href="/member/{{ t.assigned_to_id }}" onclick="event.stopPropagation()" class="chip chip-sm push-right no-shrink">
         <img src="{{ t.assigned_to_avatar or 'https://cdn.discordapp.com/embed/avatars/0.png' }}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:18px;height:18px;border-radius:50%;flex-shrink:0">
         <span style="display:flex;flex-direction:column;line-height:1">
           <span style="font-size:.68rem;font-weight:600;color:var(--text)">{{ t.assigned_to_name or t.assigned_to_username or 'Member' }}</span>
@@ -810,7 +810,7 @@ function viewTodo(t) {
   const assignedAvatar   = t.assigned_to_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
   let assignedHtml       = '';
   if (t.assigned_to_id && (assignedDisplay || assignedUsername)) {
-    assignedHtml = `<a href="/member/${t.assigned_to_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+    assignedHtml = `<a href="/member/${t.assigned_to_id}" class="chip">
       <img src="${assignedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
       <span style="display:flex;flex-direction:column;gap:0">
         <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${assignedDisplay || assignedUsername}</span>
@@ -834,7 +834,7 @@ function viewTodo(t) {
   const addedUsername = t.added_by_username || null;
   const addedAvatar   = t.added_by_avatar   || 'https://cdn.discordapp.com/embed/avatars/0.png';
   if (t.added_by_id && (addedDisplay || addedUsername)) {
-    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" style="text-decoration:none;display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 10px 3px 4px">
+    addedEl.innerHTML = `<a href="/member/${t.added_by_id}" class="chip">
       <img src="${addedAvatar}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:22px;height:22px;border-radius:50%;flex-shrink:0"/>
       <span style="display:flex;flex-direction:column;gap:0">
         <span style="font-size:.78rem;font-weight:600;color:var(--text);line-height:1.3">${addedDisplay || addedUsername}</span>
@@ -1376,7 +1376,7 @@ function _buildKanban() {
       const due  = t.due_urgency && t.due_urgency !== 'done'
         ? `<span class="due-badge due-${t.due_urgency}">${t.due_label}</span>` : '';
       const assignee = t.assigned_to_id
-        ? `<a href="/member/${t.assigned_to_id}" onclick="event.stopPropagation()" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px 2px 3px;flex-shrink:0;margin-left:auto">
+        ? `<a href="/member/${t.assigned_to_id}" onclick="event.stopPropagation()" class="chip chip-sm push-right no-shrink">
             <img src="${t.assigned_to_avatar||'https://cdn.discordapp.com/embed/avatars/0.png'}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'" style="width:16px;height:16px;border-radius:50%;flex-shrink:0">
             <span style="display:flex;flex-direction:column;line-height:1">
               <span style="font-size:.62rem;font-weight:600;color:var(--text)">${t.assigned_to_name||t.assigned_to_username||'Member'}</span>
