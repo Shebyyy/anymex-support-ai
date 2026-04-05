@@ -20,6 +20,7 @@ FILE_BOARD_IDS       = "board_ids.json"
 FILE_THREAD_MESSAGES = "thread_messages.json"
 FILE_NOTIF_PREFS     = "user_notification_prefs.json"
 FILE_NOTIFICATIONS   = "notifications.json"
+FILE_USER_DEVICES    = "user_devices.json"
 
 # Default notification preferences for a new user
 DEFAULT_NOTIF_PREFS = {

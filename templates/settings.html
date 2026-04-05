@@ -123,6 +123,7 @@
     <a href="#tag-perms">Tag Permissions</a>
     <div class="nav-section">Info</div>
     <a href="#notifications">Notifications</a>
+    <a href="#devices">Login History</a>
     <a href="#access">Access Levels</a>
     <a href="#members">Member DB</a>
     <a href="#db">Database</a>
@@ -390,6 +391,20 @@
           </div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- Login Devices card -->
+    <div class="settings-card" id="devices">
+      <div class="settings-card-head">
+        <h2>Login History</h2>
+        <button class="btn btn-ghost btn-sm" onclick="clearDevices(this)" style="color:var(--muted)">Clear History</button>
+      </div>
+      <div class="settings-card-body">
+        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:1rem">Every time you log in via Discord, the device info is recorded here.</p>
+        <div id="devices-list" style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:0.8rem;color:var(--muted)">Loading…</div>
+        </div>
       </div>
     </div>
 
@@ -674,5 +689,51 @@ async function saveNotifPrefs(btn) {
     btn.textContent = 'Save';
   }
 }
+
+// ── Login History (Devices) ──────────────────────────────────────────────────
+async function loadDevices() {
+  const list = document.getElementById('devices-list');
+  if (!list) return;
+  try {
+    const data = await api('GET', '/api/devices');
+    const items = data.devices || [];
+    if (!items.length) {
+      list.innerHTML = '<div style="font-size:0.8rem;color:var(--muted)">No login history yet.</div>';
+      return;
+    }
+    list.innerHTML = items.map(d => {
+      const ts = d.ts ? new Date(d.ts + 'Z').toLocaleString() : '—';
+      return `<div style="font-size:0.8rem;padding:8px 10px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
+        <span style="color:var(--text);font-weight:600">${ts}</span>
+        <span style="color:var(--muted);margin-left:12px">${_escHtml(d.ip || '—')}</span>
+        <div style="color:var(--muted);font-size:0.72rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escHtml(d.user_agent || '')}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = '<div style="font-size:0.8rem;color:var(--muted)">Could not load login history.</div>';
+  }
+}
+
+async function clearDevices(btn) {
+  if (!confirm('Clear your login history?')) return;
+  btn.disabled = true;
+  try {
+    await api('POST', '/api/devices/clear');
+    toast('Login history cleared.');
+    loadDevices();
+  } catch(e) {
+    toast('Failed to clear.', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function _escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadDevices();
+});
 </script>
 {% endblock %}

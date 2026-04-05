@@ -332,20 +332,29 @@ def _push_notification(recipient_id: str, notif: dict):
     """
     Append a notification to FILE_NOTIFICATIONS for the given user.
     notif should contain: type, todo_id, todo_title, message, ts, actor_name
+    Retries up to 3 times on SHA conflict (concurrent writes).
     """
     def _write():
-        try:
-            db, sha = gh_read(FILE_NOTIFICATIONS, force=True)
-            db = db or {}
-            key = str(recipient_id)
-            queue = db.get(key, [])
-            queue.insert(0, notif)
-            queue = queue[:100]   # cap per-user queue
-            db[key] = queue
-            gh_write(FILE_NOTIFICATIONS, db, sha,
-                     f"Notif: {notif.get('type','?')} for user {recipient_id}")
-        except Exception as e:
-            print(f"[notifications] push failed for {recipient_id}: {e}")
+        for attempt in range(3):
+            try:
+                db, sha = gh_read(FILE_NOTIFICATIONS, force=True)
+                db = db or {}
+                key = str(recipient_id)
+                queue = list(db.get(key) or [])
+                queue.insert(0, notif)
+                queue = queue[:100]   # cap per-user queue
+                db[key] = queue
+                ok = gh_write(FILE_NOTIFICATIONS, db, sha,
+                             f"Notif: {notif.get('type','?')} for user {recipient_id}")
+                if ok:
+                    return
+                # SHA conflict or write fail — clear cache and retry
+                _cache.pop(FILE_NOTIFICATIONS, None)
+                time.sleep(0.5 * (attempt + 1))
+            except Exception as e:
+                print(f"[notifications] push attempt {attempt+1} failed for {recipient_id}: {e}")
+                time.sleep(0.5 * (attempt + 1))
+        print(f"[notifications] push permanently failed for {recipient_id}")
     _threading.Thread(target=_write, daemon=True).start()
 
 
@@ -1331,6 +1340,25 @@ def callback():
     if member:
         _upsert_member(user, member)
 
+    # Record login device/session
+    try:
+        uid = str(user.get("id", ""))
+        if uid:
+            devices_db, dev_sha = gh_read(FILE_USER_DEVICES, force=True)
+            devices_db = devices_db or {}
+            user_devices = devices_db.get(uid) or []
+            import datetime as _dt
+            new_entry = {
+                "ts":         _dt.datetime.utcnow().isoformat(),
+                "ip":         request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip(),
+                "user_agent": request.headers.get("User-Agent", "")[:200],
+            }
+            user_devices.insert(0, new_entry)
+            devices_db[uid] = user_devices[:20]   # keep last 20 logins per user
+            gh_write(FILE_USER_DEVICES, devices_db, dev_sha, f"Login: {user.get('username','?')}")
+    except Exception as _e:
+        print(f"[device_record] failed: {_e}")
+
     resp = redirect(url_for("dashboard"))
     return resp
 
@@ -1543,7 +1571,7 @@ def analytics():
     )
 
 @app.route("/settings")
-@admin_required
+@manager_required
 def settings():
     cfg, _ = gh_read(FILE_CONFIG, force=True)
     cfg = cfg or DEFAULT_CONFIG.copy()
@@ -2306,7 +2334,7 @@ def api_notifications_mentions():
     sess = get_session()
     uid = str(sess.get("user", {}).get("id", "")) if sess.get("user") else ""
     if not uid:
-        return jsonify({"mentions": [], "notifications": []})
+        return jsonify({"error": "Login required", "unread_count": 0}), 401
     try:
         notif_db, _ = gh_read(FILE_NOTIFICATIONS)
         notif_db = notif_db or {}
@@ -2382,6 +2410,30 @@ def api_notif_prefs_save():
     prefs_db[uid] = {**DEFAULT_NOTIF_PREFS, **(prefs_db.get(uid) or {}), **prefs}
     gh_write(FILE_NOTIF_PREFS, prefs_db, sha, f"Notif prefs saved: {uid}")
     return jsonify({"ok": True, "prefs": prefs_db[uid]})
+
+
+@app.route("/api/devices", methods=["GET"])
+@login_required
+def api_devices_get():
+    """Return recent login devices/sessions for the current user."""
+    sess = get_session()
+    uid = str(sess["user"].get("id", ""))
+    devices_db, _ = gh_read(FILE_USER_DEVICES)
+    devices_db = devices_db or {}
+    return jsonify({"devices": devices_db.get(uid) or []})
+
+
+@app.route("/api/devices/clear", methods=["POST"])
+@login_required
+def api_devices_clear():
+    """Clear login history for the current user."""
+    sess = get_session()
+    uid = str(sess["user"].get("id", ""))
+    devices_db, sha = gh_read(FILE_USER_DEVICES, force=True)
+    devices_db = devices_db or {}
+    devices_db[uid] = []
+    gh_write(FILE_USER_DEVICES, devices_db, sha, f"Devices cleared: {uid}")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/todo/<int:todo_id>/notify-mentions", methods=["POST"])
@@ -4023,7 +4075,7 @@ def analytics():
 app.view_functions.pop("settings", None)
 
 @app.route("/settings")
-@admin_required
+@manager_required
 def settings():
     cfg, _    = gh_read(FILE_CONFIG, force=True)
     cfg       = cfg or DEFAULT_CONFIG.copy()

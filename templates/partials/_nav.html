@@ -30,18 +30,19 @@
     <a href="/activity" class="{% if request.endpoint == 'activity' %}active{% endif %}">
       <span>Activity</span>
     </a>
-    {% if access_level in ('admin', 'owner') %}
+    {% if access_level in ('manager', 'admin', 'owner') %}
     <a href="/settings" class="{% if request.endpoint == 'settings' %}active{% endif %}">
       <span>Settings</span>
     </a>
     {% endif %}
     {% endif %}
-    <a href="/roadmap" class="{% if request.endpoint == 'roadmap' %}active{% endif %}">
+    {# Roadmap and Changelog hidden for now #}
+    {# <a href="/roadmap" class="{% if request.endpoint == 'roadmap' %}active{% endif %}">
       <span>Roadmap</span>
     </a>
     <a href="/changelog" class="{% if request.endpoint == 'changelog' %}active{% endif %}">
       <span>Changelog</span>
-    </a>
+    </a> #}
     <a href="/search" class="{% if request.endpoint == 'search_page' %}active{% endif %}">
       <span>🔍</span>
     </a>
@@ -170,12 +171,29 @@
 <script>
 (function() {
   let _panelOpen = false;
+  let _pollActive = true;
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function _updateBadge(count) {
+    const badge = document.getElementById('notifCount');
+    if (!badge) return;
+    if (count > 0) {
+      badge.textContent = count < 100 ? count : '99+';
+      badge.classList.remove('notif-count-hidden');
+    } else {
+      badge.textContent = '';
+      badge.classList.add('notif-count-hidden');
+    }
+  }
 
   window.toggleNotifPanel = function() {
     const panel = document.getElementById('notifPanel');
     _panelOpen = !_panelOpen;
     panel.style.display = _panelOpen ? 'block' : 'none';
-    if (_panelOpen) loadNotifications();
+    if (_panelOpen) window.loadNotifications();
   };
 
   document.addEventListener('click', function(e) {
@@ -188,7 +206,12 @@
   window.loadNotifications = async function() {
     const list = document.getElementById('notifList');
     try {
-      const data = await fetch('/api/notifications').then(r => r.json());
+      const resp = await fetch('/api/notifications');
+      if (!resp.ok) {
+        list.innerHTML = '<div class="notif-empty">Could not load notifications.</div>';
+        return;
+      }
+      const data = await resp.json();
       const items = data.notifications || [];
       if (!items.length) {
         list.innerHTML = '<div class="notif-empty">You\'re all caught up ✓</div>';
@@ -201,12 +224,14 @@
         return `<a class="notif-item ${isUnread ? 'unread' : ''}" href="${todoUrl}">
           <div class="notif-dot ${isUnread ? '' : 'read'}"></div>
           <div class="notif-body">
-            <div class="notif-label">${escHtml(n.label || '🔔 Notification')}</div>
+            <div class="notif-label">${escHtml(n.label || '\uD83D\uDD14 Notification')}</div>
             <div class="notif-msg">${escHtml(n.todo_title || '')}</div>
             <div class="notif-ts">${ts}</div>
           </div>
         </a>`;
       }).join('');
+      // Sync badge to actual unread count from the list
+      _updateBadge(items.filter(n => !n.read).length);
     } catch(e) {
       list.innerHTML = '<div class="notif-empty">Could not load notifications.</div>';
     }
@@ -215,10 +240,7 @@
   window.markAllRead = async function() {
     try {
       await fetch('/api/notifications/mark-read', {method:'POST'});
-      // Update badge
-      const badge = document.getElementById('notifCount');
-      if (badge) { badge.textContent = ''; badge.classList.add('notif-count-hidden'); }
-      // Re-render list without unread styling
+      _updateBadge(0);
       document.querySelectorAll('.notif-item').forEach(el => {
         el.classList.remove('unread');
         el.querySelector('.notif-dot')?.classList.add('read');
@@ -226,24 +248,19 @@
     } catch(e) {}
   };
 
-  function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
   // Poll every 60s to refresh badge count without full page reload
   setInterval(async function() {
+    if (!_pollActive) return;
     try {
-      const data = await fetch('/api/notifications/mentions').then(r => r.json());
-      const count = data.unread_count || 0;
-      const badge = document.getElementById('notifCount');
-      if (!badge) return;
-      if (count > 0) {
-        badge.textContent = count < 100 ? count : '99+';
-        badge.classList.remove('notif-count-hidden');
-      } else {
-        badge.textContent = '';
-        badge.classList.add('notif-count-hidden');
+      const resp = await fetch('/api/notifications/mentions');
+      if (resp.status === 401) {
+        // Session expired — stop polling silently
+        _pollActive = false;
+        return;
       }
+      if (!resp.ok) return;
+      const data = await resp.json();
+      _updateBadge(data.unread_count || 0);
     } catch(e) {}
   }, 60000);
 })();
