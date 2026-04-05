@@ -657,6 +657,7 @@
 <script>
 const _TODOS     = JSON.parse(document.getElementById('todos-data').textContent);
 const _TODOS_MAP = Object.fromEntries(_TODOS.map(t => [t.id, t]));
+const _selected  = new Set();
 
 const STATUS_ICONS  = { todo:'○', in_progress:'◑', review_needed:'◇', blocked:'✕', done:'✓' };
 const STATUS_LABELS = { todo:'To Do', in_progress:'In Progress', review_needed:'Review Needed', blocked:'Blocked', done:'Done' };
@@ -680,11 +681,7 @@ function setView(v) {
   if (v === 'kanban') _buildKanban();
 }
 
-// ── Init view ────────────────────────────────────────────────────────────────
-setView(_currentView);
-
 // ── Bulk selection ────────────────────────────────────────────────────────────
-const _selected = new Set();
 
 function cardClick(e, id) {
   if (e.target.type === 'checkbox' || e.target.closest('button')) return;
@@ -861,7 +858,7 @@ function viewTodo(t) {
   const descWrap = document.getElementById('vm-desc-wrap');
   const desc = t.ai_description || t.description || '';
   descWrap.style.display = desc ? 'block' : 'none';
-  if (desc) document.getElementById('vm-desc').textContent = desc;
+  if (desc) document.getElementById('vm-desc').innerHTML = renderMarkdown(desc);
 
   // Edit / watch / public btns
   const editBtn = document.getElementById('vm-edit-btn');
@@ -872,7 +869,6 @@ function viewTodo(t) {
   if (publicBtn) { publicBtn.textContent = isPublic?'🌐 Public (hide)':'🔒 Private (publish)'; publicBtn.style.color = isPublic?'var(--done)':'var(--muted)'; }
 
   document.getElementById('view-modal').classList.add('open');
-  _vmResetPreview();
 }
 
 // ── Add / Edit modal ──────────────────────────────────────────────────────────
@@ -1145,14 +1141,10 @@ function onKanbanDragEnd(e) {
 }
 
 // ── Misc ──────────────────────────────────────────────────────────────────────
-_showAssignSearch();
 document.addEventListener('click', e => {
   const wrap = document.getElementById('em-assign-input-wrap');
   if (wrap && !wrap.contains(e.target)) document.getElementById('em-member-results').style.display='none';
 });
-
-// Init comment input features when view modal opens
-
 
 // Auto-open from ?highlight= URL param
 (async function() {
@@ -1167,9 +1159,12 @@ document.addEventListener('click', e => {
     try {
       const res = await fetch(`/api/todo/${hid}`); if (!res.ok) throw new Error();
       const t = await res.json(); _currentViewId=hid; viewTodo(t);
-
     } catch(e) { toast(`TODO #${hid} not found`,'error'); }
   }
 })();
+
+// ── Final initialization ──────────────────────────────────────────────────────
+setView(_currentView);
+_showAssignSearch();
 </script>
 {% endblock %}
