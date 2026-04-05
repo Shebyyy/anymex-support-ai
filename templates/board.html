@@ -127,15 +127,34 @@
   display: flex; align-items: center; gap: 8px;
   margin-left: 42px; flex-wrap: wrap;
 }
+.todo-card.has-checkbox .todo-card-desc,
+.todo-card.has-checkbox .todo-card-meta {
+  margin-left: 72px;
+}
 .todo-card-actions { display: flex; gap: 6px; margin-left: auto; }
 .created-at {
   font-size: 0.72rem; color: var(--muted);
   font-family: var(--mono); margin-left: auto;
 }
 .card-checkbox {
-  position: absolute; top: 12px; left: -28px;
-  width: 16px; height: 16px; cursor: pointer;
-  accent-color: var(--accent);
+  appearance: none; -webkit-appearance: none;
+  width: 18px; height: 18px; border: 2px solid var(--border);
+  border-radius: 6px; cursor: pointer; background: var(--surface2);
+  position: relative; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0; margin-top: 2px;
+}
+.card-checkbox:checked {
+  background: var(--accent); border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(88,101,242,0.15);
+}
+.card-checkbox:checked::after {
+  content: ''; position: absolute; left: 5px; top: 1px;
+  width: 5px; height: 10px; border: solid white;
+  border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.card-checkbox:hover {
+  border-color: var(--accent);
+  background: var(--surface);
 }
 
 /* ══════════════════════════════════════════
@@ -192,6 +211,7 @@
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   transform: translateY(-1px);
 }
+.kanban-card.selected { border-color: var(--accent) !important; background: rgba(88,101,242,0.04); }
 .kanban-card-title {
   font-size: 0.88rem; font-weight: 600; line-height: 1.35;
   margin-bottom: 8px; color: var(--text);
@@ -398,12 +418,12 @@
 <div id="view-list">
   <div class="todo-grid" id="todo-grid">
   {% for t in todos %}
-  <div class="todo-card" style="border-left-color:{{ t.status_color }}" data-id="{{ t.id }}" onclick="cardClick(event,{{ t.id }})">
-    {% if access_level in ('manager','admin','owner') %}
-    <input type="checkbox" class="card-checkbox" data-id="{{ t.id }}"
-      onclick="event.stopPropagation();toggleSelect({{ t.id }},this)" />
-    {% endif %}
+  <div class="todo-card {% if access_level in ('manager','admin','owner') %}has-checkbox{% endif %}" style="border-left-color:{{ t.status_color }}" data-id="{{ t.id }}" onclick="cardClick(event,{{ t.id }})">
     <div class="todo-card-top">
+      {% if access_level in ('manager','admin','owner') %}
+      <input type="checkbox" class="card-checkbox" data-id="{{ t.id }}"
+        onclick="event.stopPropagation();toggleSelect({{ t.id }},this)" />
+      {% endif %}
       <span class="id">#{{ t.id }}</span>
       <span class="title">{{ t.title }}</span>
       {% if t.get('auto_generated') %}<span class="ai-badge">✦ AI</span>{% endif %}
@@ -678,8 +698,12 @@ function cardClick(e, id) {
 
 function toggleSelect(id, cb) {
   if (cb.checked) _selected.add(id); else _selected.delete(id);
-  const card = document.querySelector(`.todo-card[data-id="${id}"]`);
-  if (card) card.classList.toggle('selected', cb.checked);
+  document.querySelectorAll(`.todo-card[data-id="${id}"], .kanban-card[data-id="${id}"]`).forEach(el => {
+    el.classList.toggle('selected', cb.checked);
+  });
+  document.querySelectorAll(`.card-checkbox[data-id="${id}"]`).forEach(x => {
+    x.checked = cb.checked;
+  });
   _refreshBulkBar();
 }
 
@@ -694,8 +718,9 @@ function clearSelection() {
   _selected.clear();
   document.querySelectorAll('.card-checkbox').forEach(cb => {
     cb.checked = false;
-    const card = document.querySelector(`.todo-card[data-id="${cb.dataset.id}"]`);
-    if (card) card.classList.remove('selected');
+  });
+  document.querySelectorAll('.todo-card.selected, .kanban-card.selected').forEach(el => {
+    el.classList.remove('selected');
   });
   _refreshBulkBar();
 }
@@ -1059,11 +1084,20 @@ function _buildKanban() {
           </a>` : '';
       const desc = t.ai_description
         ? `<div class="kanban-card-desc">${t.ai_description}</div>` : '';
-      return `<div class="kanban-card" draggable="true" data-id="${t.id}" style="animation-delay:${i*0.04}s"
+      const checkHtml = ['manager','admin','owner'].includes(ACCESS_LEVEL)
+        ? `<input type="checkbox" class="card-checkbox" data-id="${t.id}"
+            ${_selected.has(t.id)?'checked':''}
+            onclick="event.stopPropagation();toggleSelect(${t.id},this)">` : '';
+
+      return `<div class="kanban-card ${_selected.has(t.id)?'selected':''}" draggable="true" data-id="${t.id}" style="animation-delay:${i*0.04}s"
         onclick="viewTodoById(${t.id})"
         ondragstart="onKanbanDragStart(event,${t.id})"
         ondragend="onKanbanDragEnd(event)">
-        <div class="kanban-card-id" style="display:flex;align-items:center;gap:6px">#${t.id}${t.auto_generated?' <span class="ai-badge" style="vertical-align:middle">✦ AI</span>':''}<span style="margin-left:auto">${assignee}</span></div>
+        <div class="kanban-card-id" style="display:flex;align-items:center;gap:6px">
+          ${checkHtml}
+          #${t.id}${t.auto_generated?' <span class="ai-badge" style="vertical-align:middle">✦ AI</span>':''}
+          <span style="margin-left:auto">${assignee}</span>
+        </div>
         <div class="kanban-card-title">${t.title}</div>
         ${desc}
         <div class="kanban-card-footer">
