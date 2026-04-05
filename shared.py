@@ -18,6 +18,16 @@ FILE_FORUM_POSTS_BUGS        = "forum_posts_bugs.json"
 FILE_FORUM_POSTS_SUGGESTIONS = "forum_posts_suggestions.json"
 FILE_BOARD_IDS       = "board_ids.json"
 FILE_THREAD_MESSAGES = "thread_messages.json"
+FILE_NOTIF_PREFS     = "user_notification_prefs.json"
+FILE_NOTIFICATIONS   = "notifications.json"
+
+# Default notification preferences for a new user
+DEFAULT_NOTIF_PREFS = {
+    "notify_todo_created": True,   # new todo added
+    "notify_todo_edited":  True,   # status / priority / assignee / title changed
+    "notify_assigned":     True,   # you were assigned to a todo
+    "notify_comment":      "all",  # "all" | "mention_only" | "none"
+}
 
 DEFAULT_CONFIG = {
     "todo_channel": None, "todo_roles": [], "todo_style": 1,

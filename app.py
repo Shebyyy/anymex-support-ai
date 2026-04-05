@@ -318,6 +318,200 @@ def _persist_activity(action: str, todo: dict, user: dict, extra: str = ""):
             print(f"[activity_log] Failed: {e}")
     _threading.Thread(target=_write, daemon=True).start()
 
+
+# ── Notification helpers ─────────────────────────────────────────────────────
+
+def _get_notif_prefs(user_id: str) -> dict:
+    """Return notification prefs for a user, falling back to defaults."""
+    prefs_db, _ = gh_read(FILE_NOTIF_PREFS)
+    prefs_db = prefs_db or {}
+    return {**DEFAULT_NOTIF_PREFS, **(prefs_db.get(str(user_id)) or {})}
+
+
+def _push_notification(recipient_id: str, notif: dict):
+    """
+    Append a notification to FILE_NOTIFICATIONS for the given user.
+    notif should contain: type, todo_id, todo_title, message, ts, actor_name
+    """
+    def _write():
+        try:
+            db, sha = gh_read(FILE_NOTIFICATIONS, force=True)
+            db = db or {}
+            key = str(recipient_id)
+            queue = db.get(key, [])
+            queue.insert(0, notif)
+            queue = queue[:100]   # cap per-user queue
+            db[key] = queue
+            gh_write(FILE_NOTIFICATIONS, db, sha,
+                     f"Notif: {notif.get('type','?')} for user {recipient_id}")
+        except Exception as e:
+            print(f"[notifications] push failed for {recipient_id}: {e}")
+    _threading.Thread(target=_write, daemon=True).start()
+
+
+def _send_discord_dm(user_id: str, message: str):
+    """Fire a Discord DM to a user via the bot token. Non-blocking."""
+    if not DISCORD_BOT_TOKEN:
+        return
+    def _dm():
+        try:
+            dm_resp = _requests.post(
+                "https://discord.com/api/v10/users/@me/channels",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+                         "Content-Type": "application/json"},
+                json={"recipient_id": str(user_id)},
+                timeout=5,
+            )
+            if dm_resp.status_code in (200, 201):
+                ch_id = dm_resp.json().get("id")
+                _requests.post(
+                    f"https://discord.com/api/v10/channels/{ch_id}/messages",
+                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+                             "Content-Type": "application/json"},
+                    json={"content": message},
+                    timeout=5,
+                )
+        except Exception as e:
+            print(f"[notify_dm] DM to {user_id} failed: {e}")
+    _threading.Thread(target=_dm, daemon=True).start()
+
+
+def _notify_users(event_type: str, todo: dict, actor: dict,
+                  comment_text: str = "", mentioned_usernames: list = None):
+    """
+    Central notification dispatcher. Called after every mutating event.
+
+    event_type:
+      "todo_created"   – a new todo was added
+      "todo_edited"    – title / status / priority / tags changed
+      "todo_assigned"  – someone was assigned (recipient = assignee)
+      "comment"        – a comment was posted
+
+    For "comment", optionally pass:
+      comment_text         – raw text of the comment
+      mentioned_usernames  – list of @handle strings found in the comment
+    """
+    actor_name  = actor.get("global_name") or actor.get("username") or "Someone"
+    actor_id    = str(actor.get("id", ""))
+    todo_id     = todo.get("id")
+    todo_title  = todo.get("title", f"TODO #{todo_id}")
+    todo_url    = f"{request.host_url.rstrip('/')}/todo/{todo_id}" if request else f"/todo/{todo_id}"
+
+    ts = datetime.datetime.utcnow().isoformat() + "Z"
+
+    # Build recipient set per event type
+    recipients: set = set()
+
+    if event_type == "todo_created":
+        # Notify all members who have this pref on
+        members_db = _get_todo_members_db()
+        for m in (members_db.get("members") or []):
+            uid = str(m.get("id", ""))
+            if uid and uid != actor_id:
+                prefs = _get_notif_prefs(uid)
+                if prefs.get("notify_todo_created"):
+                    recipients.add(uid)
+
+    elif event_type == "todo_edited":
+        # Notify assignee and creator (if they have this pref)
+        for uid in filter(None, [
+            str(todo.get("assigned_to_id") or ""),
+            str(todo.get("added_by_id") or ""),
+        ]):
+            if uid and uid != actor_id:
+                prefs = _get_notif_prefs(uid)
+                if prefs.get("notify_todo_edited"):
+                    recipients.add(uid)
+
+    elif event_type == "todo_assigned":
+        assignee_id = str(todo.get("assigned_to_id") or "")
+        if assignee_id and assignee_id != actor_id:
+            prefs = _get_notif_prefs(assignee_id)
+            if prefs.get("notify_assigned"):
+                recipients.add(assignee_id)
+
+    elif event_type == "comment":
+        comment_pref_users: dict = {}   # uid -> their comment pref
+
+        # Collect assignee + creator + prior commenters
+        candidates = set(filter(None, [
+            str(todo.get("assigned_to_id") or ""),
+            str(todo.get("added_by_id") or ""),
+        ]))
+        # Add prior commenters
+        try:
+            comments_db, _ = gh_read(FILE_COMMENTS)
+            comments_db = comments_db or {}
+            for c in (comments_db.get(str(todo_id)) or []):
+                uid = str(c.get("user_id") or "")
+                if uid:
+                    candidates.add(uid)
+        except Exception:
+            pass
+
+        for uid in candidates:
+            if uid and uid != actor_id:
+                prefs = _get_notif_prefs(uid)
+                comment_pref_users[uid] = prefs.get("notify_comment", "all")
+
+        # Resolve mentioned usernames → user IDs
+        mentioned_ids: set = set()
+        if mentioned_usernames:
+            members_db = _get_todo_members_db()
+            for uname in mentioned_usernames:
+                m = next((x for x in (members_db.get("members") or [])
+                          if x.get("username", "").lower() == uname.lower()), None)
+                if m:
+                    uid = str(m.get("id", ""))
+                    if uid:
+                        mentioned_ids.add(uid)
+
+        for uid, pref in comment_pref_users.items():
+            if pref == "all":
+                recipients.add(uid)
+            elif pref == "mention_only" and uid in mentioned_ids:
+                recipients.add(uid)
+        # Always notify explicitly mentioned users (regardless of their pref)
+        for uid in mentioned_ids:
+            if uid != actor_id:
+                recipients.add(uid)
+
+    # Build notification payload and dispatch
+    type_labels = {
+        "todo_created": "🆕 New todo",
+        "todo_edited":  "✏️ Todo updated",
+        "todo_assigned": "📌 Assigned to you",
+        "comment":      "💬 New comment",
+    }
+
+    dm_messages = {
+        "todo_created":  f"🆕 **{actor_name}** created a new todo: **{todo_title}**\n{todo_url}",
+        "todo_edited":   f"✏️ **{actor_name}** updated **{todo_title}**\n{todo_url}",
+        "todo_assigned": f"📌 **{actor_name}** assigned you to **{todo_title}**\n{todo_url}",
+        "comment":       (f"💬 **{actor_name}** commented on **{todo_title}**\n"
+                          f"> {comment_text[:120]}{'…' if len(comment_text) > 120 else ''}\n"
+                          f"{todo_url}"),
+    }
+
+    label  = type_labels.get(event_type, "🔔 Notification")
+    dm_msg = dm_messages.get(event_type, f"🔔 {actor_name} did something on {todo_title}\n{todo_url}")
+
+    for uid in recipients:
+        notif = {
+            "id":         secrets.token_hex(8),
+            "type":       event_type,
+            "label":      label,
+            "todo_id":    todo_id,
+            "todo_title": todo_title,
+            "message":    dm_msg,
+            "actor_name": actor_name,
+            "ts":         ts,
+            "read":       False,
+        }
+        _push_notification(uid, notif)
+        _send_discord_dm(uid, dm_msg)
+
+
 def _avatar_url(user_obj):
     """Build a Discord CDN avatar URL from a user object."""
     if not user_obj:
@@ -1009,19 +1203,26 @@ def enrich_todo(t):
 
 @app.context_processor
 def inject_nav_counts():
-    """Inject my_task_count into every template for the nav badge."""
+    """Inject my_task_count and unread_notif_count into every template for the nav badges."""
     try:
         sess = get_session()
         user = sess.get("user")
         if not user:
-            return {"my_task_count": 0}
+            return {"my_task_count": 0, "unread_notif_count": 0}
         uid = str(user.get("id", ""))
         todos, _ = gh_read(FILE_TODOS)
         count = len([t for t in (todos or [])
                      if t.get("assigned_to_id") == uid and t.get("status") != "done"])
-        return {"my_task_count": count}
+        # Unread notifications
+        try:
+            notif_db, _ = gh_read(FILE_NOTIFICATIONS)
+            notif_db = notif_db or {}
+            unread = len([n for n in (notif_db.get(uid) or []) if not n.get("read")])
+        except Exception:
+            unread = 0
+        return {"my_task_count": count, "unread_notif_count": unread}
     except Exception:
-        return {"my_task_count": 0}
+        return {"my_task_count": 0, "unread_notif_count": 0}
 
 
 app.jinja_env.globals.update(
@@ -1442,6 +1643,7 @@ def api_todo_create():
         notify_bot_board()
         extra = f"Linked to {linked_type} forum post" if linked_thread_id else ""
         _web_log_activity("TODO Created", new_todo, user, extra=extra)
+        _notify_users("todo_created", new_todo, user)
         return jsonify(enrich_todo(new_todo)), 201
     return jsonify({"error": "GitHub write failed"}), 500
 
@@ -1459,7 +1661,8 @@ def api_todo_update(todo_id):
     data = request.json or {}
     allowed = ("status", "priority", "tags", "assigned_to_id", "assigned_to_name", "title", "ai_description", "due_date")
 
-    # Build a human-readable action label from what actually changed
+    # Capture original assignee before any changes
+    original_assignee_id = str(todo.get("assigned_to_id") or "")
     changes = []
     for field in allowed:
         if field in data and data[field] != todo.get(field):
@@ -1516,6 +1719,12 @@ def api_todo_update(todo_id):
     notify_bot_board()
     web_user = get_session().get("user", {})
     _web_log_activity(action_label, todo, web_user)
+    # Fire the right notification — assignment gets its own event type
+    new_assignee_id = str(todo.get("assigned_to_id") or "")
+    if "assigned_to_id" in data and new_assignee_id and new_assignee_id != original_assignee_id:
+        _notify_users("todo_assigned", todo, web_user)
+    elif changes:
+        _notify_users("todo_edited", todo, web_user)
     return jsonify(enrich_todo(todo))
 
 @app.route("/api/todo/<int:todo_id>", methods=["DELETE"])
@@ -2090,17 +2299,89 @@ def api_emojis_sync():
 @app.route("/api/notifications/mentions")
 def api_notifications_mentions():
     """
-    Poll endpoint for @mention notifications.
-    Returns mentions for the logged-in user since the given timestamp.
-    ?since=<unix_ms>
+    Poll endpoint — returns unread notifications for the logged-in user.
+    Kept at this URL so existing client-side pollers keep working.
+    ?since=<iso_ts>  (optional, ignored — we return all unread)
     """
     sess = get_session()
     uid = str(sess.get("user", {}).get("id", "")) if sess.get("user") else ""
     if not uid:
-        return jsonify({"mentions": []})
-    # In a full implementation this would query a notifications table.
-    # For now returns empty so the poller doesn't error.
-    return jsonify({"mentions": []})
+        return jsonify({"mentions": [], "notifications": []})
+    try:
+        notif_db, _ = gh_read(FILE_NOTIFICATIONS)
+        notif_db = notif_db or {}
+        items = notif_db.get(uid) or []
+        unread = [n for n in items if not n.get("read")]
+        return jsonify({"mentions": [], "notifications": unread,
+                        "unread_count": len(unread)})
+    except Exception:
+        return jsonify({"mentions": [], "notifications": [], "unread_count": 0})
+
+
+@app.route("/api/notifications", methods=["GET"])
+def api_notifications_get():
+    """Return all notifications (read + unread) for the current user."""
+    sess = get_session()
+    if not sess.get("user"):
+        return jsonify({"error": "Login required"}), 401
+    uid = str(sess["user"].get("id", ""))
+    notif_db, _ = gh_read(FILE_NOTIFICATIONS)
+    notif_db = notif_db or {}
+    return jsonify({"notifications": notif_db.get(uid) or []})
+
+
+@app.route("/api/notifications/mark-read", methods=["POST"])
+def api_notifications_mark_read():
+    """Mark all notifications as read for the current user."""
+    sess = get_session()
+    if not sess.get("user"):
+        return jsonify({"error": "Login required"}), 401
+    uid = str(sess["user"].get("id", ""))
+    notif_db, sha = gh_read(FILE_NOTIFICATIONS, force=True)
+    notif_db = notif_db or {}
+    queue = notif_db.get(uid) or []
+    for n in queue:
+        n["read"] = True
+    notif_db[uid] = queue
+    gh_write(FILE_NOTIFICATIONS, notif_db, sha, f"Mark notifications read: {uid}")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/notifications/prefs", methods=["GET"])
+def api_notif_prefs_get():
+    """Return notification preferences for the current user."""
+    sess = get_session()
+    if not sess.get("user"):
+        return jsonify({"error": "Login required"}), 401
+    uid = str(sess["user"].get("id", ""))
+    return jsonify(_get_notif_prefs(uid))
+
+
+@app.route("/api/notifications/prefs", methods=["POST"])
+def api_notif_prefs_save():
+    """Save notification preferences for the current user."""
+    sess = get_session()
+    if not sess.get("user"):
+        return jsonify({"error": "Login required"}), 401
+    uid = str(sess["user"].get("id", ""))
+    data = request.get_json(silent=True) or {}
+    allowed_keys = {"notify_todo_created", "notify_todo_edited",
+                    "notify_assigned", "notify_comment"}
+    allowed_comment = {"all", "mention_only", "none"}
+    prefs = {}
+    for k in allowed_keys:
+        if k not in data:
+            continue
+        if k == "notify_comment":
+            if data[k] in allowed_comment:
+                prefs[k] = data[k]
+        else:
+            prefs[k] = bool(data[k])
+    prefs_db, sha = gh_read(FILE_NOTIF_PREFS, force=True)
+    prefs_db = prefs_db or {}
+    prefs_db[uid] = {**DEFAULT_NOTIF_PREFS, **(prefs_db.get(uid) or {}), **prefs}
+    gh_write(FILE_NOTIF_PREFS, prefs_db, sha, f"Notif prefs saved: {uid}")
+    return jsonify({"ok": True, "prefs": prefs_db[uid]})
 
 
 @app.route("/api/todo/<int:todo_id>/notify-mentions", methods=["POST"])
@@ -2206,6 +2487,8 @@ def api_todo_assign(todo_id):
              f"Web: {action_label} for TODO #{todo_id} by {me.get('username','?')}")
     notify_bot_board()
     _web_log_activity(action_label, todo, me)
+    if action == "assign":
+        _notify_users("todo_assigned", todo, me)
     return jsonify({"ok": True, "todo": enrich_todo(todo)})
 
 @app.route("/api/forum/sync", methods=["POST"])
@@ -2460,6 +2743,9 @@ def api_comments_post(todo_id):
         todo = next((t for t in (todos or []) if t["id"] == todo_id), {"id": todo_id, "title": "Unknown", "status": "todo"})
         action = "💬 Reply Added" if reply_to else "💬 Comment Added"
         _web_log_activity(action, todo, user, extra=text[:60])
+        # Fire notifications — extract @mentions from comment text
+        mentioned = _re.findall(r'@([\w.]+)', text)
+        _notify_users("comment", todo, user, comment_text=text, mentioned_usernames=mentioned)
     return jsonify(new_comment), 201
 
 @app.route("/api/todo/<int:todo_id>/comments/<comment_id>", methods=["DELETE"])
@@ -3754,6 +4040,9 @@ def settings():
             pass
     releases, _ = gh_read(FILE_RELEASES)
     archive, _  = gh_read(FILE_TODOS_ARCHIVE)
+    # Load notification prefs for the current user (for the prefs card)
+    uid = str(get_session().get("user", {}).get("id", ""))
+    notif_prefs = _get_notif_prefs(uid) if uid else DEFAULT_NOTIF_PREFS.copy()
     return render_template("settings.html",
         user=get_session()["user"], access_level=get_session().get("access_level"),
         cfg=cfg,
@@ -3761,6 +4050,7 @@ def settings():
         health=health, bot_online=bot_online,
         releases=releases or [],
         archive_count=len(archive or []),
+        notif_prefs=notif_prefs,
     )
 
 

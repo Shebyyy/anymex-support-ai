@@ -77,6 +77,31 @@
   background: rgba(226,75,74,0.1); color: var(--blocked);
   border-color: rgba(226,75,74,0.2);
 }
+
+/* Notification toggle switch */
+.notif-toggle {
+  display: inline-flex; align-items: center; cursor: pointer;
+  user-select: none;
+}
+.notif-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.notif-toggle-track {
+  position: relative; width: 40px; height: 22px;
+  background: var(--border); border-radius: 11px;
+  transition: background 0.2s;
+  display: inline-block;
+}
+.notif-toggle input:checked + .notif-toggle-track {
+  background: var(--accent);
+}
+.notif-toggle-thumb {
+  position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  background: #fff; border-radius: 50%;
+  transition: transform 0.2s;
+}
+.notif-toggle input:checked + .notif-toggle-track .notif-toggle-thumb {
+  transform: translateX(18px);
+}
 </style>
 {% endblock %}
 
@@ -97,6 +122,7 @@
     <a href="#releases">Releases</a>
     <a href="#tag-perms">Tag Permissions</a>
     <div class="nav-section">Info</div>
+    <a href="#notifications">Notifications</a>
     <a href="#access">Access Levels</a>
     <a href="#members">Member DB</a>
     <a href="#db">Database</a>
@@ -303,6 +329,70 @@
     </div>
 
     <!-- Member DB -->
+    <!-- Notifications -->
+    <div class="settings-card" id="notifications">
+      <div class="settings-card-head">
+        <h2>Notification Preferences</h2>
+        <button class="btn btn-primary btn-sm" onclick="saveNotifPrefs(this)">Save</button>
+      </div>
+      <div class="settings-card-body">
+
+        <div class="settings-row">
+          <div class="info">
+            <strong>New todo created</strong>
+            <small>Get notified when a new todo is added to the board</small>
+          </div>
+          <div class="control">
+            <label class="notif-toggle">
+              <input type="checkbox" id="np-created" {% if notif_prefs.get('notify_todo_created', True) %}checked{% endif %}>
+              <span class="notif-toggle-track"><span class="notif-toggle-thumb"></span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <div class="info">
+            <strong>Todo edited</strong>
+            <small>Notify you when a todo you're assigned to or created is changed</small>
+          </div>
+          <div class="control">
+            <label class="notif-toggle">
+              <input type="checkbox" id="np-edited" {% if notif_prefs.get('notify_todo_edited', True) %}checked{% endif %}>
+              <span class="notif-toggle-track"><span class="notif-toggle-thumb"></span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <div class="info">
+            <strong>Assigned to me</strong>
+            <small>Notify you when a todo is assigned to you</small>
+          </div>
+          <div class="control">
+            <label class="notif-toggle">
+              <input type="checkbox" id="np-assigned" {% if notif_prefs.get('notify_assigned', True) %}checked{% endif %}>
+              <span class="notif-toggle-track"><span class="notif-toggle-thumb"></span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-row" style="border-bottom:none">
+          <div class="info">
+            <strong>Comments</strong>
+            <small>Control which comment activity notifies you</small>
+          </div>
+          <div class="control">
+            <select class="form-control" id="np-comment" style="width:160px">
+              <option value="all" {% if notif_prefs.get('notify_comment','all') == 'all' %}selected{% endif %}>All comments</option>
+              <option value="mention_only" {% if notif_prefs.get('notify_comment') == 'mention_only' %}selected{% endif %}>Mentions only</option>
+              <option value="none" {% if notif_prefs.get('notify_comment') == 'none' %}selected{% endif %}>None</option>
+            </select>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
     <div class="settings-card" id="members">
       <div class="settings-card-head">
         <h2>Member Database</h2>
@@ -563,5 +653,26 @@ async function deleteRelease(id, btn) {
 
 loadTagPerms();
 loadMembers();
+
+// ── Notification preferences ─────────────────────────────────────────────────
+async function saveNotifPrefs(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const prefs = {
+      notify_todo_created: document.getElementById('np-created').checked,
+      notify_todo_edited:  document.getElementById('np-edited').checked,
+      notify_assigned:     document.getElementById('np-assigned').checked,
+      notify_comment:      document.getElementById('np-comment').value,
+    };
+    await api('POST', '/api/notifications/prefs', prefs);
+    toast('Notification preferences saved!');
+  } catch(e) {
+    toast(e.message || 'Save failed', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
 </script>
 {% endblock %}
