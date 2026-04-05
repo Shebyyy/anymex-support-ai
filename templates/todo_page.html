@@ -22,6 +22,7 @@
   border-radius: 14px 14px 0 0;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
 }
 .tp-breadcrumb {
   font-size: 0.78rem; color: var(--muted);
@@ -80,6 +81,11 @@
 .tp-panel {
   flex: 1; display: none; flex-direction: column; overflow: hidden;
   animation: fadeUp 0.2s ease both;
+  position: relative;
+
+  @media screen and (max-width: 768px) {
+    max-height: 80vh;
+  }
 }
 .tp-panel.visible { display: flex; }
 @keyframes fadeUp { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
@@ -101,6 +107,10 @@
 .tp-panel-footer {
   border-top: 1px solid var(--border);
   padding: 10px 14px; flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  background: var(--surface); z-index: 10;
+  box-shadow: 0 -8px 24px rgba(0,0,0,0.2);
 }
 
 /* ── Detail panel fields ── */
@@ -162,7 +172,7 @@
 .tp-activity-time { font-size: 0.72rem; color: var(--muted); font-family: var(--mono); white-space: nowrap; flex-shrink: 0; }
 
 /* ── Comments panel ── */
-.tp-comment-list { flex: 1; overflow-y: auto; padding: 4px 16px; }
+.tp-comment-list { flex: 1; overflow-y: auto; padding: 4px 16px 80px; scroll-behavior: smooth; }
 .tp-comment-count { font-size: 0.71rem; color: var(--muted); background: var(--surface2); padding: 2px 8px; border-radius: 10px; }
 
 /* ── New polished input ── */
